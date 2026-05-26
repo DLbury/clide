@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "aiterm": {
+      "command": "node",
+      "args": ["scripts/run-aiterm-mcp.mjs"],
+      "alwaysLoad": true
+    }
+  }
+}

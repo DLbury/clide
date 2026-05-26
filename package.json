@@ -1,0 +1,17 @@
+{
+  "name": "aiterm",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix view",
+    "dev:tauri": "tauri dev",
+    "build:tauri": "tauri build",
+    "build:web": "npm run build --prefix view",
+    "kill": "taskkill /F /IM node.exe 2>nul || echo 无残留进程",
+    "kill:port": "npx kill-port 3000 3001 1420",
+    "mcp:stdio": "node scripts/run-aiterm-mcp.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.4.0"
+  }
+}

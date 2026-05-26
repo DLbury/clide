@@ -1,0 +1,159 @@
+import type { ClaudeStreamEvent } from '@/lib/claude-client'
+import type { ChatMessage, ChatTaskPart, ChatToolPart } from '@/lib/types'
+import type { ToolActivityEvent } from '@/lib/runtime-sync'
+
+function toolTaskTitle(name: string, input?: unknown): string {
+  if (name === 'runShellCommand' || name === 'mcp__aiterm__runShellCommand') {
+    const cmd =
+      input &&
+      typeof input === 'object' &&
+      input !== null &&
+      'command' in input &&
+      typeof (input as { command?: unknown }).command === 'string'
+        ? (input as { command: string }).command
+        : undefined
+    return cmd ? `执行: ${cmd}` : '执行 Shell 命令'
+  }
+  if (name === 'connectServer' || name === 'mcp__aiterm__connectServer') {
+    return '连接服务器'
+  }
+  if (name === 'getTerminalContext' || name === 'mcp__aiterm__getTerminalContext') {
+    return '读取终端上下文'
+  }
+  return name.replace(/^mcp__aiterm__/, '')
+}
+
+function upsertTask(
+  tasks: ChatTaskPart[] | undefined,
+  id: string,
+  title: string,
+  status: ChatTaskPart['status'],
+  description?: string
+): ChatTaskPart[] {
+  const list = [...(tasks ?? [])]
+  const idx = list.findIndex(t => t.id === id)
+  const next: ChatTaskPart = { id, title, status, description }
+  if (idx >= 0) list[idx] = { ...list[idx], ...next }
+  else list.push(next)
+  return list
+}
+
+function upsertTool(
+  tools: ChatToolPart[] | undefined,
+  patch: ChatToolPart
+): ChatToolPart[] {
+  const list = [...(tools ?? [])]
+  const idx = list.findIndex(t => t.id === patch.id)
+  if (idx >= 0) list[idx] = { ...list[idx], ...patch }
+  else list.push(patch)
+  return list
+}
+
+export function applyClaudeStreamEvent(
+  message: ChatMessage,
+  event: ClaudeStreamEvent
+): ChatMessage {
+  let next = message
+
+  const reasoningChunk = event.reasoning ?? (event.eventType === 'reasoning_delta' ? event.text : undefined)
+  if (reasoningChunk) {
+    next = {
+      ...next,
+      reasoning: (next.reasoning ?? '') + reasoningChunk,
+    }
+  }
+
+  if (event.eventType === 'tool_start' && event.toolId && event.toolName) {
+    const title = toolTaskTitle(event.toolName, event.toolInput)
+    next = {
+      ...next,
+      tools: upsertTool(next.tools, {
+        id: event.toolId,
+        name: event.toolName,
+        input: event.toolInput,
+        status: 'running',
+      }),
+      tasks: upsertTask(next.tasks, event.toolId, title, 'pending'),
+    }
+  }
+
+  if (event.eventType === 'tool_result' && event.toolId) {
+    const failed = Boolean(event.toolError)
+    next = {
+      ...next,
+      tools: upsertTool(next.tools, {
+        id: event.toolId,
+        name:
+          next.tools?.find(t => t.id === event.toolId)?.name ?? 'tool',
+        status: failed ? 'error' : 'completed',
+        output: event.toolOutput,
+        error: event.toolError,
+      }),
+      tasks: upsertTask(
+        next.tasks,
+        event.toolId,
+        next.tasks?.find(t => t.id === event.toolId)?.title ?? '工具调用',
+        failed ? 'pending' : 'completed'
+      ),
+    }
+  }
+
+  return next
+}
+
+export function applyToolActivityToMessage(
+  message: ChatMessage,
+  activity: ToolActivityEvent,
+  index: number
+): ChatMessage {
+  const id = `activity-${activity.kind}-${index}-${activity.command ?? activity.profileId ?? ''}`
+  let title = activity.kind
+  let description: string | undefined
+  let status: ChatTaskPart['status'] = 'pending'
+  let toolStatus: ChatToolPart['status'] = 'running'
+
+  if (activity.kind === 'connect') {
+    title = `连接 ${activity.profileId ?? activity.displayCommand ?? ''}`
+  } else if (activity.kind === 'disconnect') {
+    title = `断开 ${activity.profileId ?? ''}`
+  } else if (activity.kind === 'shell_command') {
+    title = toolTaskTitle('runShellCommand', { command: activity.command })
+    description = activity.outputPreview
+    if (activity.status === 'completed') {
+      status = 'completed'
+      toolStatus = 'completed'
+    } else if (activity.status === 'error') {
+      toolStatus = 'error'
+    }
+  }
+
+  return {
+    ...message,
+    tools: upsertTool(message.tools, {
+      id,
+      name: activity.kind === 'shell_command' ? 'runShellCommand' : activity.kind,
+      input: activity.command ? { command: activity.command, profileId: activity.profileId } : undefined,
+      output: activity.outputPreview,
+      error: activity.error,
+      status: toolStatus,
+    }),
+    tasks: upsertTask(message.tasks, id, title, status, description),
+  }
+}
+
+export function toolStatusToUiState(
+  status: ChatToolPart['status']
+): 'input-streaming' | 'input-available' | 'output-available' | 'output-error' {
+  switch (status) {
+    case 'pending':
+      return 'input-streaming'
+    case 'running':
+      return 'input-available'
+    case 'completed':
+      return 'output-available'
+    case 'error':
+      return 'output-error'
+    default:
+      return 'input-available'
+  }
+}

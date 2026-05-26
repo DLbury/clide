@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+view/node_modules/
+
+# Frontend build
+view/.next/
+view/out/
+view/.vercel/
+
+# Rust / Tauri
+src-tauri/target/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+*.swp
+
+# Local tooling
+.claude/
+.spec-workflow/
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

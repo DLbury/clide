@@ -1,0 +1,381 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'streamdown/styles.css';
+
+/* 勿扫描构建产物（其中可能含上一轮 Tailwind 误生成的乱码 class） */
+@source not "../out/**";
+@source not "../.next/**";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(0.12 0.005 260);
+  --foreground: oklch(0.95 0 0);
+  --card: oklch(0.16 0.005 260);
+  --card-foreground: oklch(0.95 0 0);
+  --popover: oklch(0.14 0.005 260);
+  --popover-foreground: oklch(0.95 0 0);
+  --primary: oklch(0.72 0.19 160);
+  --primary-foreground: oklch(0.12 0.005 260);
+  --secondary: oklch(0.22 0.005 260);
+  --secondary-foreground: oklch(0.85 0 0);
+  --muted: oklch(0.20 0.005 260);
+  --muted-foreground: oklch(0.55 0 0);
+  --accent: oklch(0.72 0.19 160);
+  --accent-foreground: oklch(0.12 0.005 260);
+  --destructive: oklch(0.60 0.20 25);
+  --destructive-foreground: oklch(0.95 0 0);
+  --border: oklch(0.25 0.005 260);
+  --input: oklch(0.18 0.005 260);
+  --ring: oklch(0.72 0.19 160);
+  --chart-1: oklch(0.72 0.19 160);
+  --chart-2: oklch(0.65 0.15 220);
+  --chart-3: oklch(0.70 0.15 50);
+  --chart-4: oklch(0.60 0.18 300);
+  --chart-5: oklch(0.65 0.20 30);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.10 0.005 260);
+  --sidebar-foreground: oklch(0.90 0 0);
+  --sidebar-primary: oklch(0.72 0.19 160);
+  --sidebar-primary-foreground: oklch(0.12 0.005 260);
+  --sidebar-accent: oklch(0.18 0.005 260);
+  --sidebar-accent-foreground: oklch(0.90 0 0);
+  --sidebar-border: oklch(0.22 0.005 260);
+  --sidebar-ring: oklch(0.72 0.19 160);
+  
+  /* Terminal specific */
+  --terminal-green: oklch(0.72 0.19 160);
+  --terminal-yellow: oklch(0.85 0.18 85);
+  --terminal-red: oklch(0.65 0.22 25);
+  --terminal-blue: oklch(0.65 0.15 240);
+  --terminal-cyan: oklch(0.75 0.12 195);
+  --terminal-magenta: oklch(0.70 0.18 320);
+}
+
+.dark {
+  --background: oklch(0.12 0.005 260);
+  --foreground: oklch(0.95 0 0);
+  --card: oklch(0.16 0.005 260);
+  --card-foreground: oklch(0.95 0 0);
+  --popover: oklch(0.14 0.005 260);
+  --popover-foreground: oklch(0.95 0 0);
+  --primary: oklch(0.72 0.19 160);
+  --primary-foreground: oklch(0.12 0.005 260);
+  --secondary: oklch(0.22 0.005 260);
+  --secondary-foreground: oklch(0.85 0 0);
+  --muted: oklch(0.20 0.005 260);
+  --muted-foreground: oklch(0.55 0 0);
+  --accent: oklch(0.72 0.19 160);
+  --accent-foreground: oklch(0.12 0.005 260);
+  --destructive: oklch(0.60 0.20 25);
+  --destructive-foreground: oklch(0.95 0 0);
+  --border: oklch(0.25 0.005 260);
+  --input: oklch(0.18 0.005 260);
+  --ring: oklch(0.72 0.19 160);
+  --chart-1: oklch(0.72 0.19 160);
+  --chart-2: oklch(0.65 0.15 220);
+  --chart-3: oklch(0.70 0.15 50);
+  --chart-4: oklch(0.60 0.18 300);
+  --chart-5: oklch(0.65 0.20 30);
+  --sidebar: oklch(0.10 0.005 260);
+  --sidebar-foreground: oklch(0.90 0 0);
+  --sidebar-primary: oklch(0.72 0.19 160);
+  --sidebar-primary-foreground: oklch(0.12 0.005 260);
+  --sidebar-accent: oklch(0.18 0.005 260);
+  --sidebar-accent-foreground: oklch(0.90 0 0);
+  --sidebar-border: oklch(0.22 0.005 260);
+  --sidebar-ring: oklch(0.72 0.19 160);
+}
+
+.light {
+  --background: oklch(0.98 0.001 260);
+  --foreground: oklch(0.15 0.005 260);
+  --card: oklch(0.96 0.001 260);
+  --card-foreground: oklch(0.15 0.005 260);
+  --popover: oklch(0.99 0.001 260);
+  --popover-foreground: oklch(0.15 0.005 260);
+  --primary: oklch(0.60 0.18 160);
+  --primary-foreground: oklch(0.98 0.001 260);
+  --secondary: oklch(0.92 0.005 260);
+  --secondary-foreground: oklch(0.20 0.005 260);
+  --muted: oklch(0.88 0.005 260);
+  --muted-foreground: oklch(0.50 0 0);
+  --accent: oklch(0.60 0.18 160);
+  --accent-foreground: oklch(0.98 0.001 260);
+  --destructive: oklch(0.60 0.20 25);
+  --destructive-foreground: oklch(0.98 0.001 260);
+  --border: oklch(0.85 0.005 260);
+  --input: oklch(0.92 0.005 260);
+  --ring: oklch(0.60 0.18 160);
+  --chart-1: oklch(0.60 0.18 160);
+  --chart-2: oklch(0.55 0.15 220);
+  --chart-3: oklch(0.60 0.15 50);
+  --chart-4: oklch(0.50 0.18 300);
+  --chart-5: oklch(0.55 0.20 30);
+  --sidebar: oklch(0.94 0.005 260);
+  --sidebar-foreground: oklch(0.20 0.005 260);
+  --sidebar-primary: oklch(0.60 0.18 160);
+  --sidebar-primary-foreground: oklch(0.98 0.001 260);
+  --sidebar-accent: oklch(0.88 0.005 260);
+  --sidebar-accent-foreground: oklch(0.20 0.005 260);
+  --sidebar-border: oklch(0.80 0.005 260);
+  --sidebar-ring: oklch(0.60 0.18 160);
+
+  --terminal-green: oklch(0.50 0.16 160);
+  --terminal-yellow: oklch(0.55 0.14 85);
+  --terminal-red: oklch(0.50 0.18 25);
+  --terminal-blue: oklch(0.48 0.14 240);
+  --terminal-cyan: oklch(0.50 0.10 195);
+  --terminal-magenta: oklch(0.50 0.14 320);
+}
+
+@theme inline {
+  --font-sans: 'Geist', 'Geist Fallback';
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  
+  --color-terminal-green: var(--terminal-green);
+  --color-terminal-yellow: var(--terminal-yellow);
+  --color-terminal-red: var(--terminal-red);
+  --color-terminal-blue: var(--terminal-blue);
+  --color-terminal-cyan: var(--terminal-cyan);
+  --color-terminal-magenta: var(--terminal-magenta);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground select-none;
+  }
+}
+
+/* Shell、对话、编辑器等必须支持文本选择的区域 */
+.select-text-region {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.select-text-region button,
+.select-text-region [role='button'] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+textarea,
+input,
+[contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.monaco-editor .view-lines,
+.monaco-editor .view-line {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.xterm-helper-textarea {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+/* 空终端仅在内容溢出时显示滚动条 */
+.xterm .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+/* 文件树拖拽时禁止误选文字 */
+body.file-tree-dragging,
+body.file-tree-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: grabbing !important;
+}
+
+/* Custom scrollbar for terminal - dark mode */
+.dark .terminal-scrollbar::-webkit-scrollbar-track {
+  background: oklch(0.14 0.005 260);
+}
+
+.dark .terminal-scrollbar::-webkit-scrollbar-thumb {
+  background: oklch(0.30 0.005 260);
+}
+
+.dark .terminal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.40 0.005 260);
+}
+
+/* Custom scrollbar for terminal - light mode */
+.light .terminal-scrollbar::-webkit-scrollbar-track {
+  background: oklch(0.92 0.005 260);
+}
+
+.light .terminal-scrollbar::-webkit-scrollbar-thumb {
+  background: oklch(0.70 0.005 260);
+}
+
+.light .terminal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.60 0.005 260);
+}
+
+/* Dockview custom styling */
+.dockview-theme-dark,
+.dark .dv-container {
+  --dv-background-color: var(--card);
+  --dv-paneview-active-outline-color: var(--primary);
+  --dv-tabs-and-actions-container-background-color: var(--card);
+  --dv-tabs-container-background-color: var(--card);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--muted);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--muted);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-group-view-background-color: var(--card);
+}
+
+.dockview-theme-light,
+.light .dv-container {
+  --dv-background-color: var(--card);
+  --dv-paneview-active-outline-color: var(--primary);
+  --dv-tabs-and-actions-container-background-color: var(--card);
+  --dv-tabs-container-background-color: var(--card);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--muted);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--muted);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-group-view-background-color: var(--card);
+}
+
+/* 嵌套分屏默认 abyss 主题在浅色模式下同步变量 */
+.light .dockview-theme-abyss,
+.light .dockview-theme-dark,
+.light .dv-shell {
+  --dv-background-color: var(--card);
+  --dv-paneview-active-outline-color: var(--primary);
+  --dv-tabs-and-actions-container-background-color: var(--card);
+  --dv-tabs-container-background-color: var(--card);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--muted);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--muted);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-group-view-background-color: var(--card);
+  --dv-floating-group-background-color: var(--card);
+  --dv-tabs-container-scrollbar-color: var(--border);
+  color: var(--foreground);
+  background-color: var(--card);
+}
+
+/* VS Code-like tab bar: + button flush with tabs */
+.dv-tabs-and-actions-container {
+  min-height: 35px;
+}
+
+.dv-right-actions-container {
+  margin-left: 0 !important;
+}
+
+.dv-tab {
+  font-size: 12px;
+  cursor: grab;
+}
+
+/* React 自定义标签内容层会挡住 .dv-tab 的拖拽事件，需穿透 */
+.dv-tab > .dv-react-part {
+  pointer-events: none;
+}
+
+.dv-tab > .dv-react-part button {
+  pointer-events: auto;
+}
+
+.dv-tab:active {
+  cursor: grabbing;
+}
+
+.dv-drop-target-dropzone {
+  background-color: color-mix(in oklch, var(--primary) 25%, transparent) !important;
+}
+
+.dv-drop-target-anchor {
+  background-color: color-mix(in oklch, var(--primary) 35%, transparent) !important;
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.dockview-theme-dark,
+.dark .dv-container {
+  --dv-drag-over-background-color: color-mix(in oklch, var(--primary) 30%, transparent);
+  --dv-drag-over-border: 2px solid var(--primary);
+}
+
+.dockview-theme-light,
+.light .dv-container {
+  --dv-drag-over-background-color: color-mix(in oklch, var(--primary) 20%, transparent);
+  --dv-drag-over-border: 2px solid var(--primary);
+}
+
+/* AI chat markdown (Streamdown) */
+.ai-markdown :is(p, ul, ol, blockquote, pre):first-child {
+  margin-top: 0;
+}
+
+.ai-markdown :is(p, ul, ol, blockquote, pre):last-child {
+  margin-bottom: 0;
+}
+
+.ai-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Terminal scrollbar base */
+.terminal-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.terminal-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+}
