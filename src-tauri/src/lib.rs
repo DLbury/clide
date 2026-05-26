@@ -1,7 +1,6 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 pub mod app_paths;
 pub mod claude;
+pub mod process_util;
 pub mod runtime;
 pub mod secrets;
 pub mod shell_tool;

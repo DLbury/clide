@@ -1,3 +1,4 @@
+use crate::process_util::command_no_window;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -233,7 +234,7 @@ pub fn detect_claude_binary() -> ClaudeDetectResult {
 /// 读取 Claude Code 版本
 fn read_claude_version(path: &str) -> Option<String> {
     // 尝试使用 --version 参数
-    let output = std::process::Command::new(path)
+    let output = command_no_window(path)
         .arg("--version")
         .output()
         .ok()?;
@@ -246,7 +247,7 @@ fn read_claude_version(path: &str) -> Option<String> {
     }
 
     // 如果 --version 失败，尝试 -v
-    let output = std::process::Command::new(path)
+    let output = command_no_window(path)
         .arg("-v")
         .output()
         .ok()?;
@@ -259,7 +260,7 @@ fn read_claude_version(path: &str) -> Option<String> {
     }
 
     // 尝试 --help 并从帮助文本中提取版本信息
-    let output = std::process::Command::new(path)
+    let output = command_no_window(path)
         .arg("--help")
         .output()
         .ok()?;

@@ -1,11 +1,12 @@
 use crate::claude::detect::resolve_claude_path;
+use crate::process_util::command_no_window;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
@@ -139,7 +140,7 @@ impl ClaudeSessionManager {
             args.push("default".to_string());
         }
 
-        let mut command = Command::new(&claude);
+        let mut command = command_no_window(&claude);
         command
             .args(&args)
             .stdout(Stdio::piped())

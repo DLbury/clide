@@ -1,10 +1,10 @@
 use super::detect::resolve_claude_path;
 use crate::app_paths::{path_to_js_string, McpBundlePaths};
+use crate::process_util::command_no_window;
 use serde::Serialize;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const MCP_SERVER_NAME: &str = "aiterm";
 
@@ -36,7 +36,7 @@ fn config_has_aiterm(content: &str) -> bool {
 }
 
 fn is_listed_in_claude(claude_path: &str, scope_dir: &Path) -> bool {
-    let output = match Command::new(claude_path)
+    let output = match command_no_window(claude_path)
         .current_dir(scope_dir)
         .args(["mcp", "list"])
         .output()
@@ -121,7 +121,7 @@ pub fn register_mcp(
     let script_arg = path_to_js_string(&paths.launcher_script);
 
     if !is_listed_in_claude(&claude, &paths.config_dir) {
-        let output = Command::new(&claude)
+        let output = command_no_window(&claude)
             .current_dir(&paths.config_dir)
             .args([
                 "mcp",

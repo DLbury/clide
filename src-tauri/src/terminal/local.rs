@@ -50,8 +50,9 @@ pub fn spawn_local_pty(
         }
         _ => {
             if cfg!(windows) {
-                let mut c = CommandBuilder::new("powershell.exe");
-                c.args(["-NoLogo"]);
+                // 使用 ComSpec（cmd）而非 powershell.exe，避免 ConPTY 下弹出独立控制台窗口
+                let mut c = CommandBuilder::new_default_prog();
+                c.set_controlling_tty(false);
                 c
             } else {
                 let mut c = CommandBuilder::new("bash");
