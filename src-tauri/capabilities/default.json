@@ -30,7 +30,13 @@
 
     "core:window:allow-close",
 
-    "core:window:allow-set-fullscreen"
+    "core:window:allow-set-fullscreen",
+
+    "core:window:allow-show",
+
+    "core:window:allow-unminimize",
+
+    "core:window:allow-set-focus"
 
   ]
 

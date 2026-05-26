@@ -1230,7 +1230,18 @@ export default function AITerminal() {
     }
   }, [folders, foldersLoaded])
 
-  // 无打开标签时自动连接本地 Shell，替代空白欢迎页
+  // 启动时显示并聚焦主窗口（避免仅出现在任务栏）
+  useEffect(() => {
+    if (!isTauriRuntime()) return
+    void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+      const win = getCurrentWindow()
+      void win.show()
+      void win.unminimize()
+      void win.setFocus()
+    })
+  }, [])
+
+  // 无打开标签时自动连接本地 Shell（不写入侧边栏会话列表）
   useLayoutEffect(() => {
     if (!foldersLoaded) return
     if (connections.length > 0) {
@@ -1241,30 +1252,18 @@ export default function AITerminal() {
     autoLocalShellRef.current = true
 
     const sessions = folders.flatMap(f => f.sessions)
-    let localSession = sessions.find(s => s.id === DEFAULT_LOCAL_SHELL_SESSION_ID)
+    const legacy = findLegacyDefaultLocalShellSession(sessions)
+    const localSession =
+      sessions.find(s => s.id === DEFAULT_LOCAL_SHELL_SESSION_ID) ??
+      (legacy
+        ? { ...legacy, id: DEFAULT_LOCAL_SHELL_SESSION_ID }
+        : createDefaultLocalShellSession())
 
-    if (!localSession) {
-      const legacy = findLegacyDefaultLocalShellSession(sessions)
-      if (legacy) {
-        localSession = { ...legacy, id: DEFAULT_LOCAL_SHELL_SESSION_ID }
-      } else {
-        localSession = createDefaultLocalShellSession()
-      }
-      setFolders(prev => {
-        const updated = ensureDefaultFolder([...prev])
-        if (updated.some(f => f.sessions.some(s => s.id === DEFAULT_LOCAL_SHELL_SESSION_ID))) {
-          return prev
-        }
-        updated[0] = {
-          ...updated[0],
-          sessions: [...stripLegacyDefaultLocalSessions(updated[0].sessions), localSession!],
-        }
-        return updated
-      })
-    }
-
-    handleSessionConnect(localSession)
-  }, [foldersLoaded, connections.length, folders, setFolders, handleSessionConnect])
+    const timer = window.setTimeout(() => {
+      handleSessionConnect(localSession)
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [foldersLoaded, connections.length, folders, handleSessionConnect])
 
   // 切换连接标签时刷新该会话的远程文件树
   useEffect(() => {

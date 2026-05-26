@@ -1,3 +1,6 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+pub mod app_paths;
 pub mod claude;
 pub mod runtime;
 pub mod secrets;
@@ -5,6 +8,7 @@ pub mod shell_tool;
 pub mod state;
 pub mod terminal;
 
+use app_paths::McpBundlePaths;
 use claude::bridge::ClaudeBridge;
 use claude::detect::{detect_claude_binary, ClaudeAutoDetectManager, ClaudeDetectResult};
 use claude::session::ClaudeSessionManager;
@@ -13,7 +17,7 @@ use runtime::RuntimeStore;
 use shell_tool::ShellToolCoordinator;
 use state::IdeContext;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use terminal::{ConnectRequest, TerminalManager};
 
 pub struct AppState {
@@ -59,6 +63,7 @@ fn claude_stop_auto_detect(
 async fn claude_start_bridge(
     app: AppHandle,
     state: State<'_, AppState>,
+    mcp_paths: State<'_, McpBundlePaths>,
     workspace_folders: Vec<String>,
     claude_path: Option<String>,
 ) -> Result<claude::bridge::BridgeStatus, String> {
@@ -76,7 +81,7 @@ async fn claude_start_bridge(
     let bridge = ClaudeBridge::start(app.clone(), context, workspace_folders, claude_path.clone())?;
     let status = bridge.status();
     *bridge_guard = Some(bridge);
-    claude::try_auto_ensure_project_mcp();
+    claude::try_auto_ensure_project_mcp(&mcp_paths);
     Ok(status)
 }
 
@@ -96,21 +101,24 @@ fn claude_bridge_status(state: State<'_, AppState>) -> Result<Option<claude::bri
 }
 
 #[tauri::command]
-fn claude_mcp_status(claude_path: Option<String>) -> Result<claude::McpRegisterStatus, String> {
-    Ok(claude::check_mcp_status(claude_path))
+fn claude_mcp_status(
+    mcp_paths: State<'_, McpBundlePaths>,
+    claude_path: Option<String>,
+) -> Result<claude::McpRegisterStatus, String> {
+    Ok(claude::check_mcp_status(&mcp_paths, claude_path))
 }
 
 #[tauri::command]
-fn claude_register_mcp(claude_path: Option<String>) -> Result<claude::McpRegisterStatus, String> {
-    claude::register_mcp(claude_path)
+fn claude_register_mcp(
+    mcp_paths: State<'_, McpBundlePaths>,
+    claude_path: Option<String>,
+) -> Result<claude::McpRegisterStatus, String> {
+    claude::register_mcp(&mcp_paths, claude_path)
 }
 
 #[tauri::command]
-fn get_project_root() -> String {
-    crate::claude::bridge::resolve_workspace_folders(&[])
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| ".".to_string())
+fn get_project_root(mcp_paths: State<'_, McpBundlePaths>) -> String {
+    mcp_paths.display_root()
 }
 
 #[tauri::command]
@@ -152,6 +160,7 @@ fn complete_shell_tool_command(
 async fn claude_send_message(
     app: AppHandle,
     state: State<'_, AppState>,
+    mcp_paths: State<'_, McpBundlePaths>,
     prompt: String,
     claude_path: Option<String>,
     session_id: Option<String>,
@@ -195,6 +204,7 @@ async fn claude_send_message(
         bridge_port,
         bridge_auth_token,
         workspace_dir,
+        Some(mcp_paths.mcp_config_file.clone()),
     )?;
     Ok(request_id)
 }
@@ -353,6 +363,18 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let mcp_paths = McpBundlePaths::resolve(&handle)?;
+            handle.manage(mcp_paths);
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            Ok(())
+        })
         .manage(AppState {
             bridge: Mutex::new(None),
             sessions: ClaudeSessionManager::new(),

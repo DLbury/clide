@@ -75,10 +75,14 @@ function serializeSession(session: Session): StoredSession {
   }
 }
 
+const HIDDEN_SESSION_IDS = new Set(['__default_local_shell__'])
+
 function deserializeFolders(raw: StoredFolder[]): SessionFolder[] {
   return raw.map(folder => ({
     ...folder,
-    sessions: folder.sessions.map(s => deserializeSession(repairStoredSession(s))),
+    sessions: folder.sessions
+      .filter(s => !HIDDEN_SESSION_IDS.has(s.id))
+      .map(s => deserializeSession(repairStoredSession(s))),
   }))
 }
 

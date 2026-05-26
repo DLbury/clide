@@ -250,8 +250,8 @@ export function Sidebar({
     .filter(
       folder =>
         folder.sessions.length > 0 ||
-        folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        searchQuery === ''
+        (searchQuery !== '' &&
+          folder.name.toLowerCase().includes(searchQuery.toLowerCase()))
     )
 
   const startNewFolder = useCallback(() => {
@@ -312,17 +312,6 @@ export function Sidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto terminal-scrollbar p-2">
-        {folders.flatMap(f => f.sessions).filter(isSidebarVisibleSession).length === 0 &&
-          searchQuery === '' && (
-          <div className="px-3 py-8 text-center">
-            <Server className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
-            <p className="text-sm text-muted-foreground">暂无会话</p>
-            <p className="text-xs text-muted-foreground/70 mt-1 leading-relaxed">
-              点击下方「新建会话」录入真实的主机、端口与认证信息，数据会保存在本机浏览器中。
-            </p>
-          </div>
-        )}
-
         {filteredFolders.map(folder => (
           <ContextMenu key={folder.id}>
             <ContextMenuTrigger asChild>
@@ -350,7 +339,9 @@ export function Sidebar({
                     )}
                     <Folder className="w-4 h-4" />
                     <span className="flex-1 text-left truncate">{folder.name}</span>
-                    <span className="text-xs text-muted-foreground">{folder.sessions.length}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {folder.sessions.filter(isSidebarVisibleSession).length}
+                    </span>
                   </button>
                 )}
 
@@ -504,6 +495,16 @@ export function Sidebar({
             </ContextMenuContent>
           </ContextMenu>
         ))}
+
+        {filteredFolders.length === 0 && searchQuery === '' && (
+          <div className="px-3 py-8 text-center">
+            <Server className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">暂无会话</p>
+            <p className="text-xs text-muted-foreground/70 mt-1 leading-relaxed">
+              点击下方「新建会话」录入真实的主机、端口与认证信息，数据会保存在本机。
+            </p>
+          </div>
+        )}
 
         {pendingFolderName !== null && (
           <div className="flex items-center gap-2 px-2 py-1.5 mb-1">

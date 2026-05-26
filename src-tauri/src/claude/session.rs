@@ -103,6 +103,7 @@ impl ClaudeSessionManager {
         bridge_port: Option<u16>,
         bridge_auth_token: Option<String>,
         workspace_dir: Option<PathBuf>,
+        mcp_config: Option<PathBuf>,
     ) -> Result<(), String> {
         let claude = resolve_claude_path(claude_path)?;
 
@@ -154,15 +155,17 @@ impl ClaudeSessionManager {
             }
         }
 
+        if let Some(cfg) = mcp_config {
+            if cfg.is_file() {
+                command.env("CLAUDE_MCP_CONFIG", cfg.as_os_str());
+            }
+        }
+
         if let Some(dir) = workspace_dir {
             if dir.is_dir() {
                 command
                     .current_dir(&dir)
                     .env("CLAUDE_PROJECT_DIR", dir.as_os_str());
-                let mcp_config = dir.join(".mcp.json");
-                if mcp_config.is_file() {
-                    command.env("CLAUDE_MCP_CONFIG", mcp_config.as_os_str());
-                }
             }
         }
 
