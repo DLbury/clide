@@ -85,14 +85,23 @@ clide/
 
 ## 发布
 
-推送版本标签即可触发 GitHub Actions 构建三端安装包：
+### 首次发布前（必做）
+
+1. 打开仓库 **Settings → Actions → General**
+2. **Actions permissions** 选择 **Allow all actions and reusable workflows**
+3. **Workflow permissions** 选择 **Read and write permissions**
+4. 保存后，到 [Actions](https://github.com/DLbury/clide/actions) 页，若出现「Approve workflows」横幅，点击批准
+
+### 打标签发布
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-工作流定义见 [`.github/workflows/release.yml`](.github/workflows/release.yml)。
+也可在 Actions 页手动运行 **Release** 工作流（`workflow_dispatch`）。
+
+工作流定义见 [`.github/workflows/release.yml`](.github/workflows/release.yml)。构建完成后安装包出现在 [Releases](https://github.com/DLbury/clide/releases)。
 
 ## 技术栈
 
