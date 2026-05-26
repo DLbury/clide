@@ -2,11 +2,10 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "clide",
   "version": "0.1.0",
-  "identifier": "com.clide.app",
+  "identifier": "com.dlbury.clide",
   "build": {
     "beforeDevCommand": "npm run dev --prefix view",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "node ../scripts/tauri-before-build.mjs",
     "frontendDist": "../view/out"
   },
   "app": {

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "npm run dev --prefix view",
     "dev:tauri": "tauri dev",
-    "build:tauri": "tauri build",
+    "build:tauri": "npm run build:static --prefix view && tauri build",
     "build:web": "npm run build --prefix view",
     "build:static": "npm run build:static --prefix view",
     "kill": "taskkill /F /IM node.exe 2>nul || echo 无残留进程",
