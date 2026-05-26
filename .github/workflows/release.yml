@@ -1,15 +1,17 @@
 name: Release
 
+# 首次使用请在仓库 Settings → Actions → General 中启用 Actions
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   publish:
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
