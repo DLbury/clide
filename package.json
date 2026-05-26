@@ -7,6 +7,7 @@
     "dev:tauri": "tauri dev",
     "build:tauri": "tauri build",
     "build:web": "npm run build --prefix view",
+    "build:static": "npm run build:static --prefix view",
     "kill": "taskkill /F /IM node.exe 2>nul || echo 无残留进程",
     "kill:port": "npx kill-port 3000 3001 1420",
     "mcp:stdio": "node scripts/run-aiterm-mcp.mjs"
