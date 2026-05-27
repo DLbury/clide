@@ -249,9 +249,9 @@ export function Sidebar({
     }))
     .filter(
       folder =>
+        searchQuery === '' ||
         folder.sessions.length > 0 ||
-        (searchQuery !== '' &&
-          folder.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        folder.name.toLowerCase().includes(searchQuery.toLowerCase())
     )
 
   const startNewFolder = useCallback(() => {
@@ -496,7 +496,7 @@ export function Sidebar({
           </ContextMenu>
         ))}
 
-        {filteredFolders.length === 0 && searchQuery === '' && (
+        {folders.length === 0 && searchQuery === '' && (
           <div className="px-3 py-8 text-center">
             <Server className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
             <p className="text-sm text-muted-foreground">暂无会话</p>
