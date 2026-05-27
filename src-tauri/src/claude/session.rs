@@ -15,13 +15,14 @@ const IDE_BRIDGE_APPEND_PROMPT: &str = r#"You are connected to AI Terminal via I
 
 Remote/server shell tasks — mandatory workflow:
 1. Call `getFocusedServer` or `listActiveConnections` to get `profileId`.
+   - `profileId` must be the stable ID from tool output; never use session name/host/shellId as `profileId`.
 2. If the terminal is not connected, call `connectServer` with that `profileId`, then `runShellCommand`.
 3. Call `runShellCommand` with `profileId` and `command`. Use the tool JSON `output` field in your reply.
 4. NEVER say you "cannot connect directly" / "无法直接连接" / "MCP 受限" / "无法远程执行" and only paste bash blocks — you CAN execute via IDE tools.
 5. NEVER use local Bash/WSL/PowerShell for remote SSH operations.
 
-Tool names (IDE bridge — use these exact names): runShellCommand, getFocusedServer, connectServer, getTerminalContext, listServerProfiles, listActiveConnections.
-Also accepted: mcp__aiterm__runShellCommand and other mcp__aiterm__* aliases.
+Tool names (IDE bridge): prefer runShellCommand/getFocusedServer/connectServer/getTerminalContext/listServerProfiles/listActiveConnections.
+Compatibility aliases mcp__aiterm__* are accepted, but prefer non-prefixed names.
 
 Sudo / interactive passwords:
 - Run `sudo ...` via runShellCommand like any other command.
@@ -30,32 +31,32 @@ Sudo / interactive passwords:
 - SSH login passwords are handled by the app UI only — not by the AI.
 "#;
 
-/// dontAsk 模式下必须逐个放行；IDE 桥工具名无 mcp__ 前缀，仅写 mcp__aiterm 会导致 runShellCommand 被拒。
-const AITERM_ALLOWED_TOOLS: &[&str] = &[
+/// --ide 模式下放行的工具。
+/// 兼容部分模型偶发调用 `mcp__aiterm__*` 前缀名，避免 dontAsk 模式下被权限拒绝。
+const AITERM_IDE_ALLOWED_TOOLS: &[&str] = &[
     "runShellCommand",
-    "connectServer",
-    "disconnectServer",
-    "getFocusedServer",
-    "getTerminalContext",
-    "listServerProfiles",
-    "listActiveConnections",
-    "listRemoteFiles",
-    "readRemoteFile",
-    "getWorkspaceFolders",
-    "getOpenFiles",
-    "getCurrentSelection",
-    "mcp__aiterm",
     "mcp__aiterm__runShellCommand",
-    "mcp__aiterm__listServerProfiles",
-    "mcp__aiterm__listActiveConnections",
-    "mcp__aiterm__getFocusedServer",
-    "mcp__aiterm__getTerminalContext",
+    "connectServer",
     "mcp__aiterm__connectServer",
+    "disconnectServer",
     "mcp__aiterm__disconnectServer",
+    "getFocusedServer",
+    "mcp__aiterm__getFocusedServer",
+    "getTerminalContext",
+    "mcp__aiterm__getTerminalContext",
+    "listServerProfiles",
+    "mcp__aiterm__listServerProfiles",
+    "listActiveConnections",
+    "mcp__aiterm__listActiveConnections",
+    "listRemoteFiles",
     "mcp__aiterm__listRemoteFiles",
+    "readRemoteFile",
     "mcp__aiterm__readRemoteFile",
+    "getWorkspaceFolders",
     "mcp__aiterm__getWorkspaceFolders",
+    "getOpenFiles",
     "mcp__aiterm__getOpenFiles",
+    "getCurrentSelection",
     "mcp__aiterm__getCurrentSelection",
 ];
 
@@ -117,7 +118,10 @@ impl ClaudeSessionManager {
             "--include-partial-messages".to_string(),
         ];
 
-        // 按连接隔离：仅 --resume <uuid>；禁止 --continue（会共享工作区最近一次会话）
+        // 会话选择策略：
+        // - 指定 session_id => --resume
+        // - 用户明确继续 => --continue
+        // - 其余情况不附加隔离参数（兼容不支持 --isolated 的 Claude CLI 版本）
         if let Some(sid) = session_id.filter(|s| !s.trim().is_empty()) {
             args.push("--resume".to_string());
             args.push(sid);
@@ -129,7 +133,7 @@ impl ClaudeSessionManager {
             args.push("--ide".to_string());
             args.push("--permission-mode".to_string());
             args.push("dontAsk".to_string());
-            for tool in AITERM_ALLOWED_TOOLS {
+            for tool in AITERM_IDE_ALLOWED_TOOLS {
                 args.push("--allowed-tools".to_string());
                 args.push(tool.to_string());
             }
@@ -138,6 +142,13 @@ impl ClaudeSessionManager {
         } else {
             args.push("--permission-mode".to_string());
             args.push("default".to_string());
+        }
+
+        if let Some(ref cfg) = mcp_config {
+            if cfg.is_file() {
+                args.push("--mcp-config".to_string());
+                args.push(cfg.display().to_string());
+            }
         }
 
         let mut command = command_no_window(&claude);
@@ -156,7 +167,7 @@ impl ClaudeSessionManager {
             }
         }
 
-        if let Some(cfg) = mcp_config {
+        if let Some(ref cfg) = mcp_config {
             if cfg.is_file() {
                 command.env("CLAUDE_MCP_CONFIG", cfg.as_os_str());
             }
@@ -203,7 +214,39 @@ impl ClaudeSessionManager {
                 }
             }
 
-            running.lock().remove(&request_stdout);
+            let exit_error = running
+                .lock()
+                .remove(&request_stdout)
+                .and_then(|mut child| {
+                    child.wait().ok().and_then(|status| {
+                        if status.success() {
+                            None
+                        } else {
+                            Some(format!("Claude Code 进程异常退出 ({status})"))
+                        }
+                    })
+                });
+
+            if let Some(err) = exit_error {
+                let _ = app_stdout.emit(
+                    "claude:stream",
+                    ClaudeStreamEvent {
+                        request_id: request_stdout.clone(),
+                        event_type: "process_error".into(),
+                        text: Some(err.clone()),
+                        session_id: session_id.clone(),
+                        done: false,
+                        error: Some(err),
+                        reasoning: None,
+                        tool_id: None,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_error: None,
+                    },
+                );
+            }
+
             let _ = app_stdout.emit(
                 "claude:stream",
                 ClaudeStreamEvent {
@@ -229,9 +272,21 @@ impl ClaudeSessionManager {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let stale = line.to_lowercase().contains("no conversation found")
-                    || line.to_lowercase().contains("conversation not found");
-                let err_msg = if stale { Some(line.clone()) } else { None };
+                let lower = line.to_lowercase();
+                let stale = lower.contains("no conversation found")
+                    || lower.contains("conversation not found");
+                let fatal = !stale
+                    && (lower.contains("not recognized")
+                        || lower.contains("enoent")
+                        || lower.contains("cannot find")
+                        || lower.contains("command not found")
+                        || lower.contains("error:")
+                        || lower.contains("failed"));
+                let stream_error = if stale || fatal {
+                    Some(line.clone())
+                } else {
+                    None
+                };
                 let _ = app_stderr.emit(
                     "claude:stream",
                     ClaudeStreamEvent {
@@ -243,8 +298,8 @@ impl ClaudeSessionManager {
                         },
                         text: Some(line),
                         session_id: None,
-                        done: stale,
-                        error: err_msg,
+                        done: stale || fatal,
+                        error: stream_error,
                         reasoning: None,
                         tool_id: None,
                         tool_name: None,
@@ -306,24 +361,39 @@ fn parse_stream_line(
     };
 
     if event_type == "stream_event" {
-        if let Some(thinking) = value
-            .pointer("/event/delta/thinking")
+        let inner_type = value
+            .pointer("/event/type")
             .and_then(|v| v.as_str())
-            .map(str::to_string)
-        {
-            let mut ev = mk("reasoning_delta");
-            ev.reasoning = Some(thinking);
-            events_out.push(ev);
-        }
-        if let Some(text) = value
-            .pointer("/event/delta/text")
+            .unwrap_or("");
+        let delta_type = value
+            .pointer("/event/delta/type")
             .and_then(|v| v.as_str())
-            .map(str::to_string)
-        {
-            let mut ev = mk("stream_event");
-            ev.text = Some(text);
-            events_out.push(ev);
+            .unwrap_or("");
+
+        if inner_type == "content_block_delta" {
+            if delta_type == "text_delta" {
+                if let Some(text) = value
+                    .pointer("/event/delta/text")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    let mut ev = mk("stream_event");
+                    ev.text = Some(text.to_string());
+                    events_out.push(ev);
+                }
+            } else if delta_type == "thinking_delta" {
+                if let Some(thinking) = value
+                    .pointer("/event/delta/thinking")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    let mut ev = mk("reasoning_delta");
+                    ev.reasoning = Some(thinking.to_string());
+                    events_out.push(ev);
+                }
+            }
         }
+
         return events_out;
     }
 
@@ -350,6 +420,15 @@ fn parse_stream_line(
                             .map(str::to_string);
                         ev.tool_input = block.get("input").cloned();
                         events_out.push(ev);
+                    }
+                    Some("text") => {
+                        if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                            if !text.is_empty() {
+                                let mut ev = mk("stream_event");
+                                ev.text = Some(text.to_string());
+                                events_out.push(ev);
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -399,12 +478,13 @@ fn parse_stream_line(
             });
 
         let mut ev = mk("result");
-        ev.text = error.as_ref().and_then(|_| {
-            value
-                .get("result")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        });
+        if let Some(text) = value
+            .get("result")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            ev.text = Some(text.to_string());
+        }
         ev.session_id = session_id.clone();
         ev.done = true;
         ev.error = error;

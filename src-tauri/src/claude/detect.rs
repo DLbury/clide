@@ -48,7 +48,7 @@ impl ClaudeAutoDetectManager {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             while running.load(Ordering::SeqCst) {
-                let result = detect_claude_binary_internal();
+                let result = detect_claude_binary_internal(true);
                 let mut guard = last_result.write().await;
                 *guard = result;
                 guard.candidates = detect_all_claude_candidates();
@@ -69,7 +69,7 @@ impl ClaudeAutoDetectManager {
 
     /// 立即执行一次发现
     pub async fn detect_now(&self) -> ClaudeDetectResult {
-        let result = detect_claude_binary_internal();
+        let result = detect_claude_binary_internal(true);
         let mut guard = self.last_result.write().await;
         *guard = result;
         guard.clone()
@@ -211,7 +211,7 @@ fn detect_all_claude_candidates() -> Vec<String> {
 }
 
 /// 内部检测函数，用于自动发现管理器
-fn detect_claude_binary_internal() -> ClaudeDetectResult {
+fn detect_claude_binary_internal(skip_version: bool) -> ClaudeDetectResult {
     let candidates = detect_all_claude_candidates();
 
     // 优先使用环境变量指定的路径
@@ -221,7 +221,11 @@ fn detect_claude_binary_internal() -> ClaudeDetectResult {
         candidates.first().cloned()
     };
 
-    let version = path.as_ref().and_then(|p| read_claude_version(p));
+    let version = if skip_version {
+        None
+    } else {
+        path.as_ref().and_then(|p| read_claude_version(p))
+    };
 
     ClaudeDetectResult {
         found: path.is_some(),
@@ -231,9 +235,14 @@ fn detect_claude_binary_internal() -> ClaudeDetectResult {
     }
 }
 
-/// 公共 API：检测 Claude Code 二进制文件
+/// 公共 API：检测 Claude Code 二进制文件（快速，不跑 --version 子进程）
 pub fn detect_claude_binary() -> ClaudeDetectResult {
-    detect_claude_binary_internal()
+    detect_claude_binary_internal(true)
+}
+
+/// 含版本信息的完整检测（设置页等场景）
+pub fn detect_claude_binary_full() -> ClaudeDetectResult {
+    detect_claude_binary_internal(false)
 }
 
 /// 读取 Claude Code 版本

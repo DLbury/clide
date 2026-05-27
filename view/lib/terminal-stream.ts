@@ -36,6 +36,18 @@ export function clearTerminalOutputBuffer(sessionId: string): void {
   outputBuffers.delete(sessionId)
 }
 
+const resyncHandlers = new Set<(sessionId: string) => void>()
+
+/** 强制 xterm 从缓冲重绘（切换标签 / AI 注入命令后） */
+export function requestTerminalResync(sessionId: string): void {
+  resyncHandlers.forEach(handler => handler(sessionId))
+}
+
+export function onTerminalResync(handler: (sessionId: string) => void): () => void {
+  resyncHandlers.add(handler)
+  return () => resyncHandlers.delete(handler)
+}
+
 /** 向前端 xterm 注入显示文本（与 Tauri terminal:output 效果一致） */
 export function injectTerminalOutput(sessionId: string, data: string): void {
   dispatch({ sessionId, data })

@@ -79,8 +79,13 @@ async fn claude_start_bridge(
     let context = state.ide_context.clone();
     let bridge = ClaudeBridge::start(app.clone(), context, workspace_folders, claude_path.clone())?;
     let status = bridge.status();
+    let port = bridge.port();
+    let token = bridge.auth_token().to_string();
     *bridge_guard = Some(bridge);
-    claude::try_auto_ensure_project_mcp(&mcp_paths);
+    let paths = (*mcp_paths).clone();
+    std::thread::spawn(move || {
+        claude::try_auto_register_mcp(&paths, claude_path, port, &token);
+    });
     Ok(status)
 }
 
@@ -109,10 +114,21 @@ fn claude_mcp_status(
 
 #[tauri::command]
 fn claude_register_mcp(
+    state: State<'_, AppState>,
     mcp_paths: State<'_, McpBundlePaths>,
     claude_path: Option<String>,
 ) -> Result<claude::McpRegisterStatus, String> {
-    claude::register_mcp(&mcp_paths, claude_path)
+    let bridge_env = {
+        let bridge = state.bridge.lock();
+        bridge
+            .as_ref()
+            .filter(|b| b.is_running())
+            .map(|b| (b.port(), b.auth_token().to_string()))
+    };
+    let bridge_ref = bridge_env
+        .as_ref()
+        .map(|(p, t)| (*p, t.as_str()));
+    claude::register_mcp(&mcp_paths, claude_path, bridge_ref)
 }
 
 #[tauri::command]
@@ -164,6 +180,7 @@ async fn claude_send_message(
     claude_path: Option<String>,
     session_id: Option<String>,
     continue_session: bool,
+    request_id: Option<String>,
 ) -> Result<String, String> {
     let bridge_info = {
         let bridge_guard = state.bridge.lock();
@@ -187,11 +204,20 @@ async fn claude_send_message(
                 .map(std::path::PathBuf::from)
         });
 
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let (bridge_port, bridge_auth_token, workspace_dir) = match bridge_info {
-        Some((p, t, _)) => (Some(p), Some(t), workspace_dir.clone()),
+    let request_id = request_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let (bridge_port, bridge_auth_token, workspace_dir) = match &bridge_info {
+        Some((p, t, _)) => (Some(*p), Some(t.clone()), workspace_dir.clone()),
         None => (None, None, workspace_dir),
     };
+
+    if let Some((port, token, _)) = &bridge_info {
+        let _ = claude::sync_mcp_bridge_env(&mcp_paths, *port, token);
+        let _ = claude::ensure_project_mcp_json(&mcp_paths, Some((*port, token.as_str())));
+    } else {
+        let _ = claude::ensure_project_mcp_json(&mcp_paths, None);
+    }
 
     state.sessions.spawn(
         app,

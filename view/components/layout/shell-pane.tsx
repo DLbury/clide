@@ -26,6 +26,7 @@ interface ShellPaneProps {
   sessionId?: string
   /** 该 Shell 的 PTY 是否已连接（与侧边栏会话状态独立） */
   terminalConnected?: boolean
+  terminalStatus?: 'connecting' | 'connected' | 'disconnected' | 'error'
   clearSignal?: number
   inputEnabled?: boolean
   hideTabBar?: boolean
@@ -59,6 +60,7 @@ export function ShellPane({
   terminalLive = false,
   sessionId,
   terminalConnected = false,
+  terminalStatus,
   clearSignal = 0,
   inputEnabled = true,
   hideTabBar = false,
@@ -200,7 +202,9 @@ export function ShellPane({
           />
           {!terminalConnected && (
             <div className="shrink-0 border-t border-border px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10">
-              终端未连接 — 请在侧边栏点击「连接」
+              {terminalStatus === 'connecting'
+                ? '正在连接终端…'
+                : '终端未连接 — 请在侧边栏点击「连接」'}
             </div>
           )}
         </div>

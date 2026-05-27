@@ -131,18 +131,41 @@ fn tool_def_with_meta(
 
 pub fn execute_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> String {
     let result = match name {
-        "listServerProfiles" | "list_server_profiles" | "listSessions" => tool_list_profiles(ctx),
-        "listActiveConnections" | "list_active_connections" => tool_list_connections(ctx),
-        "getFocusedServer" | "get_focused_server" => tool_get_focused(ctx),
-        "getTerminalContext" | "get_terminal_context" => tool_terminal_context(ctx),
-        "connectServer" | "connect_server" | "connectSession" => tool_connect(ctx, args),
-        "disconnectServer" | "disconnect_server" | "disconnectSession" => tool_disconnect(ctx, args),
-        "runShellCommand" | "run_shell_command" | "executeCommand" => tool_run_command(ctx, args),
-        "listRemoteFiles" | "list_remote_files" => tool_list_files(ctx, args),
-        "readRemoteFile" | "read_remote_file" => tool_read_file(ctx, args),
-        "getWorkspaceFolders" | "get_workspace_folders" => tool_workspace(ctx),
-        "getOpenFiles" | "get_open_files" => tool_open_files(ctx),
-        "getCurrentSelection" => tool_selection(ctx),
+        "listServerProfiles"
+        | "list_server_profiles"
+        | "listSessions"
+        | "mcp__aiterm__listServerProfiles" => tool_list_profiles(ctx),
+        "listActiveConnections"
+        | "list_active_connections"
+        | "mcp__aiterm__listActiveConnections" => tool_list_connections(ctx),
+        "getFocusedServer" | "get_focused_server" | "mcp__aiterm__getFocusedServer" => {
+            tool_get_focused(ctx)
+        }
+        "getTerminalContext" | "get_terminal_context" | "mcp__aiterm__getTerminalContext" => {
+            tool_terminal_context(ctx)
+        }
+        "connectServer" | "connect_server" | "connectSession" | "mcp__aiterm__connectServer" => {
+            tool_connect(ctx, args)
+        }
+        "disconnectServer"
+        | "disconnect_server"
+        | "disconnectSession"
+        | "mcp__aiterm__disconnectServer" => tool_disconnect(ctx, args),
+        "runShellCommand"
+        | "run_shell_command"
+        | "executeCommand"
+        | "mcp__aiterm__runShellCommand" => tool_run_command(ctx, args),
+        "listRemoteFiles" | "list_remote_files" | "mcp__aiterm__listRemoteFiles" => {
+            tool_list_files(ctx, args)
+        }
+        "readRemoteFile" | "read_remote_file" | "mcp__aiterm__readRemoteFile" => {
+            tool_read_file(ctx, args)
+        }
+        "getWorkspaceFolders" | "get_workspace_folders" | "mcp__aiterm__getWorkspaceFolders" => {
+            tool_workspace(ctx)
+        }
+        "getOpenFiles" | "get_open_files" | "mcp__aiterm__getOpenFiles" => tool_open_files(ctx),
+        "getCurrentSelection" | "mcp__aiterm__getCurrentSelection" => tool_selection(ctx),
         _ => json!({ "success": false, "error": format!("未知工具: {name}") }),
     };
     serde_json::to_string(&result).unwrap_or_else(|_| "{}".into())
@@ -377,19 +400,35 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let wait_ms = args.get("waitMs").and_then(|v| v.as_u64()).unwrap_or(8000);
 
     let (Some(pid), Some(cmd)) = (profile_id, command) else {
+        tracing::warn!("runShellCommand: missing profileId or command");
         return json!({ "success": false, "error": "缺少 profileId 或 command" });
     };
+
+    tracing::info!("runShellCommand: profile={}, command={}", pid, cmd);
 
     let Some((terminal_session_id, resolved_profile, _shell)) =
         ctx.runtime.find_terminal_session(pid, shell_id)
     else {
+        tracing::warn!("runShellCommand: terminal session not found for profile={}", pid);
         return json!({
             "success": false,
             "error": format!("未找到已连接终端 profile={pid}，请先 connectServer")
         });
     };
 
+    tracing::info!("runShellCommand: terminal_session_id={}", terminal_session_id);
+
+    let session_type = ctx
+        .runtime
+        .get()
+        .profiles
+        .iter()
+        .find(|p| p.id == resolved_profile)
+        .map(|p| p.session_type.clone())
+        .unwrap_or_else(|| "local".to_string());
+
     if !ctx.terminals.is_connected(&terminal_session_id) {
+        tracing::warn!("runShellCommand: terminal not connected: {}", terminal_session_id);
         return json!({
             "success": false,
             "error": "终端未连接",
@@ -399,9 +438,9 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
 
     let display_cmd = redact_for_display(cmd, Some(&resolved_profile));
     let real_cmd = substitute_command_placeholders(cmd, Some(&resolved_profile));
-    let request_id = uuid::Uuid::new_v4().to_string();
+    let real_cmd = crate::terminal::prepare_command_for_pty(&real_cmd, &session_type);
 
-    ctx.shell_tools.begin(request_id.clone());
+    tracing::info!("runShellCommand: executing command, display={}", display_cmd);
 
     emit_activity(
         ctx.app,
@@ -414,25 +453,29 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
         }),
     );
 
+    // 通知前端切换并聚焦对应 Shell 标签（执行由 Rust PTY 完成，不依赖前端回传）
     let _ = ctx.app.emit(
         "claude:tool-request",
         json!({
             "tool": "runShellCommand",
-            "requestId": request_id,
+            "requestId": uuid::Uuid::new_v4().to_string(),
             "profileId": resolved_profile,
             "terminalSessionId": terminal_session_id,
-            "command": real_cmd,
+            "command": display_cmd,
             "displayCommand": display_cmd,
-            "waitMs": wait_ms,
+            "focusOnly": true,
         }),
     );
 
-    let result = ctx.shell_tools.wait(&request_id, wait_ms);
-    ctx.shell_tools.cleanup(&request_id);
-
-    match result {
+    match ctx.terminals.run_command_with_display(
+        &ctx.app,
+        &terminal_session_id,
+        &real_cmd,
+        wait_ms,
+    ) {
         Ok(output) => {
             let preview: String = output.chars().take(4000).collect();
+            tracing::info!("runShellCommand: completed, output_len={}", output.len());
             emit_activity(
                 ctx.app,
                 json!({
@@ -453,6 +496,7 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
             })
         }
         Err(e) => {
+            tracing::error!("runShellCommand: failed with error: {}", e);
             emit_activity(
                 ctx.app,
                 json!({

@@ -125,13 +125,16 @@ export function ensureDefaultFolder(folders: SessionFolder[]): SessionFolder[] {
 }
 
 export function useSessionFolders() {
-  const [folders, setFolders] = useState<SessionFolder[]>([])
-  const [loaded, setLoaded] = useState(false)
+  const [folders, setFolders] = useState<SessionFolder[]>(() =>
+    typeof window !== 'undefined' ? loadSessionFolders() : []
+  )
+  const [loaded, setLoaded] = useState(() => typeof window !== 'undefined')
 
   useEffect(() => {
+    if (loaded) return
     setFolders(loadSessionFolders())
     setLoaded(true)
-  }, [])
+  }, [loaded])
 
   useEffect(() => {
     if (!loaded) return

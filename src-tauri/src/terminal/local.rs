@@ -50,8 +50,9 @@ pub fn spawn_local_pty(
         }
         _ => {
             if cfg!(windows) {
-                // 使用 ComSpec（cmd）而非 powershell.exe，避免 ConPTY 下弹出独立控制台窗口
-                let mut c = CommandBuilder::new_default_prog();
+                // Windows 默认 PowerShell，避免 AI 发出的 PS 命令在 cmd 中 `$` 被吃掉
+                let mut c = CommandBuilder::new("powershell.exe");
+                c.args(["-NoLogo", "-NoProfile"]);
                 c.set_controlling_tty(false);
                 c
             } else {

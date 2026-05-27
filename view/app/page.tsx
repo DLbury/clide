@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Sidebar } from '@/components/terminal/sidebar'
 import { ServerTabs } from '@/components/terminal/server-tabs'
 import { StatusBar } from '@/components/terminal/status-bar'
@@ -100,8 +100,10 @@ import {
   createDefaultLocalShellSession,
   DEFAULT_LOCAL_SHELL_SESSION_ID,
   findLegacyDefaultLocalShellSession,
+  isDefaultLocalShellSession,
   stripLegacyDefaultLocalSessions,
 } from '@/lib/default-local-shell'
+import { createInitialDesktopConnection } from '@/lib/initial-desktop-state'
 import {
   authConfigFromSession,
   newSessionId,
@@ -123,6 +125,22 @@ interface PendingPasswordConnect {
   terminalSessionId: string
   allowDefaultKeys: boolean
   authFailureReason?: string
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} 超时（>${Math.round(timeoutMs / 1000)}s）`))
+        }, timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 interface Shell {
@@ -217,8 +235,13 @@ export default function AITerminal() {
   const { settings: aiSettings, updateSettings: updateAiSettings, clearClaudeSessionId } =
     useAiSettings()
   const { folders, setFolders, loaded: foldersLoaded } = useSessionFolders()
-  const [connections, setConnections] = useState<ServerConnection[]>([])
-  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null)
+  const [connections, setConnections] = useState<ServerConnection[]>(() => {
+    const initial = createInitialDesktopConnection()
+    return (initial?.connections as ServerConnection[]) ?? []
+  })
+  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(() => {
+    return createInitialDesktopConnection()?.activeConnectionId ?? null
+  })
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('ai')
@@ -228,7 +251,7 @@ export default function AITerminal() {
   const workbenchRef = useRef<WorkbenchLayoutHandle>(null)
   const [editingSession, setEditingSession] = useState<Session | null>(null)
   const [newSessionFolderId, setNewSessionFolderId] = useState<string | null>(null)
-  const autoLocalShellRef = useRef(false)
+  const initialLocalConnectRef = useRef(false)
   const [terminalClearSignals, setTerminalClearSignals] = useState<Record<string, number>>({})
   const [toolActivities, setToolActivities] = useState<ToolActivityEvent[]>([])
   const [passwordPrompt, setPasswordPrompt] = useState<PendingPasswordConnect | null>(null)
@@ -652,6 +675,17 @@ export default function AITerminal() {
     []
   )
 
+  // 切换连接时清除全局 Claude session，避免新连接继承上下文
+  useEffect(() => {
+    if (activeConnectionId) {
+      const conn = connections.find(c => c.id === activeConnectionId)
+      // 如果当前连接没有 claudeSessionId，说明是新会话，不应该恢复任何会话
+      if (!conn?.claudeSessionId) {
+        clearClaudeSessionId()
+      }
+    }
+  }, [activeConnectionId, connections, clearClaudeSessionId])
+
   const activeShellConnected =
     Boolean(
       activeConnection?.terminalLive &&
@@ -803,13 +837,6 @@ export default function AITerminal() {
           )
           if (
             connectedConn &&
-            aiSettingsRef.current.enabled &&
-            aiSettingsRef.current.backend === 'claude-code'
-          ) {
-            void claudeCodeRef.current?.restartBridge().catch(console.error)
-          }
-          if (
-            connectedConn &&
             connectedConn.session.type === 'ssh' &&
             followTerminalCwdRef.current
           ) {
@@ -936,8 +963,49 @@ export default function AITerminal() {
         return
       }
 
+      const isLocalLike = resolved.type === 'local' || resolved.type === 'wsl'
+      const connect = () =>
+        connectTerminalSession(resolved, terminalSessionId).catch((err: Error) => {
+          const message = err.message || '连接失败'
+          setConnections(prev =>
+            prev.map(conn => {
+              if (conn.id !== connectionId) return conn
+              return {
+                ...conn,
+                session: { ...conn.session, status: 'disconnected' },
+                shells: conn.shells.map(shell =>
+                  shell.id === shellId
+                    ? {
+                        ...shell,
+                        terminalStatus: 'disconnected' as const,
+                        history: [
+                          ...shell.history,
+                          {
+                            id: `err-${Date.now()}`,
+                            type: 'error' as const,
+                            content: message,
+                            timestamp: new Date(),
+                          },
+                        ],
+                      }
+                    : shell
+                ),
+              }
+            })
+          )
+          setFolders(prev =>
+            setSessionStatusInFolders(prev, session.id, 'disconnected')
+          )
+          offerPasswordRetryAfterAuthFailure(terminalSessionId, message)
+        })
+
+      if (isLocalLike) {
+        void connect()
+        return
+      }
+
       void registerProfileAuth(resolved)
-        .then(() => connectTerminalSession(resolved, terminalSessionId))
+        .then(connect)
         .catch((err: Error) => {
           const message = err.message || '连接失败'
           setConnections(prev =>
@@ -1188,8 +1256,12 @@ export default function AITerminal() {
 
   const pushRuntimeSnapshot = useCallback(() => {
     if (!isTauriRuntime()) return
+    const folderProfiles = folders.flatMap(f => f.sessions)
+    const connProfiles = connections
+      .map(c => c.session)
+      .filter(s => !folderProfiles.some(p => p.id === s.id))
     const snapshot = buildRuntimeSnapshot({
-      folders,
+      folders: [{ id: '__runtime__', name: '', sessions: [...folderProfiles, ...connProfiles], isExpanded: true }],
       connections: connections.map(c => ({
         id: c.id,
         session: c.session,
@@ -1218,39 +1290,52 @@ export default function AITerminal() {
     return () => window.clearTimeout(timer)
   }, [folders, connections, pushRuntimeSnapshot])
 
-  // 启动后恢复本机已存密码并注册到 Rust vault
+  // 启动后恢复本机已存密码（仅 SSH，延迟执行不阻塞首屏）
   useEffect(() => {
     if (!foldersLoaded || !isTauriRuntime()) return
-    for (const session of folders.flatMap(f => f.sessions)) {
-      const stored = getStoredPassword(session.id)
-      if (stored) {
-        setRuntimePassword(session.id, stored)
+    let cancelled = false
+    let batchTimer: number | null = null
+    const warmupTimer = window.setTimeout(() => {
+      const sshSessions = folders.flatMap(f => f.sessions).filter(s => s.type === 'ssh')
+      let index = 0
+      const runNext = () => {
+        if (cancelled || index >= sshSessions.length) return
+        const session = sshSessions[index++]
+        const stored = getStoredPassword(session.id)
+        if (stored) {
+          setRuntimePassword(session.id, stored)
+        }
+        void registerProfileAuth(resolveSessionForConnect(session))
+        batchTimer = window.setTimeout(runNext, 120)
       }
-      void registerProfileAuth(resolveSessionForConnect(session))
+      runNext()
+    }, 2500)
+    return () => {
+      cancelled = true
+      window.clearTimeout(warmupTimer)
+      if (batchTimer !== null) {
+        window.clearTimeout(batchTimer)
+      }
     }
   }, [folders, foldersLoaded])
 
-  // 启动时显示并聚焦主窗口（避免仅出现在任务栏）
+  // 桌面版：首屏已有默认连接，立即发起 PTY 连接（不等待 foldersLoaded / 200ms）
   useEffect(() => {
-    if (!isTauriRuntime()) return
-    void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
-      const win = getCurrentWindow()
-      void win.show()
-      void win.unminimize()
-      void win.setFocus()
+    if (!isTauriRuntime() || initialLocalConnectRef.current) return
+    const conn = connectionsRef.current.find(c => isDefaultLocalShellSession(c.session))
+    if (!conn) return
+    const shell = conn.shells[0]
+    if (!shell || shell.terminalStatus === 'connected') return
+    initialLocalConnectRef.current = true
+    runBackendConnect(conn.session, conn.id, shell.id, shell.terminalSessionId, {
+      skipPasswordPrompt: true,
     })
-  }, [])
+  }, [runBackendConnect])
 
-  // 无打开标签时自动连接本地 Shell（不写入侧边栏会话列表）
-  useLayoutEffect(() => {
-    if (!foldersLoaded) return
-    if (connections.length > 0) {
-      autoLocalShellRef.current = false
-      return
-    }
-    if (autoLocalShellRef.current) return
-    autoLocalShellRef.current = true
-
+  // 无标签且非桌面预置连接时，补开本地 Shell
+  useEffect(() => {
+    if (!isTauriRuntime() || !foldersLoaded) return
+    if (connections.length > 0) return
     const sessions = folders.flatMap(f => f.sessions)
     const legacy = findLegacyDefaultLocalShellSession(sessions)
     const localSession =
@@ -1258,11 +1343,7 @@ export default function AITerminal() {
       (legacy
         ? { ...legacy, id: DEFAULT_LOCAL_SHELL_SESSION_ID }
         : createDefaultLocalShellSession())
-
-    const timer = window.setTimeout(() => {
-      handleSessionConnect(localSession)
-    }, 200)
-    return () => window.clearTimeout(timer)
+    handleSessionConnect(localSession)
   }, [foldersLoaded, connections.length, folders, handleSessionConnect])
 
   // 切换连接标签时刷新该会话的远程文件树
@@ -1539,20 +1620,32 @@ export default function AITerminal() {
   }, [activeConnectionId])
   handleShellChangeRef.current = handleShellChange
 
-  const focusShellByTerminalId = useCallback((terminalSessionId: string) => {
-    const conn = connectionsRef.current.find(c =>
-      c.shells.some(s => s.terminalSessionId === terminalSessionId)
-    )
-    if (!conn) return
-    const shell = conn.shells.find(s => s.terminalSessionId === terminalSessionId)
-    if (!shell) return
-    if (conn.id !== activeConnectionIdRef.current) {
-      setActiveConnectionId(conn.id)
-    }
-    if (conn.activeShellId !== shell.id) {
-      handleShellChangeRef.current(shell.id)
-    }
-    window.setTimeout(() => workbenchRef.current?.focusTerminal(), 80)
+  const focusShellByTerminalId = useCallback((terminalSessionId: string): Promise<void> => {
+    return new Promise(resolve => {
+      const conn = connectionsRef.current.find(c =>
+        c.shells.some(s => s.terminalSessionId === terminalSessionId)
+      )
+      if (!conn) {
+        resolve()
+        return
+      }
+      const shell = conn.shells.find(s => s.terminalSessionId === terminalSessionId)
+      if (!shell) {
+        resolve()
+        return
+      }
+      if (conn.id !== activeConnectionIdRef.current) {
+        setActiveConnectionId(conn.id)
+      }
+      if (conn.activeShellId !== shell.id) {
+        handleShellChangeRef.current(shell.id)
+      }
+      window.requestAnimationFrame(() => {
+        workbenchRef.current?.activateShellById(shell.id)
+        workbenchRef.current?.focusTerminal()
+        window.setTimeout(() => resolve(), 120)
+      })
+    })
   }, [])
 
   // File management — VS Code editor model pattern
@@ -1785,6 +1878,8 @@ export default function AITerminal() {
 
       if (useClaudeCodeBackend) {
         try {
+          await claudeCode.ensureStreamReady()
+          await claudeCode.ensureBridgeReady()
           const ctx = getIdeContext()
           let prompt = message
           if (aiSettings.systemPrompt.trim()) {
@@ -1808,12 +1903,51 @@ export default function AITerminal() {
           let staleRetried = false
 
           const registerHandler = (requestId: string) => {
+            let silentTimer: ReturnType<typeof setTimeout> | null = null
+            const armSilentTimeout = () => {
+              if (silentTimer) clearTimeout(silentTimer)
+              silentTimer = setTimeout(() => {
+                void cancelClaudeMessage(requestId).catch(() => {})
+                setConnections(prev =>
+                  prev.map(conn => {
+                    if (conn.id !== activeConnectionId) return conn
+                    return {
+                      ...conn,
+                      aiMessages: conn.aiMessages.map(m =>
+                        m.id === assistantId
+                          ? {
+                              ...m,
+                              content:
+                                m.content ||
+                                'Claude 请求长时间无响应，已自动取消。请重试一次；若持续出现请检查 Claude CLI 登录状态。',
+                            }
+                          : m
+                      ),
+                      aiThinking: false,
+                    }
+                  })
+                )
+                activeAssistantIdRef.current = null
+                const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
+                pending?.delete(requestId)
+              }, 90000)
+            }
+            armSilentTimeout()
             claudeCode.registerStreamHandler(requestId, event => {
-              const streamText =
-                event.text &&
-                event.eventType === 'stream_event'
-                  ? event.text
-                  : undefined
+              armSilentTimeout()
+              let streamText: string | undefined
+              if (event.text) {
+                if (
+                  event.eventType === 'stream_event' ||
+                  event.eventType === 'stderr' ||
+                  event.eventType === 'process_error'
+                ) {
+                  streamText = event.text
+                } else if (event.eventType === 'result') {
+                  // 已有流式片段时不再追加整段 result，避免重复
+                  streamText = assistantAccumulated ? undefined : event.text
+                }
+              }
 
               if (streamText) {
                 assistantAccumulated += streamText
@@ -1859,6 +1993,10 @@ export default function AITerminal() {
               }
 
               if (event.done) {
+                if (silentTimer) {
+                  clearTimeout(silentTimer)
+                  silentTimer = null
+                }
                 const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
                 pending?.delete(requestId)
 
@@ -1955,19 +2093,31 @@ export default function AITerminal() {
                 }
               })
             )
-            const requestId = await sendClaudeMessage({
-              prompt,
-              claudePath: aiSettings.claudePath || undefined,
-              sessionId: resumeSessionId,
-              continueSession: false,
-            })
+            const requestId = crypto.randomUUID()
+            registerHandler(requestId)
             let pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
             if (!pending) {
               pending = new Set()
               claudeRequestsByConnectionRef.current.set(activeConnectionId, pending)
             }
             pending.add(requestId)
-            registerHandler(requestId)
+            try {
+              await withTimeout(
+                sendClaudeMessage({
+                  prompt,
+                  claudePath: aiSettings.claudePath || undefined,
+                  sessionId: resumeSessionId,
+                  continueSession: false,
+                  requestId,
+                }),
+                20000,
+                '发送 Claude 请求'
+              )
+            } catch (err) {
+              const set = claudeRequestsByConnectionRef.current.get(activeConnectionId)
+              set?.delete(requestId)
+              throw err
+            }
           }
 
           const connForSession = connectionsRef.current.find(c => c.id === activeConnectionId)
@@ -2014,6 +2164,22 @@ export default function AITerminal() {
     if (!activeConnectionId) return
     void resetConnectionClaudeSession(activeConnectionId, { clearChat: true })
   }, [activeConnectionId, resetConnectionClaudeSession])
+
+  const handleStopAiMessage = useCallback(() => {
+    if (!activeConnectionId) return
+    const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
+    if (!pending || pending.size === 0) return
+    for (const requestId of pending) {
+      void cancelClaudeMessage(requestId).catch(() => {})
+    }
+    claudeRequestsByConnectionRef.current.delete(activeConnectionId)
+    activeAssistantIdRef.current = null
+    setConnections(prev =>
+      prev.map(conn =>
+        conn.id === activeConnectionId ? { ...conn, aiThinking: false } : conn
+      )
+    )
+  }, [activeConnectionId])
 
   const handleAiSidebarToggle = useCallback(() => {
     setShowAiPane(v => !v)
@@ -2206,19 +2372,20 @@ export default function AITerminal() {
     }
     if (
       tool === 'runShellCommand' &&
-      typeof payload.requestId === 'string' &&
-      typeof payload.terminalSessionId === 'string' &&
-      typeof payload.command === 'string'
+      typeof payload.terminalSessionId === 'string'
     ) {
       mcpShellCommandThisTurnRef.current = true
       const terminalSessionId = payload.terminalSessionId as string
-      focusShellByTerminalId(terminalSessionId)
-      void executeShellToolInTab({
-        requestId: payload.requestId as string,
-        terminalSessionId,
-        command: payload.command as string,
-        waitMs: typeof payload.waitMs === 'number' ? payload.waitMs : undefined,
-      })
+      void focusShellByTerminalId(terminalSessionId)
+      // 命令由 Rust PTY 直接执行并推送 terminal:output；focusOnly 时不走前端 executeShellToolInTab
+      if (payload.focusOnly !== true && typeof payload.requestId === 'string' && typeof payload.command === 'string') {
+        void executeShellToolInTab({
+          requestId: payload.requestId as string,
+          terminalSessionId,
+          command: payload.command as string,
+          waitMs: typeof payload.waitMs === 'number' ? payload.waitMs : undefined,
+        })
+      }
     }
   }
 
@@ -2446,15 +2613,20 @@ export default function AITerminal() {
                     }
                   : undefined
               }
+              mcpStatus={claudeCode.mcpStatus}
+              mcpRegisterError={claudeCode.mcpRegisterError}
+              mcpRegistering={claudeCode.mcpRegistering}
+              onRetryMcpRegister={() => void claudeCode.retryMcpRegister()}
               onSendMessage={handleAiMessage}
+              onStopMessage={handleStopAiMessage}
               onExecuteCommand={handleAiExecuteCommand}
               onClearChat={handleClearAiChat}
               claudePath={aiSettings.claudePath || undefined}
             />
           </ResizablePanel>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-            正在打开本地终端…
+          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm px-6 text-center">
+            暂无打开的连接。请在左侧选择会话并点击「连接」，或新建会话。
           </div>
         )}
       </div>

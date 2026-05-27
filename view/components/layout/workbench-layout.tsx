@@ -117,6 +117,7 @@ function TerminalPanel({ params }: IDockviewPanelProps<TerminalPanelParams>) {
       terminalLive={params.terminalLive}
       sessionId={shell.terminalSessionId}
       terminalConnected={shell.terminalStatus === 'connected'}
+      terminalStatus={shell.terminalStatus}
       clearSignal={clearSignals[shell.terminalSessionId] ?? 0}
       inputEnabled={activeShellId === params.shellId}
       hideTabBar
@@ -243,6 +244,7 @@ export interface WorkbenchLayoutProps {
 
 export interface WorkbenchLayoutHandle {
   focusTerminal: () => void
+  activateShellById: (shellId: string) => void
   focusEditor: () => void
   splitEditor: (direction: 'right' | 'below') => void
 }
@@ -652,6 +654,11 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
           api.getPanel(`terminal-${activeShellId}`) ??
           api.panels.find(p => p.id.startsWith('terminal-'))
         panel?.api.setActive()
+      },
+      activateShellById: (shellId: string) => {
+        const api = apiRef.current
+        if (!api) return
+        api.getPanel(`terminal-${shellId}`)?.api.setActive()
       },
       focusEditor: () => {
         const api = apiRef.current

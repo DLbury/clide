@@ -24,7 +24,7 @@ function findBridge() {
 
   const ideDir = path.join(os.homedir(), '.claude', 'ide')
   if (!fs.existsSync(ideDir)) {
-    throw new Error('未找到 ~/.claude/ide，请先启动 AITerm 并开启 Claude Code 桥接')
+    throw new Error('未找到 ~/.claude/ide，请先启动 clide 并开启 Claude Code 桥接')
   }
 
   const locks = fs
@@ -40,11 +40,17 @@ function findBridge() {
       }
     })
     .filter(Boolean)
-    .filter(x => x.data.ideName === 'AI Terminal' && x.data.transport === 'ws')
+    .filter(
+      x =>
+        (x.data.ideName === 'clide' ||
+          x.data.ideName === 'AI Terminal' ||
+          x.data.ideName === 'AITerm') &&
+        x.data.transport === 'ws'
+    )
 
   if (locks.length === 0) {
     throw new Error(
-      '未找到 AI Terminal 桥接 lock 文件。请用 npm run dev:tauri 启动 AITerm，并确认 AI 侧栏桥接已连接。'
+      '未找到 clide IDE 桥接 lock 文件。请先启动 clide 并确认 AI 侧栏桥接已连接（绿点）。'
     )
   }
 

@@ -1,4 +1,6 @@
 mod channels;
+mod command_prep;
+pub use command_prep::prepare_command_for_pty;
 mod local;
 mod manager;
 mod output_buffer;

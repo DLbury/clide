@@ -13,6 +13,8 @@
     "mcp:stdio": "node scripts/run-aiterm-mcp.mjs"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.4.0"
+    "@tauri-apps/cli": "^2.4.0",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5"
   }
 }

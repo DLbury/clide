@@ -90,8 +90,7 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
             Claude 项目登记：{mcpStatus.claudeProjectRegistered ? '已登记' : '未登记'}
           </p>
           <p className="text-muted-foreground">
-            IDE 桥接在 AI 启用时自动启动；MCP 需写入项目 .mcp.json 并通过{' '}
-            <code className="text-[10px]">claude mcp add -s project</code> 登记。
+            IDE 桥接在 AI 启用时自动启动；MCP 配置写入应用数据目录 .mcp.json，桥接启动时自动同步。
           </p>
           {(!mcpStatus.ready || !mcpStatus.claudeProjectRegistered) && (
             <button

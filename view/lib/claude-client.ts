@@ -104,12 +104,15 @@ export async function sendClaudeMessage(options: {
   claudePath?: string
   sessionId?: string
   continueSession?: boolean
+  /** 由前端预生成并先注册 stream handler，避免 spawn 后事件早于注册 */
+  requestId?: string
 }): Promise<string> {
   return invoke<string>('claude_send_message', {
     prompt: options.prompt,
     claudePath: options.claudePath || null,
     sessionId: options.sessionId || null,
     continueSession: options.continueSession ?? false,
+    requestId: options.requestId || null,
   })
 }
 

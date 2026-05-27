@@ -9,6 +9,7 @@ import { writeTerminal, resizeTerminal } from '@/lib/terminal-client'
 import {
   getTerminalOutputBuffer,
   subscribeTerminalOutput,
+  onTerminalResync,
 } from '@/lib/terminal-stream'
 import { useAppTheme } from '@/hooks/use-app-theme'
 
@@ -146,11 +147,10 @@ export function LiveTerminal({
   }, [sessionId])
 
   useEffect(() => {
-    if (!connected || !termReady) return
+    if (!termReady) return
 
     syncBufferToTerm()
 
-    // 清理之前的订阅
     outputUnsubscribeRef.current?.()
 
     outputUnsubscribeRef.current = subscribeTerminalOutput(sessionId, event => {
@@ -158,11 +158,18 @@ export function LiveTerminal({
       bufferSyncedRef.current = getTerminalOutputBuffer(sessionId).length
     })
 
+    const unsubResync = onTerminalResync(sid => {
+      if (sid !== sessionId) return
+      bufferSyncedRef.current = 0
+      syncBufferToTerm()
+    })
+
     return () => {
       outputUnsubscribeRef.current?.()
       outputUnsubscribeRef.current = null
+      unsubResync()
     }
-  }, [sessionId, connected, termReady, syncBufferToTerm])
+  }, [sessionId, termReady, syncBufferToTerm])
 
   useEffect(() => {
     if (connected && inputEnabled) {

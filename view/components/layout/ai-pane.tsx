@@ -1,15 +1,11 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
-import { Send, Sparkles, Play, Loader2, Trash2, PlugZap } from 'lucide-react'
+import { Send, Sparkles, Play, Loader2, Trash2, PlugZap, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/lib/types'
 import { AiAssistantParts } from '@/components/layout/ai-assistant-parts'
-import {
-  getClaudeMcpStatus,
-  registerClaudeMcp,
-  type McpRegisterStatus,
-} from '@/lib/claude-client'
+import type { McpRegisterStatus } from '@/lib/claude-client'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -41,10 +37,38 @@ interface AiPaneProps {
     lockFile?: string
     workspaceFolders?: string[]
   }
+  mcpStatus?: McpRegisterStatus | null
+  mcpRegisterError?: string | null
+  mcpRegistering?: boolean
+  onRetryMcpRegister?: () => void
   onSendMessage: (message: string) => void
+  onStopMessage?: () => void
   onExecuteCommand: (command: string) => void
   onClearChat: () => void
   claudePath?: string
+}
+
+function serializeAssistantMessage(msg: ChatMessage): string {
+  const sections: string[] = []
+  if (msg.reasoning?.trim()) {
+    sections.push(`【思考】\n${msg.reasoning.trim()}`)
+  }
+  if (msg.tools?.length) {
+    const toolLines = msg.tools.map(t => {
+      const status = t.status
+      const output = t.output?.trim()
+      const err = t.error?.trim()
+      return `- ${t.name} [${status}]${output ? `\n  输出: ${output}` : ''}${err ? `\n  错误: ${err}` : ''}`
+    })
+    sections.push(`【工具调用】\n${toolLines.join('\n')}`)
+  }
+  if (msg.content?.trim()) {
+    sections.push(`【回复】\n${msg.content.trim()}`)
+  }
+  if (msg.command?.trim()) {
+    sections.push(`【命令】\n${msg.command.trim()}`)
+  }
+  return sections.join('\n\n').trim()
 }
 
 export function AiPane({
@@ -53,58 +77,44 @@ export function AiPane({
   aiEnabled,
   modelLabel,
   bridgeStatus,
+  mcpStatus,
+  mcpRegisterError,
+  mcpRegistering = false,
+  onRetryMcpRegister,
   onSendMessage,
+  onStopMessage,
   onExecuteCommand,
   onClearChat,
   claudePath,
 }: AiPaneProps) {
   const [input, setInput] = useState('')
-  const [mcpStatus, setMcpStatus] = useState<McpRegisterStatus | null>(null)
-  const [mcpBusy, setMcpBusy] = useState(false)
-  const [mcpError, setMcpError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const showManualMcp =
+    Boolean(mcpRegisterError) || (mcpStatus != null && !mcpStatus.ready)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isThinking])
 
-  const refreshMcpStatus = useCallback(() => {
-    if (!aiEnabled || !bridgeStatus?.running) {
-      setMcpStatus(null)
-      setMcpError(null)
-      return
-    }
-    void getClaudeMcpStatus(claudePath)
-      .then(status => {
-        setMcpStatus(status)
-        setMcpError(null)
-      })
-      .catch(() => setMcpStatus(null))
-  }, [aiEnabled, bridgeStatus?.running, claudePath])
-
-  useEffect(() => {
-    refreshMcpStatus()
-  }, [refreshMcpStatus])
-
-  const handleRegisterMcp = useCallback(async () => {
-    setMcpBusy(true)
-    setMcpError(null)
-    try {
-      const status = await registerClaudeMcp(claudePath)
-      setMcpStatus(status)
-    } catch (err) {
-      setMcpError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setMcpBusy(false)
-    }
-  }, [claudePath])
+  const handleRegisterMcp = useCallback(() => {
+    onRetryMcpRegister?.()
+  }, [onRetryMcpRegister])
 
   const handleSend = useCallback(() => {
     if (!input.trim() || isThinking || !aiEnabled) return
     onSendMessage(input.trim())
     setInput('')
   }, [input, isThinking, aiEnabled, onSendMessage])
+
+  const handlePrimaryAction = useCallback(() => {
+    if (isThinking) {
+      onStopMessage?.()
+      return
+    }
+    handleSend()
+  }, [isThinking, onStopMessage, handleSend])
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -118,6 +128,32 @@ export function AiPane({
 
   const copyText = (text: string) => {
     navigator.clipboard.writeText(text).catch(() => {})
+  }
+
+  const copySelectionOrMessage = (msg: ChatMessage) => {
+    const selected = window.getSelection?.()?.toString()?.trim()
+    if (selected) {
+      copyText(selected)
+      return
+    }
+    if (msg.role === 'assistant') {
+      copyText(serializeAssistantMessage(msg) || msg.content || '')
+    } else {
+      copyText(msg.content || '')
+    }
+  }
+
+  const copyAllMessages = () => {
+    const text = messages
+      .map(m => {
+        if (m.role === 'assistant') {
+          return `Assistant:\n${serializeAssistantMessage(m) || m.content || ''}`
+        }
+        return `User:\n${m.content || ''}`
+      })
+      .filter(Boolean)
+      .join('\n\n----------------\n\n')
+    if (text.trim()) copyText(text)
   }
 
   const lastMessage = messages[messages.length - 1]
@@ -154,6 +190,9 @@ export function AiPane({
         <ContextMenuContent className="w-44">
           <ContextMenuItem onClick={onClearChat} disabled={messages.length === 0}>
             清空对话
+          </ContextMenuItem>
+          <ContextMenuItem onClick={copyAllMessages} disabled={messages.length === 0}>
+            全部复制
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -197,29 +236,33 @@ export function AiPane({
                   工作区：{bridgeStatus.workspaceFolders[0]}
                 </p>
               )}
+              {mcpRegistering && (
+                <p className="text-muted-foreground inline-flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  正在自动注册 MCP…
+                </p>
+              )}
               {mcpStatus && (
                 <>
                   <p className="truncate" title={mcpStatus.projectRoot}>
                     MCP 根目录：{mcpStatus.projectRoot}
                   </p>
                   <p>
-                    项目 .mcp.json：
-                    {mcpStatus.projectMcpConfigReady ? '已配置' : '未配置'}
+                    .mcp.json：{mcpStatus.projectMcpConfigReady ? '已配置' : '未配置'}
                     {' · '}
-                    Claude 登记：
-                    {mcpStatus.claudeProjectRegistered ? '已登记' : '未登记'}
+                    Claude 登记：{mcpStatus.claudeProjectRegistered ? '已登记' : '自动加载'}
                   </p>
-                  {(!mcpStatus.ready || !mcpStatus.claudeProjectRegistered) && (
+                  {showManualMcp && onRetryMcpRegister && (
                     <button
                       type="button"
                       onClick={() => void handleRegisterMcp()}
-                      disabled={mcpBusy}
+                      disabled={mcpRegistering}
                       className={cn(
                         'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] border border-border',
                         'hover:bg-muted/60 transition-colors disabled:opacity-50'
                       )}
                     >
-                      {mcpBusy ? (
+                      {mcpRegistering ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
                       ) : (
                         <PlugZap className="w-3 h-3" />
@@ -227,8 +270,8 @@ export function AiPane({
                       手动注册 MCP
                     </button>
                   )}
-                  {mcpError && (
-                    <p className="text-amber-600 dark:text-amber-400 break-words">{mcpError}</p>
+                  {mcpRegisterError && (
+                    <p className="text-amber-600 dark:text-amber-400 break-words">{mcpRegisterError}</p>
                   )}
                 </>
               )}
@@ -259,7 +302,7 @@ export function AiPane({
                 <div className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
                   <div
                     className={cn(
-                      'rounded-lg px-3 py-2 text-sm',
+                      'rounded-lg px-3 py-2 text-sm select-text-region',
                       msg.role === 'user'
                         ? 'max-w-[85%] bg-primary text-primary-foreground'
                         : 'max-w-full w-full bg-muted/80'
@@ -293,7 +336,12 @@ export function AiPane({
                 </div>
               </ContextMenuTrigger>
               <ContextMenuContent className="w-40">
-                <ContextMenuItem onClick={() => copyText(msg.content)}>复制</ContextMenuItem>
+                <ContextMenuItem onClick={() => copySelectionOrMessage(msg)}>
+                  复制
+                </ContextMenuItem>
+                <ContextMenuItem onClick={copyAllMessages} disabled={messages.length === 0}>
+                  全部复制
+                </ContextMenuItem>
                 {msg.command && (
                   <>
                     <ContextMenuSeparator />
@@ -340,16 +388,19 @@ export function AiPane({
             }}
           />
           <button
-            onClick={handleSend}
-            disabled={!input.trim() || isThinking || !aiEnabled}
+            onClick={handlePrimaryAction}
+            disabled={isThinking ? !aiEnabled : !input.trim() || !aiEnabled}
             className={cn(
               'h-10 w-10 shrink-0 flex items-center justify-center rounded-lg transition-colors',
-              input.trim() && !isThinking && aiEnabled
+              isThinking
+                ? 'bg-amber-500 text-white hover:bg-amber-600'
+                : input.trim() && aiEnabled
                 ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                 : 'bg-muted text-muted-foreground'
             )}
+            title={isThinking ? '停止回复' : '发送'}
           >
-            <Send className="w-4 h-4" />
+            {isThinking ? <Square className="w-4 h-4" /> : <Send className="w-4 h-4" />}
           </button>
         </div>
       </div>
