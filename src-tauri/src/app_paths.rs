@@ -62,7 +62,7 @@ fn resolve_scripts_dir(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(resource_dir) = app.path().resource_dir() {
         // 检查是否直接包含脚本文件
         let launcher = resource_dir.join("run-aiterm-mcp.mjs");
-        let stdio = resource_dir.join("aiterm-mcp-stdio.mjs");
+        let _stdio = resource_dir.join("aiterm-mcp-stdio.mjs");
         if launcher.is_file() {
             tracing::info!("Using bundled resources dir: {}", resource_dir.display());
             return Ok(resource_dir);

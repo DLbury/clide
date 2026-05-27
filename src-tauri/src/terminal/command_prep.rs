@@ -1,5 +1,5 @@
 /// 将 AI 命令适配到目标 PTY。Windows 本地默认已是 PowerShell PTY，直接透传即可保留 `$` 等语法。
-pub fn prepare_command_for_pty(command: &str, session_type: &str) -> String {
+pub fn prepare_command_for_pty(command: &str, _session_type: &str) -> String {
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return command.to_string();
@@ -7,7 +7,7 @@ pub fn prepare_command_for_pty(command: &str, session_type: &str) -> String {
 
     #[cfg(windows)]
     {
-        if session_type == "local" {
+        if _session_type == "local" {
             // PTY 为 powershell.exe；若命令已显式调用 cmd/powershell 则原样发送
             let lower = trimmed.to_ascii_lowercase();
             if lower.starts_with("cmd ")

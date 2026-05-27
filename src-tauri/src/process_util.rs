@@ -158,9 +158,9 @@ pub fn apply_subprocess_environment(cmd: &mut std::process::Command) {
 
     #[cfg(not(windows))]
     {
-        if let Ok(home) = std::env::var_os("HOME") {
-            if std::env::var_os("HOME").is_none() {
-                cmd.env("HOME", home);
+        if std::env::var_os("HOME").is_none() {
+            if let Some(home) = dirs::home_dir() {
+                cmd.env("HOME", home.as_os_str());
             }
         }
     }
