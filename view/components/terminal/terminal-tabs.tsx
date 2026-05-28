@@ -3,7 +3,7 @@
 import { X, Plus, Terminal, Sparkles, FolderOpen, FileCode, Sun, Moon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { TerminalTab } from '@/lib/types'
-import { useTheme } from 'next-themes'
+import { useTheme } from '@teispace/next-themes'
 import { useEffect, useState } from 'react'
 
 interface TerminalTabsProps {

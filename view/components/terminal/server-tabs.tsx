@@ -2,7 +2,7 @@
 
 import { X, Sun, Moon, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useTheme } from 'next-themes'
+import { useTheme } from '@teispace/next-themes'
 import { useEffect, useState } from 'react'
 import type { Session } from '@/lib/types'
 import { WindowControls } from '@/components/window-controls'
