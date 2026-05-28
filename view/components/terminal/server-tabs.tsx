@@ -98,62 +98,69 @@ export function ServerTabs({
       {/* 服务器连接标签（下层，不参与拖拽） */}
       <div className="h-10 flex items-center min-w-0">
         <div className="flex-1 flex items-center overflow-x-auto terminal-scrollbar min-w-0 h-full">
-          {connections.map(conn => (
-            <ContextMenu key={conn.id}>
-              <ContextMenuTrigger asChild>
-                <div
-                  className={cn(
-                    'flex items-center gap-2 px-4 h-full border-r border-border cursor-pointer group transition-colors shrink-0',
-                    activeConnectionId === conn.id
-                      ? 'bg-muted text-foreground'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                  )}
-                  onClick={() => onTabClick(conn.id)}
-                >
-                  <div
-                    className={cn(
-                      'w-2 h-2 rounded-full shrink-0',
-                      conn.session.status === 'connected' && 'bg-green-500',
-                      conn.session.status === 'connecting' && 'bg-yellow-500',
-                      conn.session.status === 'disconnected' && 'bg-muted-foreground/50'
-                    )}
-                  />
-                  <span className="text-sm truncate max-w-[120px]">{conn.session.name}</span>
-                  <button
-                    type="button"
-                    onClick={e => {
-                      e.stopPropagation()
-                      onTabClose(conn.id)
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted transition-opacity shrink-0"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              </ContextMenuTrigger>
-              <ContextMenuContent className="w-44">
-                <ContextMenuItem onClick={() => onTabClick(conn.id)}>切换到该标签</ContextMenuItem>
-                {conn.session.status !== 'connected' && onReconnectTab && (
-                  <ContextMenuItem onClick={() => onReconnectTab(conn.id)}>
-                    重新连接
-                  </ContextMenuItem>
-                )}
-                <ContextMenuSeparator />
-                <ContextMenuItem onClick={() => onTabClose(conn.id)}>关闭</ContextMenuItem>
-                {onCloseOtherTabs && connections.length > 1 && (
-                  <ContextMenuItem onClick={() => onCloseOtherTabs(conn.id)}>
-                    关闭其他
-                  </ContextMenuItem>
-                )}
-                {onCloseAllTabs && connections.length > 0 && (
-                  <ContextMenuItem onClick={onCloseAllTabs}>关闭全部</ContextMenuItem>
-                )}
-              </ContextMenuContent>
-            </ContextMenu>
-          ))}
-
-          {connections.length === 0 && (
+          {/* Avoid hydration mismatch: connections are loaded client-side (localStorage/runtime sync). */}
+          {!mounted ? (
             <div className="px-4 text-sm text-muted-foreground">点击左侧服务器连接</div>
+          ) : (
+            <>
+              {connections.map(conn => (
+                <ContextMenu key={conn.id}>
+                  <ContextMenuTrigger asChild>
+                    <div
+                      className={cn(
+                        'flex items-center gap-2 px-4 h-full border-r border-border cursor-pointer group transition-colors shrink-0',
+                        activeConnectionId === conn.id
+                          ? 'bg-muted text-foreground'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                      )}
+                      onClick={() => onTabClick(conn.id)}
+                    >
+                      <div
+                        className={cn(
+                          'w-2 h-2 rounded-full shrink-0',
+                          conn.session.status === 'connected' && 'bg-green-500',
+                          conn.session.status === 'connecting' && 'bg-yellow-500',
+                          conn.session.status === 'disconnected' && 'bg-muted-foreground/50'
+                        )}
+                      />
+                      <span className="text-sm truncate max-w-[120px]">{conn.session.name}</span>
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation()
+                          onTabClose(conn.id)
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted transition-opacity shrink-0"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent className="w-44">
+                    <ContextMenuItem onClick={() => onTabClick(conn.id)}>切换到该标签</ContextMenuItem>
+                    {conn.session.status !== 'connected' && onReconnectTab && (
+                      <ContextMenuItem onClick={() => onReconnectTab(conn.id)}>
+                        重新连接
+                      </ContextMenuItem>
+                    )}
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => onTabClose(conn.id)}>关闭</ContextMenuItem>
+                    {onCloseOtherTabs && connections.length > 1 && (
+                      <ContextMenuItem onClick={() => onCloseOtherTabs(conn.id)}>
+                        关闭其他
+                      </ContextMenuItem>
+                    )}
+                    {onCloseAllTabs && connections.length > 0 && (
+                      <ContextMenuItem onClick={onCloseAllTabs}>关闭全部</ContextMenuItem>
+                    )}
+                  </ContextMenuContent>
+                </ContextMenu>
+              ))}
+
+              {connections.length === 0 && (
+                <div className="px-4 text-sm text-muted-foreground">点击左侧服务器连接</div>
+              )}
+            </>
           )}
         </div>
       </div>
