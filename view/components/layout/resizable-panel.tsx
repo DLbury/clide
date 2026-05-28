@@ -1,6 +1,6 @@
 'use client'
 
-import { Children, Fragment, useLayoutEffect, useRef } from 'react'
+import { Children, Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Panel,
   PanelGroup,
@@ -28,6 +28,13 @@ export function ResizablePanel({
 }: ResizablePanelProps) {
   const childArray = Children.toArray(children)
   const panelRefs = useRef<(ImperativePanelHandle | null)[]>([])
+  const [mounted, setMounted] = useState(false)
+
+  // react-resizable-panels generates internal IDs that can differ between SSR and the client.
+  // Render a deterministic fallback on the server / before first paint to avoid hydration mismatch.
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useLayoutEffect(() => {
     if (!panelVisible) return
@@ -43,6 +50,33 @@ export function ResizablePanel({
   }, [panelVisible, minSizes])
 
   const isHorizontal = direction === 'horizontal'
+
+  if (!mounted) {
+    return (
+      <div
+        className={cn(
+          'h-full w-full min-h-0 min-w-0 overflow-hidden flex',
+          isHorizontal ? 'flex-row' : 'flex-col',
+          className
+        )}
+      >
+        {childArray.map((child, index) => {
+          const visible = panelVisible?.[index] !== false
+          return (
+            <div
+              key={index}
+              className={cn(
+                'min-h-0 min-w-0 overflow-hidden flex-1',
+                !visible && 'hidden'
+              )}
+            >
+              {child}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
 
   return (
     <PanelGroup
