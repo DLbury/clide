@@ -237,13 +237,8 @@ export default function AITerminal() {
   const { settings: aiSettings, updateSettings: updateAiSettings, clearClaudeSessionId } =
     useAiSettings()
   const { folders, setFolders, loaded: foldersLoaded } = useSessionFolders()
-  const [connections, setConnections] = useState<ServerConnection[]>(() => {
-    const initial = createInitialDesktopConnection()
-    return (initial?.connections as ServerConnection[]) ?? []
-  })
-  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(() => {
-    return createInitialDesktopConnection()?.activeConnectionId ?? null
-  })
+  const [connections, setConnections] = useState<ServerConnection[]>([])
+  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null)
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('ai')
@@ -289,6 +284,23 @@ export default function AITerminal() {
   const claudeCodeRef = useRef<ReturnType<typeof useClaudeCode> | null>(null)
   const aiSettingsRef = useRef(aiSettings)
   aiSettingsRef.current = aiSettings
+
+  // Restore initial desktop connection on client side to avoid hydration mismatch
+  useEffect(() => {
+    const initial = createInitialDesktopConnection()
+    if (initial) {
+      setConnections(initial.connections as ServerConnection[])
+      setActiveConnectionId(initial.activeConnectionId)
+
+      // Kick off the local PTY connection immediately.
+      // The initial state is "connecting" but without this call it will never transition to "connected".
+      const conn = initial.connections[0]
+      const shell = conn?.shells?.[0]
+      if (conn?.session && shell?.terminalSessionId) {
+        void connectTerminalSession(conn.session as Session, shell.terminalSessionId).catch(() => {})
+      }
+    }
+  }, [])
 
   const activeConnection = connections.find(c => c.id === activeConnectionId)
   const activeSession = activeConnection?.session
