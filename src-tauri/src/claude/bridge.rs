@@ -208,7 +208,8 @@ fn write_lock_file(
             "version": "0.1.0"
         }
     });
-    fs::write(&lock_path, serde_json::to_string_pretty(&lock_data).unwrap())
+    let json = serde_json::to_string_pretty(&lock_data).map_err(|e| e.to_string())?;
+    fs::write(&lock_path, json)
         .map_err(|e| e.to_string())?;
     Ok(lock_path)
 }
@@ -302,7 +303,7 @@ async fn handle_connection(
                     tokio_tungstenite::tungstenite::http::Response::builder()
                         .status(500)
                         .body(None)
-                        .unwrap()
+                        .unwrap_or_else(|_| tokio_tungstenite::tungstenite::http::Response::new(None))
                 })?;
             return Err(reject);
         }

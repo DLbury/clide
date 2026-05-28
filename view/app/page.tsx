@@ -1906,6 +1906,7 @@ export default function AITerminal() {
 
           const registerHandler = (requestId: string) => {
             let silentTimer: ReturnType<typeof setTimeout> | null = null
+            let silentTimeoutMs = 90_000
             const armSilentTimeout = () => {
               if (silentTimer) clearTimeout(silentTimer)
               silentTimer = setTimeout(() => {
@@ -1932,7 +1933,7 @@ export default function AITerminal() {
                 activeAssistantIdRef.current = null
                 const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
                 pending?.delete(requestId)
-              }, 90000)
+              }, silentTimeoutMs)
             }
             armSilentTimeout()
             claudeCode.registerStreamHandler(requestId, event => {
@@ -1945,6 +1946,8 @@ export default function AITerminal() {
                   event.toolName === 'mcp__aiterm__runShellCommand')
               ) {
                 mcpShellCommandThisTurnRef.current = true
+                // Long-running remote commands may produce no stream output for a while.
+                silentTimeoutMs = 10 * 60_000
               }
               if (event.text) {
                 if (
