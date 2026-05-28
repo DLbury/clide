@@ -1497,13 +1497,6 @@ export default function AITerminal() {
       const shell = activeConnection.shells.find(
         s => s.id === activeConnection.activeShellId
       )
-      if (
-        shell &&
-        activeConnection.terminalLive &&
-        shell.terminalStatus === 'connected'
-      ) {
-        injectAiCommandEcho(shell.terminalSessionId, command)
-      }
       workbenchRef.current?.focusTerminal()
       handleCommand(activeConnection.activeShellId, command)
     },
@@ -1907,7 +1900,8 @@ export default function AITerminal() {
           const registerHandler = (requestId: string) => {
             let silentTimer: ReturnType<typeof setTimeout> | null = null
             let silentTimeoutMs = 90_000
-            let lastEventKey = ''
+            let sawStreamingText = false
+            let bufferedResultText = ''
             const armSilentTimeout = () => {
               if (silentTimer) clearTimeout(silentTimer)
               silentTimer = setTimeout(() => {
@@ -1938,18 +1932,6 @@ export default function AITerminal() {
             }
             armSilentTimeout()
             claudeCode.registerStreamHandler(requestId, event => {
-              // Guard against duplicated claude:stream delivery (e.g. listener duplication/races).
-              const eventKey = [
-                event.requestId,
-                event.eventType,
-                event.text ?? '',
-                event.toolId ?? '',
-                event.toolName ?? '',
-                event.done ? '1' : '0',
-              ].join('|')
-              if (eventKey === lastEventKey) return
-              lastEventKey = eventKey
-
               armSilentTimeout()
               let streamText: string | undefined
               // Mark tool usage ASAP to avoid fallback double-execution race.
@@ -1968,10 +1950,11 @@ export default function AITerminal() {
                   event.eventType === 'stderr' ||
                   event.eventType === 'process_error'
                 ) {
+                  sawStreamingText = true
                   streamText = event.text
                 } else if (event.eventType === 'result') {
-                  // 已有流式片段时不再追加整段 result，避免重复
-                  streamText = assistantAccumulated ? undefined : event.text
+                  // Do not append result immediately; it can duplicate streamed deltas.
+                  bufferedResultText = event.text
                 }
               }
 
@@ -2020,6 +2003,25 @@ export default function AITerminal() {
               }
 
               if (event.done) {
+                // If Claude only emitted a final result (no streaming deltas), append it once here.
+                if (!sawStreamingText && bufferedResultText && !assistantAccumulated) {
+                  assistantAccumulated = bufferedResultText
+                  setConnections(prev =>
+                    prev.map(conn => {
+                      if (conn.id !== activeConnectionId) return conn
+                      return {
+                        ...conn,
+                        aiMessages: conn.aiMessages.map(m => {
+                          if (m.id !== assistantId) return m
+                          let updated = m
+                          updated = { ...updated, content: updated.content + bufferedResultText }
+                          updated = appendAssistantTextPart(updated, bufferedResultText)
+                          return updated
+                        }),
+                      }
+                    })
+                  )
+                }
                 if (silentTimer) {
                   clearTimeout(silentTimer)
                   silentTimer = null

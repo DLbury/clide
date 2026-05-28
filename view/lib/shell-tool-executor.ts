@@ -1,6 +1,6 @@
 import { isTauriRuntime } from '@/lib/tauri-env'
 import { normalizeShellCommandForPty, writeTerminal } from '@/lib/terminal-client'
-import { getTerminalOutputBuffer, injectAiCommandEcho, requestTerminalResync } from '@/lib/terminal-stream'
+import { getTerminalOutputBuffer, requestTerminalResync } from '@/lib/terminal-stream'
 
 const activeShellToolRequests = new Set<string>()
 const completedShellToolRequests = new Set<string>()
@@ -55,8 +55,6 @@ export async function executeShellToolInTab(
     await payload.beforeExecute?.()
     requestTerminalResync(sessionId)
 
-    injectAiCommandEcho(sessionId, payload.command)
-    requestTerminalResync(sessionId)
     console.log(`[ShellTool] Writing command to terminal: ${line}`)
     await writeTerminal(sessionId, line)
 
