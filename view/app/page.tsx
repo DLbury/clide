@@ -73,6 +73,7 @@ import { WorkbenchLayout, type WorkbenchLayoutHandle } from '@/components/layout
 import { FileTree } from '@/components/layout/file-tree'
 import { DeleteRemoteFileDialog } from '@/components/layout/delete-remote-file-dialog'
 import { AiPane } from '@/components/layout/ai-pane'
+import { AppAlertDialog, type AppAlertDialogState } from '@/components/ui/app-alert-dialog'
 import { readFileContent, writeFileContent } from '@/lib/file-system'
 import {
   openEditorModel,
@@ -259,6 +260,10 @@ export default function AITerminal() {
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [hostStats, setHostStats] = useState<RemoteHostStats | null>(null)
+  const [appAlert, setAppAlert] = useState<AppAlertDialogState>({
+    open: false,
+    title: '',
+  })
   const followTerminalCwdRef = useRef(followTerminalCwd)
   followTerminalCwdRef.current = followTerminalCwd
   const fileRootModeRef = useRef(fileRootMode)
@@ -515,7 +520,12 @@ export default function AITerminal() {
           setUploadProgress
         )
         if (errors.length > 0) {
-          window.alert(`已上传 ${uploaded} 个文件。\n\n失败:\n${errors.join('\n')}`)
+          setAppAlert({
+            open: true,
+            title: `已上传 ${uploaded} 个文件（部分失败）`,
+            description: '以下文件上传失败：',
+            details: errors.join('\n'),
+          })
         }
         void loadRemoteFiles(
           activeConnection.session,
@@ -523,7 +533,11 @@ export default function AITerminal() {
         )
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        window.alert(`上传失败: ${message}`)
+        setAppAlert({
+          open: true,
+          title: '上传失败',
+          details: message,
+        })
       } finally {
         setTransferBusy(false)
         setUploadProgress(null)
@@ -552,7 +566,11 @@ export default function AITerminal() {
         )
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        window.alert(`移动失败: ${message}`)
+        setAppAlert({
+          open: true,
+          title: '移动失败',
+          details: message,
+        })
       } finally {
         setTransferBusy(false)
       }
@@ -570,7 +588,11 @@ export default function AITerminal() {
         await downloadRemoteFile(activeConnection.session, file.path, remoteFileOpts())
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        window.alert(`下载失败: ${message}`)
+        setAppAlert({
+          open: true,
+          title: '下载失败',
+          details: message,
+        })
       } finally {
         setTransferBusy(false)
       }
@@ -1757,7 +1779,11 @@ export default function AITerminal() {
         )
       } catch (err) {
         const message = err instanceof Error ? err.message : '保存失败'
-        window.alert(`保存远程文件失败：${message}`)
+        setAppAlert({
+          open: true,
+          title: '保存失败',
+          details: `保存远程文件失败：${message}`,
+        })
       }
     },
     [activeConnectionId, connections, remoteFileOpts]
@@ -1822,7 +1848,11 @@ export default function AITerminal() {
         )
       } catch (err) {
         const message = err instanceof Error ? err.message : '保存失败'
-        window.alert(`保存远程文件失败：${message}`)
+        setAppAlert({
+          open: true,
+          title: '保存失败',
+          details: `保存远程文件失败：${message}`,
+        })
       }
     },
     [activeConnectionId, connections, remoteFileOpts]
@@ -2513,6 +2543,10 @@ export default function AITerminal() {
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-background">
+      <AppAlertDialog
+        state={appAlert}
+        onOpenChange={open => setAppAlert(prev => ({ ...prev, open }))}
+      />
       {/* Server Connection Tabs */}
       <ServerTabs
         connections={connections}

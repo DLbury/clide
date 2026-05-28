@@ -43,6 +43,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { AppConfirmDialog, type AppConfirmDialogState } from '@/components/ui/app-confirm-dialog'
 
 interface SidebarProps {
   folders: SessionFolder[]
@@ -180,9 +181,15 @@ function SessionMenuItems({
       <ContextMenuItem
         variant="destructive"
         onClick={() => {
-          if (confirm(`确定删除会话「${session.name}」？`)) {
-            onDeleteSession(session.id)
-          }
+          openConfirm(
+            {
+              title: '删除会话',
+              description: `确定删除会话「${session.name}」？此操作不可撤销。`,
+              confirmText: '删除',
+              destructive: true,
+            },
+            () => onDeleteSession(session.id)
+          )
         }}
       >
         <Trash2 className="w-3.5 h-3.5 mr-2" />
@@ -214,6 +221,11 @@ export function Sidebar({
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
   const [renameFolderName, setRenameFolderName] = useState('')
   const prevFolderIdsRef = useRef(new Set(folders.map(f => f.id)))
+  const [confirmState, setConfirmState] = useState<AppConfirmDialogState>({
+    open: false,
+    title: '',
+  })
+  const confirmActionRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const prev = prevFolderIdsRef.current
@@ -277,8 +289,24 @@ export function Sidebar({
     setRenamingFolderId(null)
   }, [renamingFolderId, renameFolderName, onRenameFolder])
 
+  const openConfirm = useCallback((next: Omit<AppConfirmDialogState, 'open'> & { open?: boolean }, action: () => void) => {
+    confirmActionRef.current = action
+    setConfirmState({
+      open: true,
+      title: next.title,
+      description: next.description,
+      confirmText: next.confirmText,
+      destructive: next.destructive,
+    })
+  }, [])
+
   return (
     <div className="w-64 h-full bg-sidebar border-r border-sidebar-border flex flex-col">
+      <AppConfirmDialog
+        state={confirmState}
+        onOpenChange={open => setConfirmState(prev => ({ ...prev, open }))}
+        onConfirm={() => confirmActionRef.current?.()}
+      />
       <div className="p-4 border-b border-sidebar-border">
         <div className="flex items-center gap-2 mb-4">
           <AppLogo size={32} className="rounded-lg" />
@@ -434,9 +462,15 @@ export function Sidebar({
                                   <DropdownMenuItem
                                     className="text-destructive"
                                     onClick={() => {
-                                      if (confirm(`确定删除会话「${session.name}」？`)) {
-                                        onDeleteSession(session.id)
-                                      }
+                                      openConfirm(
+                                        {
+                                          title: '删除会话',
+                                          description: `确定删除会话「${session.name}」？此操作不可撤销。`,
+                                          confirmText: '删除',
+                                          destructive: true,
+                                        },
+                                        () => onDeleteSession(session.id)
+                                      )
                                     }}
                                   >
                                     删除
@@ -486,7 +520,15 @@ export function Sidebar({
                     folder.sessions.length > 0
                       ? `文件夹「${folder.name}」内有 ${folder.sessions.length} 个会话，确定删除？`
                       : `确定删除文件夹「${folder.name}」？`
-                  if (confirm(msg)) onDeleteFolder(folder.id)
+                  openConfirm(
+                    {
+                      title: '删除文件夹',
+                      description: msg,
+                      confirmText: '删除',
+                      destructive: true,
+                    },
+                    () => onDeleteFolder(folder.id)
+                  )
                 }}
               >
                 <Trash2 className="w-3.5 h-3.5 mr-2" />
@@ -496,7 +538,7 @@ export function Sidebar({
           </ContextMenu>
         ))}
 
-        {folders.length === 0 && searchQuery === '' && (
+        {folders.length === 0 && searchQuery === '' && pendingFolderName === null && (
           <div className="px-3 py-8 text-center">
             <Server className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
             <p className="text-sm text-muted-foreground">暂无会话</p>
@@ -523,7 +565,7 @@ export function Sidebar({
       <div className="p-3 border-t border-sidebar-border">
         <Button
           onClick={onNewSession}
-          className="w-full h-9 text-sm bg-primary/10 text-primary hover:bg-primary/20 border-0"
+          className="w-full h-9 text-sm bg-primary/10 text-primary hover:bg-primary/30 hover:text-primary border border-primary/25"
           variant="outline"
         >
           <Plus className="w-4 h-4 mr-2" />
