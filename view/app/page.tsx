@@ -1907,6 +1907,7 @@ export default function AITerminal() {
           const registerHandler = (requestId: string) => {
             let silentTimer: ReturnType<typeof setTimeout> | null = null
             let silentTimeoutMs = 90_000
+            let lastEventKey = ''
             const armSilentTimeout = () => {
               if (silentTimer) clearTimeout(silentTimer)
               silentTimer = setTimeout(() => {
@@ -1937,6 +1938,18 @@ export default function AITerminal() {
             }
             armSilentTimeout()
             claudeCode.registerStreamHandler(requestId, event => {
+              // Guard against duplicated claude:stream delivery (e.g. listener duplication/races).
+              const eventKey = [
+                event.requestId,
+                event.eventType,
+                event.text ?? '',
+                event.toolId ?? '',
+                event.toolName ?? '',
+                event.done ? '1' : '0',
+              ].join('|')
+              if (eventKey === lastEventKey) return
+              lastEventKey = eventKey
+
               armSilentTimeout()
               let streamText: string | undefined
               // Mark tool usage ASAP to avoid fallback double-execution race.
