@@ -399,11 +399,6 @@ pub fn run() {
             handle.manage(mcp_paths);
 
             if let Some(window) = app.get_webview_window("main") {
-                #[cfg(target_os = "linux")]
-                {
-                    // Overlay title bar is macOS-oriented; keep system decorations on Linux.
-                    let _ = window.set_decorations(true);
-                }
                 let _ = window.show();
                 let _ = window.unminimize();
                 let _ = window.set_focus();

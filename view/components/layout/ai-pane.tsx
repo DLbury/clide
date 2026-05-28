@@ -367,7 +367,7 @@ export function AiPane({
       </div>
 
       <div className="p-3 border-t border-border">
-        <div className="flex items-end gap-2">
+        <div className="relative">
           <textarea
             ref={inputRef}
             value={input}
@@ -377,7 +377,7 @@ export function AiPane({
             disabled={!aiEnabled}
             rows={2}
             className={cn(
-              'flex-1 resize-none bg-muted rounded-lg px-3 py-3 text-sm leading-relaxed',
+              'w-full resize-none bg-muted rounded-lg px-3 py-3 pr-12 text-sm leading-relaxed',
               'outline-none focus:ring-2 focus:ring-primary/40',
               'min-h-[52px] max-h-36 overflow-auto disabled:opacity-50'
             )}
@@ -387,20 +387,27 @@ export function AiPane({
               target.style.height = Math.min(target.scrollHeight, 144) + 'px'
             }}
           />
+
           <button
+            type="button"
             onClick={handlePrimaryAction}
             disabled={isThinking ? !aiEnabled : !input.trim() || !aiEnabled}
             className={cn(
-              'h-10 w-10 shrink-0 flex items-center justify-center rounded-lg transition-colors',
+              'absolute bottom-2.5 right-2.5 h-9 w-9',
+              'flex items-center justify-center rounded-md transition-colors',
               isThinking
                 ? 'bg-amber-500 text-white hover:bg-amber-600'
                 : input.trim() && aiEnabled
-                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                : 'bg-muted text-muted-foreground'
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'bg-muted text-muted-foreground'
             )}
             title={isThinking ? '停止回复' : '发送'}
           >
-            {isThinking ? <Square className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+            {isThinking ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
           </button>
         </div>
       </div>
