@@ -94,11 +94,18 @@ export interface ChatTaskPart {
   status: 'pending' | 'completed'
 }
 
+export type ChatMessagePart =
+  | { kind: 'reasoning'; content: string }
+  | { kind: 'text'; content: string }
+  | { kind: 'tool'; toolId: string }
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
+  /** 时间线渲染：按流式事件顺序插入文本/思考/工具 */
+  parts?: ChatMessagePart[]
   /** 思考 / reasoning 过程 */
   reasoning?: string
   /** 工具调用明细 */

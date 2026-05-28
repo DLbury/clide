@@ -94,6 +94,8 @@ import {
   applyClaudeStreamEvent,
   applyToolActivityToMessage,
 } from '@/lib/chat-stream-parts'
+// Keep import separate to avoid circular edits near large file blocks.
+import { appendAssistantTextPart } from '@/lib/chat-stream-parts'
 import { cn } from '@/lib/utils'
 import { ensureDefaultFolder, useSessionFolders } from '@/lib/session-store'
 import {
@@ -1971,6 +1973,7 @@ export default function AITerminal() {
                       let updated = applyClaudeStreamEvent(m, event)
                       if (streamText) {
                         updated = { ...updated, content: updated.content + streamText }
+                        updated = appendAssistantTextPart(updated, streamText)
                       }
                       return updated
                     }),

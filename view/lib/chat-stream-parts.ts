@@ -1,5 +1,5 @@
 import type { ClaudeStreamEvent } from '@/lib/claude-client'
-import type { ChatMessage, ChatTaskPart, ChatToolPart } from '@/lib/types'
+import type { ChatMessage, ChatMessagePart, ChatTaskPart, ChatToolPart } from '@/lib/types'
 import type { ToolActivityEvent } from '@/lib/runtime-sync'
 
 function toolTaskTitle(name: string, input?: unknown): string {
@@ -49,6 +49,32 @@ function upsertTool(
   return list
 }
 
+function appendPart(message: ChatMessage, part: ChatMessagePart): ChatMessage {
+  if (message.role !== 'assistant') return message
+  const parts = [...(message.parts ?? [])]
+  const last = parts[parts.length - 1]
+  if (
+    last &&
+    (part.kind === 'text' || part.kind === 'reasoning') &&
+    last.kind === part.kind
+  ) {
+    parts[parts.length - 1] = { ...last, content: last.content + part.content }
+  } else if (part.kind === 'tool') {
+    // Avoid duplicating tool blocks in timeline.
+    if (!parts.some(p => p.kind === 'tool' && p.toolId === part.toolId)) {
+      parts.push(part)
+    }
+  } else {
+    parts.push(part)
+  }
+  return { ...message, parts }
+}
+
+export function appendAssistantTextPart(message: ChatMessage, chunk: string): ChatMessage {
+  if (!chunk) return message
+  return appendPart(message, { kind: 'text', content: chunk })
+}
+
 export function applyClaudeStreamEvent(
   message: ChatMessage,
   event: ClaudeStreamEvent
@@ -61,6 +87,7 @@ export function applyClaudeStreamEvent(
       ...next,
       reasoning: (next.reasoning ?? '') + reasoningChunk,
     }
+    next = appendPart(next, { kind: 'reasoning', content: reasoningChunk })
   }
 
   if (event.eventType === 'tool_start' && event.toolId && event.toolName) {
@@ -75,6 +102,7 @@ export function applyClaudeStreamEvent(
       }),
       tasks: upsertTask(next.tasks, event.toolId, title, 'pending'),
     }
+    next = appendPart(next, { kind: 'tool', toolId: event.toolId })
   }
 
   if (event.eventType === 'tool_result' && event.toolId) {
