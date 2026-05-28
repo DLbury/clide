@@ -390,16 +390,12 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle().clone();
-            let mcp_paths = match McpBundlePaths::resolve(&handle) {
-                Ok(paths) => paths,
-                Err(e) => {
-                    eprintln!("Clide startup failed: {e}");
-                    eprintln!(
-                        "Tip: run `RUST_LOG=debug clide` in a terminal for details."
-                    );
-                    return Err(e.into());
-                }
-            };
+            // Never block app startup on MCP scripts.
+            // Desktop launchers often have a different environment; MCP may be temporarily unavailable.
+            let mcp_paths = McpBundlePaths::resolve(&handle).unwrap_or_else(|e| {
+                tracing::warn!("MCP paths not ready at startup: {e}");
+                McpBundlePaths::fallback(&handle)
+            });
             handle.manage(mcp_paths);
 
             if let Some(window) = app.get_webview_window("main") {

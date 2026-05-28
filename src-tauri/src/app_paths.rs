@@ -21,13 +21,13 @@ impl McpBundlePaths {
         let stdio_script = scripts_dir.join("aiterm-mcp-stdio.mjs");
 
         if !launcher_script.is_file() {
-            tracing::error!("MCP launcher script not found: {}", launcher_script.display());
-            return Err(format!(
-                "未找到 MCP 启动脚本: {}",
+            tracing::warn!(
+                "MCP launcher script not found (startup continues): {}",
                 launcher_script.display()
-            ));
+            );
+        } else {
+            tracing::info!("MCP launcher script found: {}", launcher_script.display());
         }
-        tracing::info!("MCP launcher script found: {}", launcher_script.display());
 
         if !stdio_script.is_file() {
             tracing::warn!("MCP stdio script not found: {}", stdio_script.display());
@@ -51,6 +51,30 @@ impl McpBundlePaths {
             config_dir,
             mcp_config_file,
         })
+    }
+
+    /// Fallback paths used when MCP resources are unavailable at startup.
+    /// This keeps the window opening; MCP status will show as not-ready until scripts are found.
+    pub fn fallback(app: &AppHandle) -> Self {
+        let config_dir = app
+            .path()
+            .app_data_dir()
+            .unwrap_or_else(|_| std::env::temp_dir().join("clide"));
+        let _ = std::fs::create_dir_all(&config_dir);
+        let scripts_dir = app
+            .path()
+            .resource_dir()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()));
+        let launcher_script = scripts_dir.join("run-aiterm-mcp.mjs");
+        let stdio_script = scripts_dir.join("aiterm-mcp-stdio.mjs");
+        let mcp_config_file = config_dir.join(".mcp.json");
+        Self {
+            scripts_dir,
+            launcher_script,
+            stdio_script,
+            config_dir,
+            mcp_config_file,
+        }
     }
 
     pub fn display_root(&self) -> String {

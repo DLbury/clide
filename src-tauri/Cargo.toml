@@ -5,6 +5,10 @@ description = "AI Terminal — non-invasive shell with Claude Code integration"
 authors = ["AITERM"]
 edition = "2021"
 
+[[bin]]
+name = "clide"
+path = "src/main.rs"
+
 [lib]
 name = "aiterm_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
