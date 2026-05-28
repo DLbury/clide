@@ -960,8 +960,8 @@ export default function AITerminal() {
           terminalSessionId,
           allowDefaultKeys: sessionAllowsDefaultKeysFallback(resolved),
         })
-        return
-      }
+      return
+    }
 
       const isLocalLike = resolved.type === 'local' || resolved.type === 'wsl'
       const connect = () =>
@@ -1219,7 +1219,7 @@ export default function AITerminal() {
               : '请使用 Tauri 桌面版（npm run dev:tauri）以建立真实连接。',
             timestamp: new Date(),
           },
-        ]
+    ]
 
     const newConnection: ServerConnection = {
       id: connectionId,
@@ -1366,9 +1366,9 @@ export default function AITerminal() {
         clearTerminalOutputBuffer(shell.terminalSessionId)
       }
     }
-
+    
     setConnections(prev => prev.filter(c => c.id !== connectionId))
-
+    
     if (connectionId === activeConnectionId) {
       const remaining = connections.filter(c => c.id !== connectionId)
       setActiveConnectionId(remaining.length > 0 ? remaining[0].id : null)
@@ -1388,10 +1388,10 @@ export default function AITerminal() {
     const conn = connections.find(c => c.id === activeConnectionId)
     if (!conn) return
 
-    const shell = conn.shells.find(s => s.id === shellId)
+      const shell = conn.shells.find(s => s.id === shellId)
     if (!shell) return
 
-    if (command === 'clear') {
+      if (command === 'clear') {
       if (conn.terminalLive && shell.terminalStatus === 'connected') {
         setTerminalClearSignals(prev => ({
           ...prev,
@@ -1432,7 +1432,7 @@ export default function AITerminal() {
         setConnections(current =>
           current.map(c => {
             if (c.id !== activeConnectionId) return c
-            return {
+        return {
               ...c,
               shells: c.shells.map(s =>
                 s.id === shellId
@@ -1455,17 +1455,17 @@ export default function AITerminal() {
         )
       })
       return
-    }
+      }
 
-    const inputLine: TerminalLine = {
-      id: `${Date.now()}`,
-      type: 'input',
-      content: command,
+      const inputLine: TerminalLine = {
+        id: `${Date.now()}`,
+        type: 'input',
+        content: command,
       timestamp: new Date(),
-    }
+      }
 
-    const outputLine: TerminalLine = {
-      id: `${Date.now()}-out`,
+      const outputLine: TerminalLine = {
+        id: `${Date.now()}-out`,
       type: 'system',
       content: conn.session.status === 'connecting'
         ? '正在连接，请稍候...'
@@ -1480,7 +1480,7 @@ export default function AITerminal() {
           : {
               ...c,
               shells: c.shells.map(s =>
-                s.id === shellId
+          s.id === shellId 
                   ? { ...s, history: [...s.history, inputLine, outputLine] }
                   : s
               ),
@@ -1514,15 +1514,15 @@ export default function AITerminal() {
 
     const conn = connections.find(c => c.id === activeConnectionId)
     if (!conn) return
-
+      
     const shellId = `shell-${Date.now()}`
-    const shellNum = conn.shells.length + 1
+      const shellNum = conn.shells.length + 1
     const terminalSessionId = makeTerminalSessionId(conn.session.id, shellId)
     const useBackend = conn.terminalLive
 
-    const newShell: Shell = {
+      const newShell: Shell = {
       id: shellId,
-      name: `Shell ${shellNum}`,
+        name: `Shell ${shellNum}`,
       history: useBackend
         ? [
             {
@@ -1540,7 +1540,7 @@ export default function AITerminal() {
     setConnections(prev =>
       prev.map(c => {
         if (c.id !== activeConnectionId) return c
-        return {
+      return {
           ...c,
           shells: [...c.shells, newShell],
           activeShellId: shellId,
@@ -1651,14 +1651,14 @@ export default function AITerminal() {
   // File management — VS Code editor model pattern
   const handleFileSelect = useCallback((file: FileItem) => {
     if (!activeConnectionId || file.type === 'directory') return
-    setConnections(prev => prev.map(conn =>
+    setConnections(prev => prev.map(conn => 
       conn.id === activeConnectionId ? { ...conn, selectedFilePath: file.path } : conn
     ))
   }, [activeConnectionId])
 
   const handleFileOpen = useCallback(
     async (file: FileItem) => {
-      if (!activeConnectionId || file.type === 'directory') return
+    if (!activeConnectionId || file.type === 'directory') return
 
       const conn = connections.find(c => c.id === activeConnectionId)
       if (!conn) return
@@ -1730,7 +1730,7 @@ export default function AITerminal() {
 
   const handleFileSave = useCallback(
     async (file: { id: string; path: string; content: string }) => {
-      if (!activeConnectionId) return
+    if (!activeConnectionId) return
 
       const conn = connections.find(c => c.id === activeConnectionId)
       const isRemote = conn?.session.type === 'ssh' && isTauriRuntime()
@@ -1792,7 +1792,7 @@ export default function AITerminal() {
 
   const handleFileSaveById = useCallback(
     async (fileId: string) => {
-      if (!activeConnectionId) return
+    if (!activeConnectionId) return
 
       const conn = connections.find(c => c.id === activeConnectionId)
       const file = conn?.openFiles.find(f => f.id === fileId)
@@ -1850,12 +1850,12 @@ export default function AITerminal() {
 
       setConnections(prev =>
         prev.map(conn => {
-          if (conn.id !== activeConnectionId) return conn
+      if (conn.id !== activeConnectionId) return conn
 
-          const userMsg: ChatMessage = {
-            id: `msg-${Date.now()}`,
-            role: 'user',
-            content: message,
+      const userMsg: ChatMessage = {
+        id: `msg-${Date.now()}`,
+        role: 'user',
+        content: message,
             timestamp: new Date(),
           }
 
@@ -1910,7 +1910,7 @@ export default function AITerminal() {
                 void cancelClaudeMessage(requestId).catch(() => {})
                 setConnections(prev =>
                   prev.map(conn => {
-                    if (conn.id !== activeConnectionId) return conn
+        if (conn.id !== activeConnectionId) return conn
                     return {
                       ...conn,
                       aiMessages: conn.aiMessages.map(m =>
@@ -1936,6 +1936,14 @@ export default function AITerminal() {
             claudeCode.registerStreamHandler(requestId, event => {
               armSilentTimeout()
               let streamText: string | undefined
+              // Mark tool usage ASAP to avoid fallback double-execution race.
+              if (
+                event.eventType === 'tool_start' &&
+                (event.toolName === 'runShellCommand' ||
+                  event.toolName === 'mcp__aiterm__runShellCommand')
+              ) {
+                mcpShellCommandThisTurnRef.current = true
+              }
               if (event.text) {
                 if (
                   event.eventType === 'stream_event' ||
@@ -2058,7 +2066,7 @@ export default function AITerminal() {
                       }
                     })
                   )
-                } else {
+          } else {
                   setConnections(prev =>
                     prev.map(conn =>
                       conn.id === activeConnectionId ? { ...conn, aiThinking: false } : conn
@@ -2256,7 +2264,7 @@ export default function AITerminal() {
         folderId === DEFAULT_FOLDER_PLACEHOLDER ? updated[0]?.id : folderId
       let targetFolderIndex = targetId ? updated.findIndex(f => f.id === targetId) : 0
       if (targetFolderIndex < 0) targetFolderIndex = 0
-
+      
       updated[targetFolderIndex] = {
         ...updated[targetFolderIndex],
         sessions: [...updated[targetFolderIndex].sessions, newSession],
@@ -2493,8 +2501,8 @@ export default function AITerminal() {
             showSidebar ? 'w-64' : 'w-0'
           )}
         >
-          <Sidebar
-            folders={folders}
+        <Sidebar
+          folders={folders}
             onSessionSelect={handleSessionSelect}
             onSessionConnect={handleSessionConnect}
             onNewSession={() => {
@@ -2509,8 +2517,8 @@ export default function AITerminal() {
             onEditSession={handleEditSession}
             onDeleteSession={handleDeleteSession}
             onDisconnectSession={handleDisconnectSession}
-            activeSessionId={activeSession?.id}
-          />
+          activeSessionId={activeSession?.id}
+        />
         </div>
 
         {/* Center + Right Content */}
@@ -2568,8 +2576,8 @@ export default function AITerminal() {
                 ref={workbenchRef}
                 connectionId={activeConnection.id}
                 session={activeConnection.session}
-                shells={activeConnection.shells}
-                activeShellId={activeConnection.activeShellId}
+                  shells={activeConnection.shells}
+                  activeShellId={activeConnection.activeShellId}
                 openFiles={activeConnection.openFiles}
                 activeFileId={activeConnection.activeFileId}
                 terminalLive={activeConnection.terminalLive}
@@ -2579,10 +2587,10 @@ export default function AITerminal() {
                     terminalClearSignals[s.terminalSessionId] ?? 0,
                   ])
                 )}
-                onShellChange={handleShellChange}
-                onNewShell={handleNewShell}
-                onCloseShell={handleCloseShell}
-                onCommand={handleCommand}
+                  onShellChange={handleShellChange}
+                  onNewShell={handleNewShell}
+                  onCloseShell={handleCloseShell}
+                  onCommand={handleCommand}
                 onFileChange={handleFileChange}
                 onFileSave={handleFileSaveById}
                 onFileClose={handleFileClose}

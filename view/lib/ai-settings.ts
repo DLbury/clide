@@ -32,7 +32,8 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   systemPrompt:
     '你是 AI Terminal 助手。远程命令必须用 MCP aiterm 的 runShellCommand 执行并汇报 output。sudo 等需要交互输入密码的命令：用 runShellCommand 发起后，提示用户在左侧 Shell 终端里手动输入密码，不要向用户索要密码、不要把密码写进命令或聊天。',
   injectTerminalContext: true,
-  autoExecuteCommands: true,
+  // Safety: avoid executing suggested commands without explicit user action.
+  autoExecuteCommands: false,
 }
 
 const STORAGE_KEY = 'aiterm-ai-settings'
