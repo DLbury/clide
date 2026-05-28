@@ -123,8 +123,45 @@
 | 平台 | 格式 | 说明 |
 |------|------|------|
 | **Windows** | `.msi` / `.exe` | 需 WebView2（Win10/11 通常已自带） |
-| **macOS** | `.dmg` | Apple Silicon（`aarch64`）与 Intel（`x86_64`）分别构建 |
-| **Linux** | `.deb` / `.AppImage` | 需 WebKitGTK 等依赖（见下方源码构建） |
+| **macOS** | `.dmg` | Apple Silicon（`aarch64`）与 Intel（`x86_64`）分别构建；v0.1.20 及更早版本存在与 Linux 相同的 MCP 启动问题，请用 v0.1.21+ |
+| **Linux** | `.deb` / `.AppImage` | 需 WebKitGTK 等依赖（见下方 [Linux 故障排除](#linux-故障排除)） |
+
+### Linux 故障排除
+
+> **v0.1.20 及更早的 `.deb`**：若安装后无窗口，多为 MCP 资源路径错误导致启动即退出；请使用 **v0.1.21+** 的 `.deb` 重新安装。
+
+安装后**没有窗口**或**点击无反应**时，请在终端运行（便于看到错误信息）：
+
+```bash
+# .deb 安装后（二进制一般在 /usr/bin，资源在 /usr/lib/Clide/）
+clide
+
+# 或 AppImage
+chmod +x Clide_*.AppImage
+./Clide_*.AppImage
+```
+
+若提示缺少库，Ubuntu/Debian 可安装：
+
+```bash
+sudo apt update
+sudo apt install -y \
+  libwebkit2gtk-4.1-0 \
+  libgtk-3-0 \
+  libayatana-appindicator3-1
+```
+
+Wayland 下若窗口仍异常，可尝试 X11 会话，或：
+
+```bash
+GDK_BACKEND=x11 clide
+```
+
+调试日志：
+
+```bash
+RUST_LOG=debug clide
+```
 
 ### 前置条件
 

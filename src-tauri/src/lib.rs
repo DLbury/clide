@@ -390,10 +390,24 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle().clone();
-            let mcp_paths = McpBundlePaths::resolve(&handle)?;
+            let mcp_paths = match McpBundlePaths::resolve(&handle) {
+                Ok(paths) => paths,
+                Err(e) => {
+                    eprintln!("Clide startup failed: {e}");
+                    eprintln!(
+                        "Tip: run `RUST_LOG=debug clide` in a terminal for details."
+                    );
+                    return Err(e.into());
+                }
+            };
             handle.manage(mcp_paths);
 
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "linux")]
+                {
+                    // Overlay title bar is macOS-oriented; keep system decorations on Linux.
+                    let _ = window.set_decorations(true);
+                }
                 let _ = window.show();
                 let _ = window.unminimize();
                 let _ = window.set_focus();
@@ -443,5 +457,9 @@ pub fn run() {
             terminal_get_host_stats,
         ])
         .run(tauri::generate_context!())
+        .map_err(|e| {
+            eprintln!("Clide failed to run: {e}");
+            e
+        })
         .expect("error while running tauri application");
 }

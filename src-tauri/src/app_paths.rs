@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
 
 /// Bundled MCP scripts + app-local MCP config directory.
@@ -58,54 +59,81 @@ impl McpBundlePaths {
 }
 
 fn resolve_scripts_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    // 1. 首先尝试 bundled resources (文件直接放在根目录)
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        // 检查是否直接包含脚本文件
-        let launcher = resource_dir.join("run-aiterm-mcp.mjs");
-        let _stdio = resource_dir.join("aiterm-mcp-stdio.mjs");
-        if launcher.is_file() {
-            tracing::info!("Using bundled resources dir: {}", resource_dir.display());
-            return Ok(resource_dir);
-        }
-
-        // 检查 scripts 子目录
-        let bundled = resource_dir.join("scripts");
-        tracing::debug!("Checking bundled scripts dir: {}", bundled.display());
-        if bundled.join("run-aiterm-mcp.mjs").is_file() {
-            tracing::info!("Using bundled scripts dir: {}", bundled.display());
-            return Ok(bundled);
+    // 1. Tauri resource resolver (matches tauri.conf.json > bundle > resources paths)
+    const RESOURCE_CANDIDATES: &[&str] = &[
+        "scripts/run-aiterm-mcp.mjs",
+        "../scripts/run-aiterm-mcp.mjs",
+        "run-aiterm-mcp.mjs",
+    ];
+    for rel in RESOURCE_CANDIDATES {
+        if let Ok(path) = app.path().resolve(rel, BaseDirectory::Resource) {
+            if path.is_file() {
+                if let Some(dir) = path.parent() {
+                    tracing::info!(
+                        "Using MCP scripts from resource resolve({rel}): {}",
+                        dir.display()
+                    );
+                    return Ok(dir.to_path_buf());
+                }
+            }
         }
     }
 
-    // 2. Development: src-tauri/../scripts
+    // 2. Manual scan under resource_dir (Linux .deb: /usr/lib/<app>; list resources use _up_/scripts)
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let scan_dirs = [
+            resource_dir.clone(),
+            resource_dir.join("scripts"),
+            resource_dir.join("_up_").join("scripts"),
+        ];
+        for dir in scan_dirs {
+            if dir.join("run-aiterm-mcp.mjs").is_file() {
+                tracing::info!("Using bundled resources dir: {}", dir.display());
+                return Ok(dir);
+            }
+        }
+    }
+
+    // 3. Development: src-tauri/../scripts
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts");
-    tracing::debug!("Checking dev scripts dir: {}", dev.display());
     if dev.join("run-aiterm-mcp.mjs").is_file() {
         tracing::info!("Using dev scripts dir: {}", dev.display());
         return Ok(dev);
     }
 
-    // 3. Installed binary next to resources (fallback)
+    // 4. Installed binary layout (platform-specific fallbacks)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            // 检查同级目录
-            let launcher = dir.join("run-aiterm-mcp.mjs");
-            if launcher.is_file() {
-                tracing::info!("Using exe dir: {}", dir.display());
-                return Ok(dir.to_path_buf());
-            }
+            let product = app
+                .config()
+                .product_name
+                .clone()
+                .unwrap_or_else(|| "Clide".to_string());
+            let mut candidates = vec![
+                dir.to_path_buf(),
+                dir.join("scripts"),
+                // Linux .deb: /usr/bin/<bin> + /usr/lib/<productName>/scripts
+                dir.join("../lib").join(&product),
+                // macOS .app: Contents/MacOS/<bin> + Contents/Resources/scripts
+                dir.join("../Resources"),
+                dir.join("../Resources").join("scripts"),
+                // Windows: resources next to exe
+                dir.join("resources"),
+                dir.join("resources").join("scripts"),
+            ];
+            candidates.push(dir.join("../Resources").join("_up_").join("scripts"));
+            candidates.push(
+                dir.join("../lib")
+                    .join(&product)
+                    .join("_up_")
+                    .join("scripts"),
+            );
 
-            let sibling = dir.join("scripts");
-            tracing::debug!("Checking sibling scripts dir: {}", sibling.display());
-            if sibling.join("run-aiterm-mcp.mjs").is_file() {
-                tracing::info!("Using sibling scripts dir: {}", sibling.display());
-                return Ok(sibling);
-            }
-            let resources = dir.join("resources").join("scripts");
-            tracing::debug!("Checking resources scripts dir: {}", resources.display());
-            if resources.join("run-aiterm-mcp.mjs").is_file() {
-                tracing::info!("Using resources scripts dir: {}", resources.display());
-                return Ok(resources);
+            for candidate in candidates {
+                if candidate.join("run-aiterm-mcp.mjs").is_file() {
+                    tracing::info!("Using exe-relative scripts dir: {}", candidate.display());
+                    return Ok(candidate);
+                }
             }
         }
     }
