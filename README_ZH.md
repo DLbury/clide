@@ -11,8 +11,7 @@
 <h1 align="center">Clide</h1>
 
 <p align="center">
-  <strong>智能运维终端 · Claude Code 安全排查服务器</strong><br>
-  在你本机运行 Claude Code，通过真实 SSH Shell 操作多台服务器——不把公钥交给 AI，不把密码写进对话，sudo 由你在左侧终端自行输入。
+  <em>🔒 安全地用 Claude Code 管理服务器，<strong>永不泄露密码，无需配置公钥</strong></em>
 </p>
 
 <p align="center">
@@ -37,15 +36,22 @@
 
 ## 简介
 
-用 Claude Code 排查线上问题时，常见做法往往不顺手：
+### 为什么你需要 Clide？
 
-| 做法 | 痛点 |
-|------|------|
-| 在每台服务器上安装 Claude Code | 部署重、升级难、账号与审计分散 |
-| 让 Claude Code 自己 SSH 连服务器 | 每台机器都要配公钥；用密码则必须把密码告诉 AI |
-| 执行 `sudo` 等交互命令 | AI 没有你的交互式终端，不给密码就卡住 |
+用 Claude Code 处理服务器问题时，你是不是一直被这些安全问题困扰？
 
-**Clide**（clide / AITERM）面向 **运维 / SRE / 值班排查** 场景：Claude Code **只在你本机运行**，通过 **IDE 桥接 + MCP** 把命令下发到应用 **左侧真实 SSH Shell**（与手动敲命令同一条 PTY），AI 读终端输出帮你分析——**SSH 登录密码、sudo 密码由你在 Shell 里输入**，不进对话、不进 prompt。
+❌ **必须给每台服务器配置 AI 的公钥**，一旦 AI 端泄露，所有服务器全部沦陷  
+❌ **必须把明文密码告诉 Claude**，密码会上传到 Anthropic 服务器  
+❌ **Sudo 命令无法执行**，要么配置无密码 sudo（安全红线），要么把 root 密码交给 AI  
+
+Clide 采用 **本地中转架构** 完美解决这些问题：
+
+✅ SSH 连接完全由本地客户端建立和维护  
+✅ 你的密码和私钥永远只存在于你的电脑上，**永远不会上传到任何第三方**  
+✅ AI 执行 sudo 命令时，你在左侧 Shell 输入密码（SSH 登录可在本地弹窗输入），**不会传递给 Claude**  
+✅ 不需要在任何服务器上安装任何软件或配置额外公钥  
+
+Claude Code **只在你本机运行**，通过 **IDE 桥接 + MCP** 把命令下发到 **左侧真实 SSH Shell**（与手动敲命令同一条 PTY），AI 读终端输出帮你分析。
 
 同一窗口还提供多会话 SSH 终端、SFTP 文件浏览、资源监控与 Monaco 编辑远程配置，适合日常巡检、故障定位与变更操作。
 
