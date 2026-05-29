@@ -46,11 +46,11 @@ The bridge translates between Claude's IDE protocol and the MCP tools, giving Cl
 
 ## Try It Out
 
-Clide is open source under MIT. Install it, connect to your server, and let Claude help you debug, edit, and manage your remote development workflow.
+Clide is open source under MIT. Install it on your laptop, SSH into your servers as usual, and let Claude help you triage incidents—without handing SSH keys or passwords to the AI.
 
 - [GitHub: DLbury/clide](https://github.com/DLbury/clide)
 - [Download Releases](https://github.com/DLbury/clide/releases)
 
 ---
 
-*Keywords: Tauri 2, SSH client, Claude Code, MCP, AI terminal, remote development, open source IDE*
+*Keywords: Tauri 2, ops terminal, SRE, Claude Code, MCP, AI troubleshooting, SSH, sudo, open source*

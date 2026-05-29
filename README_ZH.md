@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="view/public/icon-rounded.png" alt="Clide logo - AI SSH terminal desktop app" width="128" height="128">
+  <img src="view/public/icon-rounded.png" alt="Clide logo - Claude Code 智能运维终端" width="128" height="128">
 </p>
 
 
@@ -11,8 +11,8 @@
 <h1 align="center">Clide</h1>
 
 <p align="center">
-  <strong>智能终端 · AI SSH Terminal &amp; Claude Code IDE Desktop App</strong><br>
-  面向开发者的 SSH 终端工作台：Shell、远程文件、Monaco 编辑器与 Claude Code AI 助手，一站式远程开发与 AI 编程。
+  <strong>智能运维终端 · Claude Code 安全排查服务器</strong><br>
+  在你本机运行 Claude Code，通过真实 SSH Shell 操作多台服务器——不把公钥交给 AI，不把密码写进对话，sudo 由你在左侧终端自行输入。
 </p>
 
 <p align="center">
@@ -37,15 +37,23 @@
 
 ## 简介
 
-**Clide**（clide / AITERM）是一款基于 [Tauri 2](https://v2.tauri.app/) 的跨平台桌面应用，将 **SSH 终端**、**远程文件管理**、**代码编辑** 与 **[Claude Code](https://docs.anthropic.com/en/docs/claude-code) AI 编程助手** 整合在同一窗口。
+用 Claude Code 排查线上问题时，常见做法往往不顺手：
 
-通过 **非侵入式 IDE 桥接** 与 **MCP（Model Context Protocol）** 工具，Claude 可以直接在你的 SSH 会话中执行命令、读取终端上下文、浏览远程文件——无需修改系统 shell 配置，也不污染 `~/.bashrc` 或 PowerShell Profile。
+| 做法 | 痛点 |
+|------|------|
+| 在每台服务器上安装 Claude Code | 部署重、升级难、账号与审计分散 |
+| 让 Claude Code 自己 SSH 连服务器 | 每台机器都要配公钥；用密码则必须把密码告诉 AI |
+| 执行 `sudo` 等交互命令 | AI 没有你的交互式终端，不给密码就卡住 |
+
+**Clide**（clide / AITERM）面向 **运维 / SRE / 值班排查** 场景：Claude Code **只在你本机运行**，通过 **IDE 桥接 + MCP** 把命令下发到应用 **左侧真实 SSH Shell**（与手动敲命令同一条 PTY），AI 读终端输出帮你分析——**SSH 登录密码、sudo 密码由你在 Shell 里输入**，不进对话、不进 prompt。
+
+同一窗口还提供多会话 SSH 终端、SFTP 文件浏览、资源监控与 Monaco 编辑远程配置，适合日常巡检、故障定位与变更操作。
 
 <p align="center">
-  <img src="docs/assets/readme-hero.png" alt="Clide 界面概览：SSH 终端、文件管理与 AI 助手三栏布局" width="900">
+  <img src="docs/assets/readme-hero.png" alt="Clide 界面概览：左侧 SSH Shell、中间文件与监控、右侧 Claude Code AI" width="900">
 </p>
 
-> 关键词：**SSH 客户端** · **AI 终端** · **Claude Code IDE** · **MCP 工具** · **远程开发** · **xterm.js** · **Monaco Editor** · **Tauri 桌面应用**
+> 关键词：**运维终端** · **AI 排障** · **Claude Code** · **MCP** · **SSH** · **sudo 安全** · **SRE** · **Tauri 桌面应用**
 
 ---
 
@@ -101,12 +109,12 @@
 </td>
 <td valign="top">
 
-### 🤖 Claude Code AI
+### 🤖 Claude Code 运维助手
 
-- 流式对话、推理过程与工具调用可视化
-- 终端上下文自动注入 AI
-- 发送/停止生成、全文复制
-- 密码提示在 Shell 面板输入（sudo / SSH）
+- 本机 Claude Code + MCP：`runShellCommand` 驱动左侧 Shell，非 AI 直连 SSH
+- 流式对话、工具调用与终端输出回传可视化
+- **密码边界清晰**：SSH / sudo 仅在左侧 xterm 输入，AI 不索要、不嵌入命令
+- 长任务可轮询 `getTerminalContext`；终端上下文可注入对话
 
 </td>
 </tr>
@@ -180,23 +188,34 @@ RUST_LOG=debug clide
 
 ## 快速开始
 
-1. **安装** — 从 [Releases](https://github.com/DLbury/clide/releases) 下载并安装 Clide
-2. **配置 SSH** — 在侧边栏添加服务器 Profile（主机、端口、用户名、密钥）
-3. **连接 Shell** — 双击 Profile 打开 SSH 终端标签
-4. **启用 AI** — 确保本机已安装并登录 Claude Code CLI，在右侧 AI 面板发送消息
-5. **远程执行** — 对 AI 说「在这台服务器上执行 `df -h`」，Claude 将通过 MCP 调用 `runShellCommand`
+1. **安装** — 从 [Releases](https://github.com/DLbury/clide/releases) 下载并安装 Clide（本机）
+2. **配置 SSH** — 侧边栏添加服务器 Profile（主机、端口、用户、密钥或密码——凭据留在应用内，不给 AI）
+3. **连接 Shell** — 双击 Profile，在 **左侧终端** 完成登录（含密码 / 二次验证）
+4. **启用 AI** — 本机安装并登录 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)，确认侧栏 IDE 桥接已就绪
+5. **排障** — 对 AI 描述现象，例如「查看这台机磁盘和负载」；Claude 调用 `runShellCommand`，你在左侧看到命令与输出，需要 `sudo` 时在 Shell 里输入密码
 
 ```
-示例对话：
-  你：查看当前聚焦服务器的磁盘使用情况
-  AI：→ getFocusedServer → runShellCommand("df -h") → 返回终端输出
+示例：
+  你：这台机器磁盘快满了，帮我查一下
+  AI：→ runShellCommand("df -h") → 左侧 Shell 执行并回传输出
+  AI：→ runShellCommand("sudo du -sh /var/* | sort -rh | head") 
+  你：在左侧 Shell 输入 sudo 密码（AI 看不到）
 ```
 
 ---
 
 ## Claude Code & MCP 集成
 
-Clide 采用 **非侵入式** 集成策略，不修改你的全局 Claude 配置：
+Clide 让 Claude Code 扮演 **本机运维副驾驶**：它不持有你的 SSH 凭据，只通过 MCP 操作你已打开的 Shell 会话。
+
+| 对比 | Claude Code 直连 SSH | Clide |
+|------|---------------------|-------|
+| Claude 安装位置 | 本机或每台服务器 | **仅本机** |
+| 服务器凭据 | 公钥分发或密码给 AI | **你在 UI 登录，AI 不接触** |
+| `sudo` | 难安全交互 | **左侧 Shell 手动输入** |
+| 命令可见性 | 视工具而定 | **与手工操作同一 xterm** |
+
+集成采用 **非侵入式** 策略，不修改全局 shell 配置：
 
 | 方式 | 说明 |
 |------|------|
@@ -356,7 +375,7 @@ Copyright © 2026 [DLbury](https://github.com/DLbury)
 
 <p align="center">
   <sub>
-    Clide · AI SSH Terminal · Claude Code IDE · MCP Remote Development<br>
+    Clide · AI Ops Terminal · Claude Code · Secure SSH &amp; sudo<br>
     如果这个项目对你有帮助，欢迎 ⭐ Star 支持
   </sub>
 </p>

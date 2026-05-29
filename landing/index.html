@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Clide - AI SSH Terminal & Claude Code IDE</title>
-<meta name="description" content="Open-source AI-powered SSH terminal with Claude Code IDE integration. Remote development meets AI assistance.">
-<meta name="keywords" content="SSH client, AI terminal, Claude Code, MCP, remote development, Tauri, open source IDE">
-<meta property="og:title" content="Clide - AI SSH Terminal & Claude Code IDE">
-<meta property="og:description" content="SSH terminal, remote files, Monaco editor, and Claude Code AI in one desktop app.">
+<title>Clide - AI Ops Terminal for Claude Code</title>
+<meta name="description" content="Run Claude Code on your machine only. Operate servers via real SSH shells—no keys or passwords handed to the AI. You type sudo in the terminal.">
+<meta name="keywords" content="ops terminal, SRE, Claude Code, MCP, SSH, sudo, server troubleshooting, Tauri">
+<meta property="og:title" content="Clide - AI Ops Terminal for Claude Code">
+<meta property="og:description" content="Secure server ops with Claude Code: real SSH shells, passwords stay in your terminal, not in the chat.">
 <meta property="og:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <meta property="og:url" content="https://dlbury.github.io/clide">
 <style>
@@ -61,10 +61,10 @@ footer a{color:#58a6ff;text-decoration:none}
 </div>
 </nav>
 <section class="hero">
-<h1>AI SSH Terminal<br>Meet Claude Code IDE</h1>
-<p>Open-source desktop app that combines SSH terminal, remote file management, Monaco editor, and Claude Code AI in one window.</p>
+<h1>Claude Code<br>for Server Ops</h1>
+<p>Keep Claude on your laptop. Run commands in real SSH shells—no per-server Claude install, no SSH keys for the AI, no passwords in chat. Type sudo yourself in the left terminal.</p>
 <div class="btns">
-<a class="btn btn-primary" href="https://github.com/DLbury/clide/releases">Download v0.1.22</a>
+<a class="btn btn-primary" href="https://github.com/DLbury/clide/releases">Download v0.1.25</a>
 <a class="btn btn-secondary" href="https://github.com/DLbury/clide">Star on GitHub</a>
 </div>
 <div class="hero-img">
@@ -74,12 +74,12 @@ footer a{color:#58a6ff;text-decoration:none}
 <section class="features" id="features">
 <h2>Everything you need</h2>
 <div class="grid">
-<div class="card"><h3>SSH Terminal</h3><p>Multi-tab shells with split-pane layout. Real-time PTY for local and remote sessions.</p></div>
-<div class="card"><h3>Remote Files</h3><p>SFTP browsing, upload/download, drag-and-drop. Open files directly in Monaco editor.</p></div>
-<div class="card"><h3>Claude Code AI</h3><p>Streaming chat with tool call visualization. Terminal context auto-injected into AI.</p></div>
-<div class="card"><h3>MCP Integration</h3><p>Non-invasive IDE bridge. No shell config pollution. Standard Model Context Protocol.</p></div>
-<div class="card"><h3>Resource Monitor</h3><p>CPU, memory, GPU, disk stats. Independent exec channel, no PTY interference.</p></div>
-<div class="card"><h3>Cross-Platform</h3><p>Windows, macOS, Linux. Built on Tauri 2 for native performance and small footprint.</p></div>
+<div class="card"><h3>Why Clide</h3><p>Installing Claude on every box is heavy. Letting Claude SSH needs keys everywhere—or you give it passwords. Clide sends commands to your open shell; you handle login and sudo.</p></div>
+<div class="card"><h3>SSH Terminal</h3><p>Multi-tab shells, split panes. Same PTY whether you type or AI runs a command—you always see what happened.</p></div>
+<div class="card"><h3>Claude Code + MCP</h3><p>Local Claude Code drives runShellCommand. Terminal output flows back to the AI for triage and runbooks.</p></div>
+<div class="card"><h3>Remote Files</h3><p>SFTP browse, edit configs in Monaco, upload patches during incidents.</p></div>
+<div class="card"><h3>Resource Monitor</h3><p>CPU, memory, disk at a glance while you troubleshoot.</p></div>
+<div class="card"><h3>Cross-Platform</h3><p>Windows, macOS, Linux. Tauri 2 native desktop.</p></div>
 </div>
 </section>
 <section class="compare" id="compare">
@@ -96,7 +96,7 @@ footer a{color:#58a6ff;text-decoration:none}
 </section>
 <section class="cta">
 <h2>Ready to try Clide?</h2>
-<p>Free, open source, MIT licensed. Works with your existing SSH servers.</p>
+<p>Free, open source, MIT licensed. Claude stays on your machine; credentials stay in your terminal.</p>
 <div class="btns" style="display:flex;gap:16px;justify-content:center">
 <a class="btn btn-primary" href="https://github.com/DLbury/clide/releases">Download</a>
 <a class="btn btn-secondary" href="https://github.com/DLbury/clide">View on GitHub</a>
