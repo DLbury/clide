@@ -7,6 +7,7 @@ import {
   listenBridgeConnected,
   listenClaudeStream,
   registerClaudeMcp,
+  waitClaudeMcpTools,
   restartClaudeBridge,
   startClaudeBridge,
   stopClaudeBridge,
@@ -93,6 +94,18 @@ export function useClaudeCode({
     return runAutoMcpRegister(true)
   }, [runAutoMcpRegister])
 
+  /** 发送 AI 消息前确保 .mcp.json 已写入（工具预检在 Rust claude_send_message 内完成） */
+  const ensureMcpReady = useCallback(async () => {
+    if (!isTauriRuntime() || !enabled) return null
+    mcpAutoAttemptedRef.current = false
+    return runAutoMcpRegister(true)
+  }, [enabled, runAutoMcpRegister])
+
+  const warmMcpToolsInBackground = useCallback(() => {
+    if (!isTauriRuntime() || !enabled) return
+    void withTimeout(waitClaudeMcpTools(10_000), 12_000, '预热 MCP 工具').catch(() => {})
+  }, [enabled])
+
   const ensureStreamReady = useCallback(async () => {
     if (streamReadyRef.current) return
     const deadline = Date.now() + 5000
@@ -114,6 +127,7 @@ export function useClaudeCode({
     )
     if (current?.running) {
       setBridge(current)
+      // 只在未注册过时自动注册
       if (!mcpAutoAttemptedRef.current) {
         void runAutoMcpRegister()
       }
@@ -127,9 +141,9 @@ export function useClaudeCode({
     )
     bridgeStartedRef.current = true
     setBridge(status)
-    void runAutoMcpRegister()
+    void runAutoMcpRegister().then(() => warmMcpToolsInBackground())
     return status
-  }, [enabled, runAutoMcpRegister])
+  }, [enabled, runAutoMcpRegister, warmMcpToolsInBackground])
 
   useEffect(() => {
     if (!isTauriRuntime() || !enabled) {
@@ -148,14 +162,39 @@ export function useClaudeCode({
       detectClaude().then(setDetected).catch(console.error)
     }, 2000)
 
+    // AI 启用后预热桥接 + MCP，避免首条消息才注册导致 Claude 拿不到工具
+    const warmTimer = setTimeout(() => {
+      void (async () => {
+        try {
+          const status = await getClaudeBridgeStatus()
+          if (status?.running) {
+            setBridge(status)
+            void runAutoMcpRegister().then(() => warmMcpToolsInBackground())
+            return
+          }
+          const started = await withTimeout(
+            startClaudeBridge([], claudePathRef.current || undefined),
+            15_000,
+            '预热 Claude Bridge'
+          )
+          bridgeStartedRef.current = true
+          setBridge(started)
+          void runAutoMcpRegister().then(() => warmMcpToolsInBackground())
+        } catch {
+          // 预热失败不阻断；首条消息会再试
+        }
+      })()
+    }, 2500)
+
     listenClaudeStream(event => {
       const handler = pendingRequests.current.get(event.requestId)
-      handler?.(event)
+      // 让回调异步化，避免同步事件风暴导致 React update depth exceeded
+      if (handler) queueMicrotask(() => handler(event))
       if (event.done) {
         pendingRequests.current.delete(event.requestId)
       }
       if (event.sessionId) {
-        setSessionId(event.sessionId)
+        setSessionId(prev => (prev === event.sessionId ? prev : event.sessionId))
       }
     }).then(fn => {
       streamReadyRef.current = true
@@ -167,8 +206,8 @@ export function useClaudeCode({
 
     listenBridgeConnected(() => {
       getClaudeBridgeStatus().then(setBridge).catch(console.error)
-      mcpAutoAttemptedRef.current = false
-      void runAutoMcpRegister()
+      // 桥接连接时只更新状态，不重置注册标记
+      // MCP 配置已在桥接启动时写入，无需重复注册
     }).then(fn => {
       unlistenBridgeRef.current = fn
     })
@@ -189,6 +228,7 @@ export function useClaudeCode({
 
     return () => {
       clearTimeout(detectTimer)
+      clearTimeout(warmTimer)
       clearInterval(statusPoll)
       unlistenStreamRef.current?.()
       unlistenBridgeRef.current?.()
@@ -202,7 +242,7 @@ export function useClaudeCode({
         bridgeStartedRef.current = false
       }
     }
-  }, [enabled, claudePath, runAutoMcpRegister])
+  }, [enabled, claudePath, runAutoMcpRegister, warmMcpToolsInBackground])
 
   useEffect(() => {
     if (!isTauriRuntime() || !enabled) return
@@ -244,6 +284,7 @@ export function useClaudeCode({
     mcpRegistering,
     retryMcpRegister,
     ensureBridgeReady,
+    ensureMcpReady,
     ensureStreamReady,
     registerStreamHandler,
     restartBridge,

@@ -169,3 +169,23 @@ fn resolve_scripts_dir(app: &AppHandle) -> Result<PathBuf, String> {
 pub fn path_to_js_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
+
+/// Node 启动参数：绝对路径 + 正斜杠（全平台安全；Windows 上可避免 `D:\work\...` 被解析成盘符 `D:`）。
+pub fn node_script_argv(path: &Path) -> Result<String, String> {
+    if !path.is_file() {
+        return Err(format!("MCP 脚本不是文件: {}", path.display()));
+    }
+    let abs = std::fs::canonicalize(path)
+        .map_err(|e| format!("无法解析 MCP 脚本路径 {}: {e}", path.display()))?;
+    let mut js_path = path_to_js_string(&abs);
+    #[cfg(windows)]
+    {
+        // canonicalize 在 Windows 上常返回 \\?\D:\...；Node 入口不稳定，需去掉扩展前缀
+        if let Some(rest) = js_path.strip_prefix("//?/UNC/") {
+            js_path = format!("//{rest}");
+        } else if let Some(rest) = js_path.strip_prefix("//?/") {
+            js_path = rest.to_string();
+        }
+    }
+    Ok(js_path)
+}

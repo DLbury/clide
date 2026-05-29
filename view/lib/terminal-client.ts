@@ -13,6 +13,12 @@ export interface TerminalConnectRequest {
   password?: string
   privateKeyPath?: string
   authConfig?: AuthConfig
+  // Serial specific
+  serialPort?: string
+  baudRate?: number
+  dataBits?: number
+  stopBits?: number
+  parity?: 'none' | 'odd' | 'even'
 }
 
 export interface TerminalOutputEvent {
@@ -34,7 +40,7 @@ export interface RemoteFileEntry {
   permissions?: string
 }
 
-const SUPPORTED_TYPES: Session['type'][] = ['ssh', 'local', 'wsl']
+const SUPPORTED_TYPES: Session['type'][] = ['ssh', 'telnet', 'serial', 'local', 'wsl']
 
 export function isTerminalBackendSupported(type: Session['type']): boolean {
   return isTauriRuntime() && SUPPORTED_TYPES.includes(type)
@@ -59,6 +65,11 @@ export function sessionToConnectRequest(session: Session): TerminalConnectReques
     password: session.password,
     privateKeyPath: session.privateKeyPath,
     authConfig: session.authConfig,
+    serialPort: session.serialPort,
+    baudRate: session.baudRate,
+    dataBits: session.dataBits,
+    stopBits: session.stopBits,
+    parity: session.parity,
   }
 }
 
@@ -157,6 +168,11 @@ function sessionToInvokeRequest(session: Session) {
     authMethod,
     password,
     privateKeyPath,
+    serialPort: session.serialPort ?? null,
+    baudRate: session.baudRate ?? null,
+    dataBits: session.dataBits ?? null,
+    stopBits: session.stopBits ?? null,
+    parity: session.parity ?? null,
     envConfig: {},
   }
 }

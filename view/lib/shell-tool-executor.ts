@@ -1,10 +1,26 @@
 import { isTauriRuntime } from '@/lib/tauri-env'
-import { normalizeShellCommandForPty, writeTerminal } from '@/lib/terminal-client'
+import { normalizeShellCommandForPty } from '@/lib/terminal-client'
+import { submitTerminalInput } from '@/lib/terminal-input-registry'
 import { getTerminalOutputBuffer, requestTerminalResync } from '@/lib/terminal-stream'
 
 const activeShellToolRequests = new Set<string>()
 const completedShellToolRequests = new Set<string>()
 const MAX_COMPLETED_SHELL_TOOL_IDS = 256
+
+async function completeShellTool(
+  requestId: string,
+  output: string | null,
+  error: string | null,
+  timedOut = false
+): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('complete_shell_tool_command', {
+    requestId,
+    output,
+    error,
+    timedOut,
+  })
+}
 
 function rememberCompletedShellTool(requestId: string) {
   completedShellToolRequests.add(requestId)
@@ -14,11 +30,46 @@ function rememberCompletedShellTool(requestId: string) {
   }
 }
 
+/**
+ * 检测是否出现了 shell 提示符（命令执行完成的标志）
+ * 例如：user@host:path$ 或 C:\> 或 % 结尾
+ */
+function looksLikeShellPrompt(output: string): boolean {
+  // 移除 ANSI 转义序列
+  const cleanOutput = output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][0-9;]*\x07/g, '').replace(/\x00/g, '')
+
+  // 获取最后几行
+  const lines = cleanOutput.split('\n').filter(l => l.trim())
+  if (lines.length === 0) return false
+
+  const lastLine = lines[lines.length - 1].trim()
+  if (lastLine.length > 200) return false
+
+  // 检测常见提示符结尾
+  if (/[$#%>]$/.test(lastLine)) return true
+
+  // 检测 user@host 模式 (user@host:path$)
+  if (/@.*:.*[$#%]/.test(lastLine)) return true
+
+  // 检测 Windows cmd/ps (C:\> 或 PS C:\>)
+  if (/^[A-Z]:\\/.test(lastLine) || lastLine.startsWith('PS ')) return true
+
+  return false
+}
+
+function stripAnsi(output: string): string {
+  return output
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+    .replace(/\x1b\][0-9;]*\x07/g, '')
+    .replace(/\x00/g, '')
+}
+
 export interface ShellToolRequestPayload {
   requestId: string
   terminalSessionId: string
   command: string
   waitMs?: number
+  sessionType?: string
   /** 执行前等待左侧 Shell 标签切换完成 */
   beforeExecute?: () => Promise<void>
 }
@@ -38,37 +89,72 @@ export async function executeShellToolInTab(
     completedShellToolRequests.has(payload.requestId)
   ) {
     console.log(`[ShellTool] Skipping duplicate request: ${payload.requestId}`)
+    await completeShellTool(
+      payload.requestId,
+      null,
+      '检测到重复的 runShellCommand 请求，已忽略重复执行',
+      false
+    ).catch(() => {})
     return
   }
   activeShellToolRequests.add(payload.requestId)
   console.log(`[ShellTool] Starting execution: ${payload.requestId}, command: ${payload.command}`)
 
-  const { invoke } = await import('@tauri-apps/api/core')
-  const waitMs = payload.waitMs ?? 8000
+  const isSerial = payload.sessionType === 'serial'
+  const requestedWaitMs = payload.waitMs ?? 30_000
+  const waitMs = isSerial ? Math.min(requestedWaitMs, 3_000) : Math.min(requestedWaitMs, 60_000)
+  const stableTarget = isSerial ? 2 : 4
   const sessionId = payload.terminalSessionId
-  const startLen = getTerminalOutputBuffer(sessionId).length
-  console.log(`[ShellTool] Initial buffer length: ${startLen}`)
 
   const line = normalizeShellCommandForPty(payload.command)
 
   try {
     await payload.beforeExecute?.()
     requestTerminalResync(sessionId)
+    // 先记录写入前缓冲位置，避免快命令在 submit 后瞬间输出导致被漏掉
+    const baselineLen = getTerminalOutputBuffer(sessionId).length
 
-    console.log(`[ShellTool] Writing command to terminal: ${line}`)
-    await writeTerminal(sessionId, line)
+    console.log(`[ShellTool] Acking request: ${payload.requestId}`)
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('shell_tool_ack', { requestId: payload.requestId })
+    console.log(`[ShellTool] Ack sent successfully`)
+
+    console.log(`[ShellTool] Writing command via xterm path: ${line}`)
+    await submitTerminalInput(sessionId, line)
+    console.log(`[ShellTool] Command submitted successfully`)
+    requestTerminalResync(sessionId)
+
+    console.log(`[ShellTool] Baseline buffer length before write: ${baselineLen}`)
+
+    // 初始等待，让命令有时间执行并产生输出
+    await new Promise<void>(resolve => setTimeout(resolve, 300))
 
     const deadline = Date.now() + waitMs
-    let lastLen = startLen
+    let lastLen = getTerminalOutputBuffer(sessionId).length
     let stableTicks = 0
+    let sawNewOutput = false
 
     console.log(`[ShellTool] Waiting for output (timeout: ${waitMs}ms)...`)
+
     while (Date.now() < deadline) {
       await new Promise<void>(resolve => setTimeout(resolve, 150))
-      const len = getTerminalOutputBuffer(sessionId).length
+      const buf = getTerminalOutputBuffer(sessionId)
+      const len = buf.length
+      const delta = buf.slice(baselineLen)
+      if (!sawNewOutput && len > baselineLen) sawNewOutput = true
+
+      // 检测提示符出现（命令执行完成的标志）
+      if (sawNewOutput && looksLikeShellPrompt(delta)) {
+        // 看到提示符了，再等一小会儿确保稳定
+        await new Promise<void>(resolve => setTimeout(resolve, 200))
+        console.log(`[ShellTool] Shell prompt detected, command completed`)
+        break
+      }
+
       if (len === lastLen) {
-        stableTicks += 1
-        if (stableTicks >= 4) {
+        // 没有任何新增输出时不提前判稳，避免快命令竞态返回空
+        if (sawNewOutput) stableTicks += 1
+        if (sawNewOutput && stableTicks >= stableTarget) {
           console.log(`[ShellTool] Output stabilized after ${stableTicks} ticks`)
           break
         }
@@ -78,23 +164,38 @@ export async function executeShellToolInTab(
       }
     }
 
-    const output = getTerminalOutputBuffer(sessionId).slice(startLen)
-    console.log(`[ShellTool] Execution completed. Output length: ${output.length}, preview: ${output.substring(0, 100)}...`)
+    let output = getTerminalOutputBuffer(sessionId).slice(baselineLen)
+    if (!output.trim()) {
+      // 最后再拉一次，给极快命令一点尾部刷新的时间
+      await new Promise<void>(resolve => setTimeout(resolve, 180))
+      requestTerminalResync(sessionId)
+      output = getTerminalOutputBuffer(sessionId).slice(baselineLen)
+    }
+    // 某些 PTY 会先回显命令再输出结果；若仅有回显，做一次轻量清理
+    const cleaned = stripAnsi(output).trim()
+    if (cleaned === line.trim()) {
+      output = ''
+    }
+    const isTimeout = Date.now() >= deadline
+    const finalOutput = output || '(无输出)'
+
+    if (isTimeout) {
+      console.log(`[ShellTool] Execution timed out but returning collected output. Length: ${output.length}`)
+    } else {
+      console.log(`[ShellTool] Execution completed. Output length: ${output.length}, preview: ${output.substring(0, 100)}...`)
+    }
+
     requestTerminalResync(sessionId)
-    await invoke('complete_shell_tool_command', {
-      requestId: payload.requestId,
-      output: output || null,
-      error: null,
-    })
+    await completeShellTool(payload.requestId, finalOutput, null, isTimeout)
     rememberCompletedShellTool(payload.requestId)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error(`[ShellTool] Execution failed: ${message}`)
-    await invoke('complete_shell_tool_command', {
-      requestId: payload.requestId,
-      output: null,
-      error: message,
-    })
+    if (message.includes('未知 shell tool 请求')) {
+      console.debug(`[ShellTool] Ignoring stale completion for request: ${payload.requestId}`)
+    } else {
+      console.error(`[ShellTool] Execution failed: ${message}`)
+    }
+    await completeShellTool(payload.requestId, null, message, false).catch(() => {})
     rememberCompletedShellTool(payload.requestId)
   } finally {
     activeShellToolRequests.delete(payload.requestId)

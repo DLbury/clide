@@ -8,6 +8,8 @@ pub mod remote_fs;
 mod remote_stats;
 mod ssh;
 mod ssh_auth;
+mod telnet;
+mod serial;
 
 pub use manager::{push_terminal_display, TerminalManager};
 pub use output_buffer::tail_snippet;
@@ -37,6 +39,16 @@ pub struct ConnectRequest {
     pub authMethod: Option<String>,
     pub password: Option<String>,
     pub privateKeyPath: Option<String>,
+    // Serial specific
+    #[serde(rename = "serialPort")]
+    pub serial_port: Option<String>,
+    #[serde(rename = "baudRate")]
+    pub baud_rate: Option<u32>,
+    #[serde(rename = "dataBits")]
+    pub data_bits: Option<u8>,
+    #[serde(rename = "stopBits")]
+    pub stop_bits: Option<u8>,
+    pub parity: Option<String>,
 }
 
 /// 终端 PTY id 形如 `{profileId}::{shellId}`，凭据 vault 按 profileId 索引。

@@ -37,7 +37,7 @@ export function buildIdeToolDirective(input: {
   if (!input.bridgeConnected) {
     return `
 
-[AI Terminal] IDE 桥接未就绪：请确认 npm run dev:tauri 已启动，且 AI 侧栏显示「已连接」（不仅是「启动中」）。`
+[AI Terminal] IDE 桥接未就绪：请确认 Clide 已启动、AI 已启用，且侧栏显示「IDE 桥接 · 已就绪」。未就绪时不要使用本机 Bash，也不要声称无法远程执行。`
   }
 
   if (!input.terminalConnected) {
@@ -52,9 +52,9 @@ export function buildIdeToolDirective(input: {
   if (!pid) {
     return `
 
-[AI Terminal] 桥接已连接。远程命令必须调用 IDE 工具 runShellCommand（不要用 mcp__aiterm__ 前缀）：先 getFocusedServer 取 profileId（注意：profileId 不是服务器名字、不是 host、不是 shellId），再执行；禁止只写步骤，禁止本机 Bash。`
+[AI Terminal] 桥接已连接。远程命令必须调用 MCP 工具 mcp__aiterm__runShellCommand（不要用 Skill、不要用 Bash）：先 mcp__aiterm__getFocusedServer 取 profileId（注意：profileId 不是服务器名字、不是 host、不是 shellId），再执行；禁止只写步骤。`
   }
   return `
 
-[AI Terminal] 当前焦点: ${host}，profileId="${pid}"，终端已连接。必须调用 IDE 工具 runShellCommand，profileId="${pid}"（不要改成会话名/host/shellId），用工具返回的 output 作答。禁止说「无法直接连接」、禁止只给 bash 代码块、禁止本机 Bash。`
+[AI Terminal] 当前焦点: ${host}，profileId="${pid}"，终端已连接。必须调用 MCP 工具 mcp__aiterm__runShellCommand（禁止 Skill/Bash），profileId="${pid}"，用工具返回的 output 作答。`
 }

@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
@@ -137,6 +138,140 @@ impl ClaudeBridge {
         self.connector_task.abort();
         self.server_task.abort();
     }
+
+    /// 发送 Claude 消息前确保桥接在跑；若已停止则自动重启。
+    pub fn ensure_running(
+        app: &AppHandle,
+        slot: &Mutex<Option<ClaudeBridge>>,
+        ide_context: Arc<Mutex<IdeContext>>,
+        workspace_folders: Vec<String>,
+        claude_path: Option<String>,
+    ) -> Result<Option<(u16, String)>, String> {
+        let mut guard = slot.lock();
+        if let Some(existing) = guard.as_ref() {
+            if existing.is_running() {
+                return Ok(Some((existing.port(), existing.auth_token().to_string())));
+            }
+        }
+        if let Some(dead) = guard.take() {
+            dead.stop();
+        }
+        drop(guard);
+
+        let bridge = Self::start(
+            app.clone(),
+            ide_context,
+            workspace_folders,
+            claude_path,
+        )?;
+        let port = bridge.port();
+        let token = bridge.auth_token().to_string();
+        *slot.lock() = Some(bridge);
+        let _ = app.emit("claude:bridge-connected", ());
+        Ok(Some((port, token)))
+    }
+}
+
+/// 通过 WebSocket 探测桥接是否已能返回工具列表（与 MCP stdio 上游相同）。
+pub async fn wait_for_bridge_tools(
+    port: u16,
+    auth_token: &str,
+    timeout: Duration,
+) -> Result<usize, String> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut last_err = "桥接工具未就绪".to_string();
+    while tokio::time::Instant::now() < deadline {
+        match probe_bridge_tools_once(port, auth_token).await {
+            Ok(n) if n > 0 => return Ok(n),
+            Ok(_) => last_err = "桥接 tools/list 为空".to_string(),
+            Err(e) => last_err = e,
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    Err(last_err)
+}
+
+async fn probe_bridge_tools_once(port: u16, auth_token: &str) -> Result<usize, String> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let url = format!("ws://127.0.0.1:{port}");
+    let mut request = url
+        .into_client_request()
+        .map_err(|e| format!("构建 WebSocket 请求失败: {e}"))?;
+    request.headers_mut().insert(
+        "x-claude-code-ide-authorization",
+        HeaderValue::from_str(auth_token).map_err(|e| format!("无效 auth token: {e}"))?,
+    );
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| format!("连接 IDE 桥接失败: {e}"))?;
+
+    let init = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "aiterm-probe", "version": "0.1.0" }
+        }
+    });
+    ws.send(Message::Text(init.to_string().into()))
+        .await
+        .map_err(|e| format!("发送 initialize 失败: {e}"))?;
+
+    let mut initialized = false;
+    let list_req = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {}
+    });
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while tokio::time::Instant::now() < deadline {
+        let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
+            .await
+            .map_err(|_| "等待桥接响应超时".to_string())?
+            .ok_or("桥接连接已关闭")?
+            .map_err(|e| format!("WebSocket 错误: {e}"))?;
+
+        let Message::Text(text) = msg else {
+            continue;
+        };
+        let value: Value = serde_json::from_str(&text).map_err(|e| format!("解析 JSON 失败: {e}"))?;
+
+        if value.get("id") == Some(&json!(1)) && value.get("result").is_some() && !initialized {
+            initialized = true;
+            let note = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+            ws.send(Message::Text(note.to_string().into()))
+                .await
+                .map_err(|e| format!("发送 initialized 失败: {e}"))?;
+            ws.send(Message::Text(list_req.to_string().into()))
+                .await
+                .map_err(|e| format!("发送 tools/list 失败: {e}"))?;
+            continue;
+        }
+
+        if value.get("id") == Some(&json!(2)) {
+            let count = value
+                .get("result")
+                .and_then(|r| r.get("tools"))
+                .and_then(|t| t.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let _ = ws.close(None).await;
+            return Ok(count);
+        }
+    }
+
+    Err("桥接未返回 tools/list".to_string())
 }
 
 pub fn resolve_workspace_folders(workspace_folders: &[String]) -> Vec<String> {
@@ -174,6 +309,8 @@ fn clean_aiterm_lock_files(ide_dir: &std::path::Path) -> Result<(), String> {
         };
         if content.contains("\"ideName\": \"clide\"")
             || content.contains("\"ideName\":\"clide\"")
+            || content.contains("\"ideName\": \"AITerm\"")
+            || content.contains("\"ideName\":\"AITerm\"")
             || content.contains("\"ideName\": \"AI Terminal\"")
             || content.contains("\"ideName\":\"AI Terminal\"")
         {
@@ -200,7 +337,7 @@ fn write_lock_file(
     let lock_data = json!({
         "pid": std::process::id(),
         "workspaceFolders": folders,
-        "ideName": "clide",
+        "ideName": "AITerm",
         "transport": "ws",
         "authToken": auth_token,
         "mcpServerInfo": {
@@ -276,12 +413,25 @@ async fn run_server(
             )
             .await
             {
-                tracing::warn!("IDE bridge connection error: {err}");
+                if is_expected_disconnect(&err) {
+                    tracing::debug!("IDE bridge connection closed: {err}");
+                } else {
+                    tracing::warn!("IDE bridge connection error: {err}");
+                }
             }
         });
     }
 
     Ok(())
+}
+
+fn is_expected_disconnect(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("os error 10054")
+        || lower.contains("connection reset by peer")
+        || lower.contains("远程主机强迫关闭了一个现有的连接")
+        || lower.contains("broken pipe")
+        || lower.contains("reset without closing handshake")
 }
 
 async fn handle_connection(

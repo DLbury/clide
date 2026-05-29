@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Claude Code 项目级 MCP（stdio）→ 转发到 AITerm 桌面版 IDE WebSocket 桥接。
- * 需先启动 AITerm 并开启 Claude Code 桥接（绿点已连接）。
+ * 桥接未就绪时保持进程存活并周期性重试，避免 Claude 会话里完全没有 aiterm 工具。
  */
 import fs from 'fs'
 import path from 'path'
@@ -10,9 +10,16 @@ import readline from 'readline'
 
 const PROTOCOL_VERSION = '2024-11-05'
 const SERVER_NAME = 'aiterm'
+const RETRY_MS = 2500
 
 function log(msg) {
   process.stderr.write(`[aiterm-mcp] ${msg}\n`)
+}
+
+function notifyToolsChanged() {
+  process.stdout.write(
+    JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' }) + '\n'
+  )
 }
 
 function findBridge() {
@@ -24,7 +31,7 @@ function findBridge() {
 
   const ideDir = path.join(os.homedir(), '.claude', 'ide')
   if (!fs.existsSync(ideDir)) {
-    throw new Error('未找到 ~/.claude/ide，请先启动 clide 并开启 Claude Code 桥接')
+    throw new Error('未找到 ~/.claude/ide，请先启动 AITerm 并开启 Claude Code 桥接')
   }
 
   const locks = fs
@@ -50,7 +57,7 @@ function findBridge() {
 
   if (locks.length === 0) {
     throw new Error(
-      '未找到 clide IDE 桥接 lock 文件。请先启动 clide 并确认 AI 侧栏桥接已连接（绿点）。'
+      '未找到 AITerm IDE 桥接 lock 文件。请先启动 AITerm 并确认 AI 侧栏桥接已就绪。'
     )
   }
 
@@ -148,19 +155,74 @@ function replyError(id, code, message) {
 }
 
 async function main() {
-  const { port, authToken } = findBridge()
-  log(`桥接 ws://127.0.0.1:${port}`)
-
-  const rpc = createWsRpc(port, authToken)
+  let rpc = null
   let upstreamTools = []
+  let connecting = false
+  let lastToolCount = 0
+  let upstreamKey = ''
 
-  try {
-    upstreamTools = await bootstrapUpstream(rpc)
-    log(`已加载 ${upstreamTools.length} 个工具`)
-  } catch (e) {
-    log(`上游连接失败: ${e.message}`)
-    process.exit(1)
+  async function ensureUpstream(forceReconnect = false) {
+    if (connecting) return upstreamTools
+    connecting = true
+    try {
+      const { port, authToken } = findBridge()
+      const key = `${port}:${authToken}`
+
+      if (
+        !forceReconnect &&
+        rpc &&
+        upstreamKey === key &&
+        upstreamTools.length > 0
+      ) {
+        return upstreamTools
+      }
+
+      if (!rpc || forceReconnect || upstreamKey !== key) {
+        if (rpc) {
+          rpc.close()
+          rpc = null
+        }
+        log(`桥接 ws://127.0.0.1:${port}`)
+        const nextRpc = createWsRpc(port, authToken)
+        const tools = await bootstrapUpstream(nextRpc)
+        rpc = nextRpc
+        upstreamKey = key
+        upstreamTools = tools
+      } else if (!upstreamTools.length) {
+        const tools = await rpc.request('tools/list', {})
+        upstreamTools = tools?.tools ?? []
+      }
+
+      if (upstreamTools.length !== lastToolCount) {
+        lastToolCount = upstreamTools.length
+        log(`已加载 ${upstreamTools.length} 个工具`)
+        if (upstreamTools.length > 0) notifyToolsChanged()
+      }
+    } catch (e) {
+      if (rpc) {
+        rpc.close()
+        rpc = null
+      }
+      upstreamKey = ''
+      if (upstreamTools.length > 0) {
+        upstreamTools = []
+        lastToolCount = 0
+        notifyToolsChanged()
+      }
+      log(`上游未就绪（${RETRY_MS}ms 后重试）: ${e.message}`)
+    } finally {
+      connecting = false
+    }
+    return upstreamTools
   }
+
+  const retryTimer = setInterval(() => {
+    // 仅在未连通/无工具时重试，避免运行中工具调用被重连打断。
+    if (!rpc || upstreamTools.length === 0) {
+      void ensureUpstream()
+    }
+  }, RETRY_MS)
+  void ensureUpstream()
 
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
 
@@ -182,15 +244,26 @@ async function main() {
           capabilities: { tools: { listChanged: true } },
           serverInfo: { name: SERVER_NAME, version: '0.1.0' },
         })
+        void ensureUpstream()
         return
       }
 
       if (method === 'notifications/initialized') {
+        void ensureUpstream()
         return
       }
 
       if (method === 'tools/list') {
-        reply(id, { tools: upstreamTools })
+        // 如果正在连接且当前无工具，等待连接完成（最多 10s）
+        if (connecting && upstreamTools.length === 0) {
+          let waited = 0
+          while (connecting && upstreamTools.length === 0 && waited < 10000) {
+            await new Promise(r => setTimeout(r, 100))
+            waited += 100
+          }
+        }
+        const tools = await ensureUpstream()
+        reply(id, { tools })
         return
       }
 
@@ -205,7 +278,26 @@ async function main() {
       }
 
       if (method === 'tools/call') {
-        const result = await rpc.request('tools/call', params)
+        const tools = await ensureUpstream()
+        if (!rpc || tools.length === 0) {
+          replyError(
+            id,
+            -32603,
+            'AITerm IDE 桥接未就绪，无法执行工具。请确认应用已启动且侧栏显示 IDE 桥接已就绪。'
+          )
+          return
+        }
+        let result
+        try {
+          result = await rpc.request('tools/call', params)
+        } catch {
+          // 上游连接偶发失效时强制重连并重试一次。
+          const refreshed = await ensureUpstream(true)
+          if (!rpc || refreshed.length === 0) {
+            throw new Error('AITerm IDE 桥接暂不可用，请重试')
+          }
+          result = await rpc.request('tools/call', params)
+        }
         reply(id, result)
         return
       }
@@ -221,7 +313,8 @@ async function main() {
   })
 
   rl.on('close', () => {
-    rpc.close()
+    clearInterval(retryTimer)
+    rpc?.close()
     process.exit(0)
   })
 }

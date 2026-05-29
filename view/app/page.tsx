@@ -7,7 +7,12 @@ import { StatusBar } from '@/components/terminal/status-bar'
 import { NewSessionModal, DEFAULT_FOLDER_PLACEHOLDER } from '@/components/terminal/new-session-modal'
 import { SettingsModal } from '@/components/settings/settings-modal'
 import { useAiSettings } from '@/lib/ai-settings'
-import { sendClaudeMessage, cancelClaudeMessage, type IdeContext } from '@/lib/claude-client'
+import {
+  sendClaudeMessage,
+  cancelClaudeMessage,
+  isIdeBridgeReady,
+  type IdeContext,
+} from '@/lib/claude-client'
 import { useClaudeCode } from '@/hooks/use-claude-code'
 import { isTauriRuntime } from '@/lib/tauri-env'
 import {
@@ -1613,6 +1618,81 @@ export default function AITerminal() {
     }
   }, [activeConnectionId, connections])
 
+  // 为指定连接创建新 Shell（供 AI 调用）
+  const handleNewShellForConnection = useCallback((connectionId: string, customName?: string) => {
+    const conn = connections.find(c => c.id === connectionId)
+    if (!conn) return
+
+    const shellId = `shell-${Date.now()}`
+    const shellNum = conn.shells.length + 1
+    const terminalSessionId = makeTerminalSessionId(conn.session.id, shellId)
+    const useBackend = conn.terminalLive
+    const shellName = customName || `Shell ${shellNum}`
+
+    const newShell: Shell = {
+      id: shellId,
+      name: shellName,
+      history: useBackend
+        ? [
+            {
+              id: `${Date.now()}`,
+              type: 'system',
+              content: `正在连接 ${conn.session.name}（${shellName}）...`,
+              timestamp: new Date(),
+            },
+          ]
+        : [],
+      terminalSessionId,
+      terminalStatus: useBackend ? 'connecting' : undefined,
+    }
+
+    setConnections(prev =>
+      prev.map(c => {
+        if (c.id !== connectionId) return c
+        return {
+          ...c,
+          shells: [...c.shells, newShell],
+          activeShellId: shellId,
+          session: useBackend
+            ? { ...c.session, status: connectionSessionStatus([...c.shells, newShell]) }
+            : c.session,
+        }
+      })
+    )
+
+    if (useBackend) {
+      connectTerminalSession(conn.session, terminalSessionId).catch((err: Error) => {
+        const message = err.message || '连接失败'
+        setConnections(prev =>
+          prev.map(c => {
+            if (c.id !== connectionId) return c
+            return {
+              ...c,
+              shells: c.shells.map(s =>
+                s.id === shellId
+                  ? {
+                      ...s,
+                      terminalStatus: 'error',
+                      history: [
+                        ...s.history,
+                        {
+                          id: `${Date.now()}`,
+                          type: 'error' as const,
+                          content: message,
+                          timestamp: new Date(),
+                        },
+                      ],
+                    }
+                  : s
+              ),
+              session: { ...c.session, status: 'disconnected' },
+            }
+          })
+        )
+      })
+    }
+  }, [connections])
+
   const handleCloseShell = useCallback((shellId: string) => {
     if (!activeConnectionId) return
 
@@ -1916,18 +1996,26 @@ export default function AITerminal() {
       if (useClaudeCodeBackend) {
         try {
           await claudeCode.ensureStreamReady()
-          await claudeCode.ensureBridgeReady()
+          const bridgeStatus = await claudeCode.ensureBridgeReady()
+          const mcpStatus = await claudeCode.ensureMcpReady()
           const ctx = getIdeContext()
           let prompt = message
           if (aiSettings.systemPrompt.trim()) {
             prompt = `${aiSettings.systemPrompt.trim()}\n\n${prompt}`
           }
+          const bridgeReady = isIdeBridgeReady(bridgeStatus)
+          const mcpReady = mcpStatus?.ready ?? claudeCode.mcpStatus?.ready ?? false
+          const ideToolsReady = bridgeReady && mcpReady
           prompt += buildIdeToolDirective({
             activeProfileId: ctx.activeProfileId,
             activeSessionHost: ctx.activeSessionHost,
-            bridgeConnected: Boolean(claudeCode.bridge?.running),
+            bridgeConnected: ideToolsReady,
             terminalConnected: activeShellConnected,
           })
+          if (bridgeReady && !mcpReady) {
+            prompt +=
+              '\n\n[AI Terminal] IDE 桥接在跑，但 MCP stdio（aiterm）未就绪：请确认已安装 Node.js，并在侧栏点击重试 MCP 注册；未就绪时不要声称缺少 runShellCommand。'
+          }
           if (aiSettings.injectTerminalContext && activeConnection) {
             if (ctx.terminalSnippet) {
               prompt = `当前会话: ${ctx.activeSessionName ?? 'unknown'} (${ctx.activeSessionHost ?? '-'})\n\n最近终端输出:\n\`\`\`\n${ctx.terminalSnippet}\n\`\`\`\n\n用户: ${prompt}`
@@ -2046,7 +2134,11 @@ export default function AITerminal() {
 
               if (event.done) {
                 // If Claude only emitted a final result (no streaming deltas), append it once here.
-                if (!sawStreamingText && bufferedResultText && !assistantAccumulated) {
+                const resultDup =
+                  bufferedResultText &&
+                  assistantAccumulated &&
+                  assistantAccumulated.includes(bufferedResultText.trim())
+                if (!sawStreamingText && bufferedResultText && !assistantAccumulated && !resultDup) {
                   assistantAccumulated = bufferedResultText
                   setConnections(prev =>
                     prev.map(conn => {
@@ -2181,7 +2273,7 @@ export default function AITerminal() {
                   continueSession: false,
                   requestId,
                 }),
-                20000,
+                45000,
                 '发送 Claude 请求'
               )
             } catch (err) {
@@ -2441,21 +2533,57 @@ export default function AITerminal() {
     if (tool === 'disconnectServer' && typeof payload.profileId === 'string') {
       handleDisconnectSession(payload.profileId)
     }
+    if (tool === 'createNewShell' && typeof payload.connectionId === 'string') {
+      const connectionId = payload.connectionId as string
+      const shellName = payload.shellName as string | undefined
+      // 切换到对应连接，然后创建新 shell
+      const conn = connectionsRef.current.find(c => c.id === connectionId)
+      if (conn) {
+        // 切换到该连接
+        if (conn.id !== activeConnectionIdRef.current) {
+          setActiveConnectionId(conn.id)
+        }
+        // 延迟创建 shell，确保连接已激活
+        window.setTimeout(() => {
+          handleNewShellForConnection(connectionId, shellName)
+        }, 300)
+      }
+    }
     if (
       tool === 'runShellCommand' &&
       typeof payload.terminalSessionId === 'string'
     ) {
       mcpShellCommandThisTurnRef.current = true
       const terminalSessionId = payload.terminalSessionId as string
-      void focusShellByTerminalId(terminalSessionId)
-      // 命令由 Rust PTY 直接执行并推送 terminal:output；focusOnly 时不走前端 executeShellToolInTab
-      if (payload.focusOnly !== true && typeof payload.requestId === 'string' && typeof payload.command === 'string') {
+      if (typeof payload.requestId === 'string' && typeof payload.command === 'string') {
+        console.log(`[MCP] Executing shell command: ${payload.command}, requestId: ${payload.requestId}`)
         void executeShellToolInTab({
           requestId: payload.requestId as string,
           terminalSessionId,
           command: payload.command as string,
           waitMs: typeof payload.waitMs === 'number' ? payload.waitMs : undefined,
+          sessionType:
+            typeof payload.sessionType === 'string' ? payload.sessionType : undefined,
+          beforeExecute: async () => {
+            console.log(`[MCP] Focusing shell before execute: ${terminalSessionId}`)
+            await focusShellByTerminalId(terminalSessionId)
+          },
+        }).catch(err => {
+          console.error(`[MCP] Shell command execution failed:`, err)
         })
+      } else {
+        console.error(`[MCP] Invalid payload for runShellCommand:`, payload)
+        if (typeof payload.requestId === 'string') {
+          void import('@tauri-apps/api/core')
+            .then(({ invoke }) =>
+              invoke('complete_shell_tool_command', {
+                requestId: payload.requestId as string,
+                output: null,
+                error: 'runShellCommand 参数不完整（缺少 requestId 或 command）',
+              })
+            )
+            .catch(() => {})
+        }
       }
     }
   }
@@ -2467,6 +2595,8 @@ export default function AITerminal() {
 
     void listenToolActivity(event => {
       setToolActivities(prev => [event, ...prev].slice(0, 50))
+      // shell_command 已由 Claude stream 的 tool_start/tool_result 渲染，避免重复插入工具块
+      if (event.kind === 'shell_command') return
       const assistantId = activeAssistantIdRef.current
       const connId = activeConnectionIdRef.current
       if (assistantId && connId) {

@@ -6,10 +6,12 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { writeTerminal, resizeTerminal } from '@/lib/terminal-client'
+import { registerTerminalInputHandler } from '@/lib/terminal-input-registry'
 import {
   getTerminalOutputBuffer,
   subscribeTerminalOutput,
   onTerminalResync,
+  requestTerminalResync,
 } from '@/lib/terminal-stream'
 import { useAppTheme } from '@/hooks/use-app-theme'
 
@@ -164,10 +166,16 @@ export function LiveTerminal({
       syncBufferToTerm()
     })
 
+    const unsubInput = registerTerminalInputHandler(sessionId, async data => {
+      await writeTerminal(sessionId, data)
+      requestTerminalResync(sessionId)
+    })
+
     return () => {
       outputUnsubscribeRef.current?.()
       outputUnsubscribeRef.current = null
       unsubResync()
+      unsubInput()
     }
   }, [sessionId, termReady, syncBufferToTerm])
 

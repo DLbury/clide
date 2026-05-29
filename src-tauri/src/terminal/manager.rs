@@ -1,6 +1,6 @@
 use super::channels::TerminalChannels;
 use super::output_buffer;
-use super::{local, ssh, ConnectRequest};
+use super::{local, serial, ssh, telnet, ConnectRequest};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,10 +82,12 @@ impl TerminalManager {
 
         let TerminalChannels { write_tx, resize_tx } = match request.session_type.as_str() {
             "ssh" => ssh::spawn_ssh(app.clone(), request, abort.clone())?,
+            "telnet" => telnet::spawn_telnet(app.clone(), request, abort.clone())?,
+            "serial" => serial::spawn_serial(app.clone(), request, abort.clone())?,
             "local" | "wsl" => local::spawn_local_pty(app.clone(), request, abort.clone())?,
             other => {
                 return Err(format!(
-                    "协议「{other}」的真实连接尚未支持，当前支持 SSH、本地终端、WSL"
+                    "协议「{other}」的真实连接尚未支持，当前支持 SSH、Telnet、串口、本地终端、WSL"
                 ));
             }
         };
@@ -236,6 +238,15 @@ fn wait_until_stable(terminal_session_id: &str, wait_ms: u64, stable_target: u32
     while std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(150));
         let current_len = output_buffer::buffer_len(terminal_session_id);
+
+        // 检测提示符出现（命令执行完成的标志）
+        let output = output_buffer::tail_snippet(terminal_session_id, 512);
+        if looks_like_shell_prompt(&output) {
+            // 看到提示符了，再等一小会儿确保稳定
+            std::thread::sleep(Duration::from_millis(200));
+            break;
+        }
+
         if current_len == last_len {
             stable_ticks += 1;
             if stable_ticks >= stable_target {
@@ -286,4 +297,40 @@ fn looks_like_password_prompt(output: &str) -> bool {
         || lower.contains("输入密码")
         || lower.contains("密码：")
         || lower.contains("密码:")
+}
+
+/// 检测是否出现了 shell 提示符（命令执行完成的标志）
+fn looks_like_shell_prompt(output: &str) -> bool {
+    // 常见的提示符模式：
+    // - user@host:path$ (bash)
+    // - user@host:path# (root)
+    // - path> (cmd/powershell)
+    // - user@host path % (zsh)
+    // 检测行尾的模式
+    let lines: Vec<&str> = output.lines().collect();
+    if lines.is_empty() {
+        return false;
+    }
+
+    // 检查最后一行
+    let last_line = lines.last().unwrap_or(&"");
+    let trimmed = last_line.trim();
+
+    // 如果行很短且以常见提示符结尾
+    if trimmed.len() < 100 {
+        // 检测 bash/zsh/fish 常见提示符
+        if trimmed.ends_with('$') || trimmed.ends_with('#') || trimmed.ends_with('%') || trimmed.ends_with('>') {
+            return true;
+        }
+        // 检测 user@host 模式
+        if trimmed.contains('@') && trimmed.contains(':') {
+            return true;
+        }
+        // 检测 Windows cmd/ps 提示符 (C:\> 或 PS C:\>)
+        if trimmed.contains("::") || trimmed.starts_with("PS ") {
+            return true;
+        }
+    }
+
+    false
 }

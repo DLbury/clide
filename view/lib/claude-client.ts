@@ -17,6 +17,11 @@ export interface BridgeStatus {
   workspaceFolders: string[]
 }
 
+/** 与侧栏「已就绪」一致：WebSocket 服务在跑且 connected */
+export function isIdeBridgeReady(status: BridgeStatus | null | undefined): boolean {
+  return Boolean(status?.running && status?.connected)
+}
+
 export interface McpRegisterStatus {
   projectRoot: string
   mcpScriptExists: boolean
@@ -93,6 +98,11 @@ export async function registerClaudeMcp(claudePath?: string): Promise<McpRegiste
   return invoke<McpRegisterStatus>('claude_register_mcp', {
     claudePath: claudePath || null,
   })
+}
+
+/** 等待 MCP stdio 能列出工具（发送首条 AI 消息前调用，减少 Claude 拿不到工具的概率） */
+export async function waitClaudeMcpTools(timeoutMs = 10_000): Promise<number> {
+  return invoke<number>('claude_wait_mcp_tools', { timeoutMs })
 }
 
 export async function updateIdeContext(context: IdeContext): Promise<void> {

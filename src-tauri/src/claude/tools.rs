@@ -35,14 +35,15 @@ pub fn get_available_tools() -> Vec<Value> {
         ),
         tool_def(
             "getTerminalContext",
-            "获取当前焦点 Shell 标签的最近终端输出摘要",
+            "获取当前焦点 Shell 标签的终端输出摘要。这是查询命令执行结果的主要方式，特别是在 runShellCommand 返回空或超时时。",
             json!({}),
         ),
         tool_def(
-            "connectServer",
-            "在 UI 中打开并连接指定服务器；SSH 登录密码由用户在应用内输入，AI 不参与",
+            "createNewShell",
+            "为指定连接创建一个新的 Shell 标签页",
             object_schema(json!({
-                "profileId": { "type": "string", "description": "服务器 profile ID（见 listServerProfiles）" }
+                "profileId": { "type": "string", "description": "服务器 profile ID（见 listServerProfiles 或 listActiveConnections）" },
+                "name": { "type": "string", "description": "可选的 Shell 名称，如 'Build', 'Monitor'" }
             }), &["profileId"]),
         ),
         tool_def(
@@ -54,12 +55,12 @@ pub fn get_available_tools() -> Vec<Value> {
         ),
         tool_def_always_load(
             "runShellCommand",
-            "在 UI 左侧 Shell 执行命令（与手动输入相同 PTY）。sudo 等交互密码：用户在左侧终端自行输入，AI 不得索要或嵌入密码。",
+            "在 UI 左侧 Shell 执行命令（与手动输入相同 PTY）。注意：如果返回 output 为空或'(无输出)'，说明命令可能仍在执行中，请调用 getTerminalContext 查询实际终端输出。sudo 等交互密码：用户在左侧终端自行输入，AI 不得索要或嵌入密码。",
             object_schema(json!({
                 "profileId": { "type": "string", "description": "服务器 profile ID" },
                 "command": { "type": "string", "description": "Shell 命令" },
                 "shellId": { "type": "string", "description": "可选 Shell 标签 ID" },
-                "waitMs": { "type": "number", "description": "等待输出毫秒，默认 8000" }
+                "waitMs": { "type": "number", "description": "等待输出毫秒，默认 30000（30秒）。注意：即使超时也应调用 getTerminalContext 查看实际输出" }
             }), &["profileId", "command"]),
         ),
         tool_def(
@@ -143,6 +144,9 @@ pub fn execute_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> String {
         }
         "getTerminalContext" | "get_terminal_context" | "mcp__aiterm__getTerminalContext" => {
             tool_terminal_context(ctx)
+        }
+        "createNewShell" | "create_new_shell" | "mcp__aiterm__createNewShell" => {
+            tool_create_new_shell(ctx, args)
         }
         "connectServer" | "connect_server" | "connectSession" | "mcp__aiterm__connectServer" => {
             tool_connect(ctx, args)
@@ -317,6 +321,62 @@ fn tool_selection(ctx: &ToolContext<'_>) -> Value {
     })
 }
 
+fn tool_create_new_shell(ctx: &ToolContext<'_>, args: &Value) -> Value {
+    let profile_id = args
+        .get("profileId")
+        .and_then(|v| v.as_str());
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("AI Shell");
+    let Some(pid) = profile_id else {
+        return json!({ "success": false, "error": "缺少 profileId" });
+    };
+
+    // 查找连接
+    let snap = ctx.runtime.get();
+    let conn = snap.connections.iter().find(|c| c.profile_id == pid);
+    let Some(conn) = conn else {
+        return json!({
+            "success": false,
+            "error": format!("未找到已连接的会话: {pid}，请先调用 connectServer")
+        });
+    };
+
+    let shell_num = conn.shells.len() + 1;
+    let shell_name = if name == "AI Shell" {
+        format!("Shell {}", shell_num)
+    } else {
+        name.to_string()
+    };
+
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let _ = ctx.app.emit(
+        "claude:tool-request",
+        json!({
+            "tool": "createNewShell",
+            "profileId": pid,
+            "connectionId": conn.id,
+            "shellName": shell_name,
+            "requestId": request_id,
+        }),
+    );
+    emit_activity(
+        ctx.app,
+        json!({
+            "kind": "create_shell",
+            "profileId": pid,
+            "shellName": shell_name,
+        }),
+    );
+    json!({
+        "success": true,
+        "profileId": pid,
+        "shellName": shell_name,
+        "message": format!("已请求创建新 Shell 标签: {}", shell_name),
+    })
+}
+
 fn tool_connect(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let profile_id = args
         .get("profileId")
@@ -397,7 +457,11 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
         .and_then(|v| v.as_str());
     let command = args.get("command").and_then(|v| v.as_str());
     let shell_id = args.get("shellId").and_then(|v| v.as_str());
-    let wait_ms = args.get("waitMs").and_then(|v| v.as_u64()).unwrap_or(8000);
+    let wait_ms = args
+        .get("waitMs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30000)
+        .clamp(1000, 60000);
 
     let (Some(pid), Some(cmd)) = (profile_id, command) else {
         tracing::warn!("runShellCommand: missing profileId or command");
@@ -442,6 +506,9 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
 
     tracing::info!("runShellCommand: executing command, display={}", display_cmd);
 
+    let request_id = uuid::Uuid::new_v4().to_string();
+    ctx.shell_tools.begin(request_id.clone());
+
     emit_activity(
         ctx.app,
         json!({
@@ -453,29 +520,41 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
         }),
     );
 
-    // 通知前端切换并聚焦对应 Shell 标签（执行由 Rust PTY 完成，不依赖前端回传）
+    // 由前端左侧 Shell 标签写入 PTY 并回传输出（与手动输入同路径，xterm 可见）
     let _ = ctx.app.emit(
         "claude:tool-request",
         json!({
             "tool": "runShellCommand",
-            "requestId": uuid::Uuid::new_v4().to_string(),
+            "requestId": request_id,
             "profileId": resolved_profile,
             "terminalSessionId": terminal_session_id,
-            "command": display_cmd,
+            "command": real_cmd,
             "displayCommand": display_cmd,
-            "focusOnly": true,
+            "waitMs": wait_ms,
+            "sessionType": session_type,
         }),
     );
 
-    match ctx.terminals.run_command_with_display(
-        &ctx.app,
-        &terminal_session_id,
-        &real_cmd,
-        wait_ms,
-    ) {
-        Ok(output) => {
-            let preview: String = output.chars().take(4000).collect();
-            tracing::info!("runShellCommand: completed, output_len={}", output.len());
+    // 等前端 xterm 标签接管后再等待输出，避免 Rust 阻塞时 UI 尚未写入 PTY
+    let _ = ctx.shell_tools.wait_until_started(&request_id, 4000);
+
+    let effective_wait = if session_type == "serial" {
+        wait_ms.min(3000)
+    } else {
+        wait_ms
+    };
+
+    let result = ctx.shell_tools.wait(&request_id, effective_wait);
+    ctx.shell_tools.cleanup(&request_id);
+
+    match result {
+        Ok(outcome) => {
+            let preview: String = outcome.output.chars().take(4000).collect();
+            tracing::info!(
+                "runShellCommand: completed, output_len={}, timed_out={}",
+                outcome.output.len(),
+                outcome.timed_out
+            );
             emit_activity(
                 ctx.app,
                 json!({
@@ -487,13 +566,20 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
                     "outputPreview": preview,
                 }),
             );
-            json!({
+            let mut result = json!({
                 "success": true,
                 "profileId": resolved_profile,
                 "terminalSessionId": terminal_session_id,
                 "command": display_cmd,
                 "output": preview,
-            })
+            });
+            if outcome.timed_out {
+                result["incomplete"] = json!(true);
+                result["status"] = json!("running");
+                result["message"] = json!("命令可能仍在运行，请稍后调用 getTerminalContext 查看最新输出。");
+                result["nextAction"] = json!("poll_getTerminalContext");
+            }
+            result
         }
         Err(e) => {
             tracing::error!("runShellCommand: failed with error: {}", e);
@@ -523,6 +609,11 @@ fn build_connect_request(profile: &crate::runtime::ProfileSnapshot, terminal_ses
         authMethod: auth_method,
         password,
         privateKeyPath: private_key_path,
+        serial_port: None,
+        baud_rate: None,
+        data_bits: None,
+        stop_bits: None,
+        parity: None,
     }
 }
 

@@ -134,8 +134,8 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
             </>
           )}
 
-      {/* 任务进度保留为汇总信息，放在消息末尾 */}
-      {tasks.length > 0 && (
+      {/* 任务进度：仅在无 timeline parts 时显示，避免与 parts 内工具块重复 */}
+      {tasks.length > 0 && !parts?.length && (
         <Queue className="rounded-md border border-border/60 bg-background/40">
           <QueueSection defaultOpen={false}>
             <QueueSectionTrigger>

@@ -132,6 +132,24 @@ fn claude_register_mcp(
 }
 
 #[tauri::command]
+async fn claude_wait_mcp_tools(
+    state: State<'_, AppState>,
+    mcp_paths: State<'_, McpBundlePaths>,
+    timeout_ms: Option<u64>,
+) -> Result<usize, String> {
+    let (port, token) = {
+        let bridge = state.bridge.lock();
+        let b = bridge
+            .as_ref()
+            .filter(|b| b.is_running())
+            .ok_or("IDE 桥接未运行，请先开启 AI 侧栏桥接")?;
+        (b.port(), b.auth_token().to_string())
+    };
+    let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(10_000).clamp(2000, 30_000));
+    claude::wait_for_mcp_ready(&mcp_paths, port, &token, timeout).await
+}
+
+#[tauri::command]
 fn get_project_root(mcp_paths: State<'_, McpBundlePaths>) -> String {
     mcp_paths.display_root()
 }
@@ -158,16 +176,34 @@ fn register_profile_auth(payload: secrets::RegisterAuthPayload) -> Result<(), St
 }
 
 #[tauri::command]
+fn shell_tool_ack(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+    state.shell_tools.mark_started(&request_id);
+    Ok(())
+}
+
+#[tauri::command]
 fn complete_shell_tool_command(
     state: State<'_, AppState>,
     request_id: String,
     output: Option<String>,
     error: Option<String>,
+    timed_out: Option<bool>,
 ) -> Result<(), String> {
-    if let Some(err) = error.filter(|e| !e.is_empty()) {
+    let result = if let Some(err) = error.filter(|e| !e.is_empty()) {
         state.shell_tools.fail(&request_id, err)
     } else {
-        state.shell_tools.complete(&request_id, output.unwrap_or_default())
+        state
+            .shell_tools
+            .complete(&request_id, output.unwrap_or_default(), timed_out.unwrap_or(false))
+    };
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) if e.contains("未知 shell tool 请求") => {
+            // 幂等收口：请求已超时清理或重复回传时忽略，避免前端报错刷屏。
+            tracing::debug!("ignore stale shell tool completion: request_id={request_id}, err={e}");
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -182,6 +218,17 @@ async fn claude_send_message(
     continue_session: bool,
     request_id: Option<String>,
 ) -> Result<String, String> {
+    let workspace_hint =
+        claude::bridge::resolve_workspace_folders(&[]);
+
+    let _ = claude::bridge::ClaudeBridge::ensure_running(
+        &app,
+        &state.bridge,
+        state.ide_context.clone(),
+        workspace_hint.clone(),
+        claude_path.clone(),
+    );
+
     let bridge_info = {
         let bridge_guard = state.bridge.lock();
         bridge_guard.as_ref().filter(|b| b.is_running()).map(|b| {
@@ -214,7 +261,20 @@ async fn claude_send_message(
 
     if let Some((port, token, _)) = &bridge_info {
         let _ = claude::sync_mcp_bridge_env(&mcp_paths, *port, token);
-        let _ = claude::ensure_project_mcp_json(&mcp_paths, Some((*port, token.as_str())));
+        let tool_count = claude::wait_for_mcp_ready(
+            &mcp_paths,
+            *port,
+            token,
+            std::time::Duration::from_secs(15),
+        )
+        .await
+        .map_err(|e| {
+            format!(
+                "MCP 工具未就绪，无法启动 Claude：{e}。请确认已安装 Node.js，侧栏 IDE 桥接已就绪，并重试。"
+            )
+        })?;
+        tracing::info!("Claude 启动前 MCP 已就绪: {tool_count} 个工具");
+        tokio::time::sleep(std::time::Duration::from_millis(450)).await;
     } else {
         let _ = claude::ensure_project_mcp_json(&mcp_paths, None);
     }
@@ -425,9 +485,11 @@ pub fn run() {
             claude_bridge_status,
             claude_mcp_status,
             claude_register_mcp,
+            claude_wait_mcp_tools,
             claude_update_context,
             sync_app_runtime,
             register_profile_auth,
+            shell_tool_ack,
             complete_shell_tool_command,
             claude_send_message,
             claude_cancel_message,

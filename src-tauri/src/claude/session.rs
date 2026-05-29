@@ -16,13 +16,13 @@ const IDE_BRIDGE_APPEND_PROMPT: &str = r#"You are connected to AI Terminal via I
 Remote/server shell tasks — mandatory workflow:
 1. Call `getFocusedServer` or `listActiveConnections` to get `profileId`.
    - `profileId` must be the stable ID from tool output; never use session name/host/shellId as `profileId`.
-2. If the terminal is not connected, call `connectServer` with that `profileId`, then `runShellCommand`.
-3. Call `runShellCommand` with `profileId` and `command`. Use the tool JSON `output` field in your reply.
+2. If the terminal is not connected, call `mcp__aiterm__connectServer` with that `profileId`, then `mcp__aiterm__runShellCommand`.
+3. Call `mcp__aiterm__runShellCommand` with `profileId` and `command`. Use the tool JSON `output` field in your reply.
 4. NEVER say you "cannot connect directly" / "无法直接连接" / "MCP 受限" / "无法远程执行" and only paste bash blocks — you CAN execute via IDE tools.
-5. NEVER use local Bash/WSL/PowerShell for remote SSH operations.
+5. NEVER use local Bash/WSL/PowerShell, and NEVER use the Skill tool (skills are not MCP). Do not invoke `runShellCommand` as a skill name.
 
-Tool names (IDE bridge): prefer runShellCommand/getFocusedServer/connectServer/getTerminalContext/listServerProfiles/listActiveConnections.
-Compatibility aliases mcp__aiterm__* are accepted, but prefer non-prefixed names.
+MCP tool names (server `aiterm` only): mcp__aiterm__runShellCommand, mcp__aiterm__getFocusedServer, mcp__aiterm__connectServer, mcp__aiterm__listActiveConnections, etc.
+NEVER claim these tools are missing when the bridge is ready — call mcp__aiterm__runShellCommand first.
 
 Sudo / interactive passwords:
 - Run `sudo ...` via runShellCommand like any other command.
@@ -402,11 +402,7 @@ fn parse_stream_line(
             for block in arr {
                 match block.get("type").and_then(|t| t.as_str()) {
                     Some("thinking") => {
-                        if let Some(thinking) = block.get("thinking").and_then(|v| v.as_str()) {
-                            let mut ev = mk("reasoning_delta");
-                            ev.reasoning = Some(thinking.to_string());
-                            events_out.push(ev);
-                        }
+                        // 已通过 thinking_delta 流式推送，跳过快照避免重复
                     }
                     Some("tool_use") => {
                         let mut ev = mk("tool_start");
@@ -422,13 +418,7 @@ fn parse_stream_line(
                         events_out.push(ev);
                     }
                     Some("text") => {
-                        if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                            if !text.is_empty() {
-                                let mut ev = mk("stream_event");
-                                ev.text = Some(text.to_string());
-                                events_out.push(ev);
-                            }
-                        }
+                        // 正文已通过 content_block_delta 流式推送；assistant 快照会重复整段文本
                     }
                     _ => {}
                 }
