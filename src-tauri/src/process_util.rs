@@ -125,6 +125,40 @@ pub fn command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process:
     cmd
 }
 
+/// Windows 下异步子进程同样隐藏控制台（MCP 预检等）。
+#[cfg(windows)]
+pub fn async_command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    fix_gui_environment();
+    let program = program.as_ref();
+    let ext = Path::new(program)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+
+    let mut cmd = match ext.as_deref() {
+        Some("cmd") | Some("bat") => {
+            let comspec = std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into());
+            let mut c = tokio::process::Command::new(comspec);
+            c.arg("/c").arg(program);
+            c
+        }
+        _ => tokio::process::Command::new(program),
+    };
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    apply_subprocess_environment_tokio(&mut cmd);
+    cmd
+}
+
+#[cfg(not(windows))]
+pub fn async_command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(program);
+    apply_subprocess_environment_tokio(&mut cmd);
+    cmd
+}
+
 /// 为子进程补齐 GUI 启动时缺失的用户环境（PATH、HOME 等）。
 pub fn apply_subprocess_environment(cmd: &mut std::process::Command) {
     #[cfg(windows)]
@@ -149,6 +183,45 @@ pub fn apply_subprocess_environment(cmd: &mut std::process::Command) {
         }
 
         // 显式设置 PATH，避免 Windows 上 Command 未继承或未搜索用户 PATH。
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.env("PATH", augment_path_with_npm(&path));
+        } else if let Ok(path) = std::env::var("Path") {
+            cmd.env("PATH", augment_path_with_npm(&path));
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if std::env::var_os("HOME").is_none() {
+            if let Some(home) = dirs::home_dir() {
+                cmd.env("HOME", home.as_os_str());
+            }
+        }
+    }
+}
+
+fn apply_subprocess_environment_tokio(cmd: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+
+        let mut inject = |key: &str, value: OsString| {
+            if std::env::var_os(key).is_none() {
+                cmd.env(key, value);
+            }
+        };
+
+        if let Some(userprofile) = std::env::var_os("USERPROFILE") {
+            inject("USERPROFILE", userprofile.clone());
+            inject("HOME", userprofile);
+        }
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            inject("APPDATA", appdata);
+        }
+        if let Some(localappdata) = std::env::var_os("LOCALAPPDATA") {
+            inject("LOCALAPPDATA", localappdata);
+        }
+
         if let Ok(path) = std::env::var("PATH") {
             cmd.env("PATH", augment_path_with_npm(&path));
         } else if let Ok(path) = std::env::var("Path") {

@@ -2,5 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if aiterm_lib::mcp_stdio_proxy::try_run_mcp_stdio_proxy() {
+        return;
+    }
     aiterm_lib::run();
 }

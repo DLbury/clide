@@ -6,6 +6,13 @@ import { getTerminalOutputBuffer, requestTerminalResync } from '@/lib/terminal-s
 const activeShellToolRequests = new Set<string>()
 const completedShellToolRequests = new Set<string>()
 const MAX_COMPLETED_SHELL_TOOL_IDS = 256
+/** 同一终端短时间内相同命令只执行一次（Claude MCP 重试时会带新 requestId） */
+const recentShellCommands = new Map<string, { command: string; at: number }>()
+const SHELL_COMMAND_DEDUP_MS = 4000
+
+function shellCommandKey(sessionId: string, command: string): string {
+  return `${sessionId}\0${command.trim()}`
+}
 
 async function completeShellTool(
   requestId: string,
@@ -107,10 +114,22 @@ export async function executeShellToolInTab(
   const sessionId = payload.terminalSessionId
 
   const line = normalizeShellCommandForPty(payload.command)
+  const cmdKey = shellCommandKey(sessionId, line)
+  const recent = recentShellCommands.get(cmdKey)
+  if (recent && Date.now() - recent.at < SHELL_COMMAND_DEDUP_MS) {
+    console.log(`[ShellTool] Skipping duplicate command within ${SHELL_COMMAND_DEDUP_MS}ms: ${line}`)
+    await completeShellTool(
+      payload.requestId,
+      null,
+      '短时间内重复的相同命令已跳过（请使用上一次 runShellCommand 的输出）',
+      false
+    ).catch(() => {})
+    return
+  }
+  recentShellCommands.set(cmdKey, { command: line.trim(), at: Date.now() })
 
   try {
     await payload.beforeExecute?.()
-    requestTerminalResync(sessionId)
     // 先记录写入前缓冲位置，避免快命令在 submit 后瞬间输出导致被漏掉
     const baselineLen = getTerminalOutputBuffer(sessionId).length
 
@@ -122,7 +141,6 @@ export async function executeShellToolInTab(
     console.log(`[ShellTool] Writing command via xterm path: ${line}`)
     await submitTerminalInput(sessionId, line)
     console.log(`[ShellTool] Command submitted successfully`)
-    requestTerminalResync(sessionId)
 
     console.log(`[ShellTool] Baseline buffer length before write: ${baselineLen}`)
 
@@ -185,7 +203,6 @@ export async function executeShellToolInTab(
       console.log(`[ShellTool] Execution completed. Output length: ${output.length}, preview: ${output.substring(0, 100)}...`)
     }
 
-    requestTerminalResync(sessionId)
     await completeShellTool(payload.requestId, finalOutput, null, isTimeout)
     rememberCompletedShellTool(payload.requestId)
   } catch (err) {

@@ -28,6 +28,8 @@ export function AppConfirmDialog({
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
 }) {
+  if (!state.open) return null
+
   return (
     <AlertDialog open={state.open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="sm:max-w-lg">

@@ -24,6 +24,8 @@ export function AppAlertDialog({
   state: AppAlertDialogState
   onOpenChange: (open: boolean) => void
 }) {
+  if (!state.open) return null
+
   return (
     <AlertDialog open={state.open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="sm:max-w-lg">

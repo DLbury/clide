@@ -58,6 +58,8 @@ export function SettingsModal({
     setAiDraft(DEFAULT_AI_SETTINGS)
   }
 
+  if (!open) return null
+
   const groupedShortcuts = LAYOUT_SHORTCUTS.reduce<Record<string, typeof LAYOUT_SHORTCUTS>>(
     (acc, item) => {
       if (!acc[item.category]) acc[item.category] = []

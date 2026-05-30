@@ -50,13 +50,7 @@ export function SessionPasswordDialog({
     onSubmit(password)
   }
 
-  if (!session) {
-    return (
-      <Dialog open={false} onOpenChange={onOpenChange}>
-        <DialogContent className="hidden" />
-      </Dialog>
-    )
-  }
+  if (!open || !session) return null
 
   const hostLine = `${session.user ?? 'root'}@${session.host}${session.port ? `:${session.port}` : ''}`
 

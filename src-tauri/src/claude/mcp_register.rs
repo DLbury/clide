@@ -1,5 +1,7 @@
 use crate::app_paths::{node_script_argv, path_to_js_string, McpBundlePaths};
 use crate::claude::bridge;
+use crate::mcp_stdio_proxy::{mcp_node_launcher_command, mcp_stdio_launcher_command};
+use crate::process_util::async_command_no_window;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fmt::Write as _;
@@ -28,13 +30,25 @@ fn resolve_node_command() -> String {
 }
 
 fn mcp_config_template(launcher_script: &Path, bridge: Option<(u16, &str)>) -> Value {
-    let script = node_script_argv(launcher_script).unwrap_or_else(|_| path_to_js_string(launcher_script));
-    let node = resolve_node_command();
-    let mut server = json!({
-        "command": node,
-        "args": [script],
-        "alwaysLoad": true
-    });
+    let mut server = if let Some((command, args)) = mcp_stdio_launcher_command() {
+        json!({
+            "command": command,
+            "args": args,
+            "alwaysLoad": true
+        })
+    } else {
+        let (node, args) = mcp_node_launcher_command(launcher_script)
+            .unwrap_or_else(|_| {
+                let script = node_script_argv(launcher_script)
+                    .unwrap_or_else(|_| path_to_js_string(launcher_script));
+                (resolve_node_command(), vec![script])
+            });
+        json!({
+            "command": node,
+            "args": args,
+            "alwaysLoad": true
+        })
+    };
     if let Some((port, token)) = bridge {
         server["env"] = json!({
             "AITERM_IDE_PORT": port.to_string(),
@@ -204,18 +218,26 @@ async fn preflight_stdio_tools_once(
     per_attempt: Duration,
 ) -> Result<usize, String> {
     let script_path = mcp_launcher_path(paths)?;
-    let script_arg = node_script_argv(&script_path)?;
-    let node = resolve_node_command();
     let workdir = script_path
         .parent()
         .ok_or_else(|| format!("MCP 脚本无父目录: {}", script_path.display()))?;
     let workdir = fs::canonicalize(workdir)
         .map_err(|e| format!("无法解析 MCP 工作目录 {}: {e}", workdir.display()))?;
 
-    tracing::debug!("MCP preflight: node={node} script={script_arg} cwd={}", workdir.display());
+    let (program, args) = if let Some((command, argv)) = mcp_stdio_launcher_command() {
+        (command, argv)
+    } else {
+        let (node, argv) = mcp_node_launcher_command(&script_path)?;
+        (node, argv)
+    };
 
-    let mut child = tokio::process::Command::new(&node)
-        .arg(&script_arg)
+    tracing::debug!(
+        "MCP preflight: program={program} args={args:?} cwd={}",
+        workdir.display()
+    );
+
+    let mut child = async_command_no_window(&program)
+        .args(&args)
         .current_dir(&workdir)
         .env("AITERM_IDE_PORT", port.to_string())
         .env("AITERM_IDE_AUTH_TOKEN", auth_token)
@@ -226,7 +248,7 @@ async fn preflight_stdio_tools_once(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("启动 MCP 预检进程失败 ({node}): {e}"))?;
+        .map_err(|e| format!("启动 MCP 预检进程失败 ({program}): {e}"))?;
 
     let mut stdin = child
         .stdin

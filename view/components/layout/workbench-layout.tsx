@@ -729,7 +729,8 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
       </WorkbenchRuntimeContext.Provider>
     </WorkbenchContext.Provider>
 
-    <AlertDialog open={!!pendingClose} onOpenChange={open => !open && setPendingClose(null)}>
+    {pendingClose && (
+    <AlertDialog open onOpenChange={open => !open && setPendingClose(null)}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>保存更改？</AlertDialogTitle>
@@ -743,6 +744,7 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+    )}
     </>
   )
 })

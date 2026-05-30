@@ -2,6 +2,14 @@
 
 All notable changes to Clide will be documented in this file.
 
+## [0.1.26] - 2026-05-30
+
+### Fixed
+- xterm resync duplicated shell output (commands appeared to run many times)
+- Windows console windows flashing on startup and AI chat (hidden MCP/node spawns)
+- Modal dialogs briefly flashing on app launch (render only when open)
+- MCP shell command dedup within short window; disable text-extract fallback after MCP tools
+
 ## [0.1.25] - 2026-05-29
 
 ### Added

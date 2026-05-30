@@ -213,7 +213,8 @@ export function EditorPane({
         </div>
       )}
 
-      <AlertDialog open={!!pendingCloseId} onOpenChange={open => !open && setPendingCloseId(null)}>
+      {pendingCloseId && (
+      <AlertDialog open onOpenChange={open => !open && setPendingCloseId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>保存更改？</AlertDialogTitle>
@@ -227,6 +228,7 @@ export function EditorPane({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      )}
     </div>
   )
 }

@@ -3,7 +3,6 @@
  * 而不是仅调用后端 terminal_write 而 xterm 无感知。
  */
 import { writeTerminal } from '@/lib/terminal-client'
-import { requestTerminalResync } from '@/lib/terminal-stream'
 
 export type TerminalInputHandler = (data: string) => Promise<void>
 
@@ -35,5 +34,4 @@ export async function submitTerminalInput(sessionId: string, data: string): Prom
   }
   console.log(`[TerminalInput] No handler, falling back to writeTerminal for ${sessionId}`)
   await writeTerminal(sessionId, data)
-  requestTerminalResync(sessionId)
 }

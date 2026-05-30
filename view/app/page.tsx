@@ -1376,7 +1376,7 @@ export default function AITerminal() {
   // 无标签且非桌面预置连接时，补开本地 Shell
   useEffect(() => {
     if (!isTauriRuntime() || !foldersLoaded) return
-    if (connections.length > 0) return
+    if (connectionsRef.current.length > 0) return
     const sessions = folders.flatMap(f => f.sessions)
     const legacy = findLegacyDefaultLocalShellSession(sessions)
     const localSession =
@@ -1385,7 +1385,7 @@ export default function AITerminal() {
         ? { ...legacy, id: DEFAULT_LOCAL_SHELL_SESSION_ID }
         : createDefaultLocalShellSession())
     handleSessionConnect(localSession)
-  }, [foldersLoaded, connections.length, folders, handleSessionConnect])
+  }, [foldersLoaded, folders, handleSessionConnect])
 
   // 切换连接标签时刷新该会话的远程文件树
   useEffect(() => {
@@ -2064,15 +2064,29 @@ export default function AITerminal() {
             claudeCode.registerStreamHandler(requestId, event => {
               armSilentTimeout()
               let streamText: string | undefined
-              // Mark tool usage ASAP to avoid fallback double-execution race.
+              // 任意 aiterm MCP 工具调用后禁用「从回复文本提取命令」的回退，避免与 MCP 重复执行
+              if (event.eventType === 'tool_start' && event.toolName) {
+                const tn = event.toolName
+                if (
+                  tn.startsWith('mcp__aiterm__') ||
+                  tn === 'runShellCommand' ||
+                  tn === 'getFocusedServer' ||
+                  tn === 'listActiveConnections' ||
+                  tn === 'connectServer'
+                ) {
+                  mcpShellCommandThisTurnRef.current = true
+                }
+                if (tn === 'runShellCommand' || tn === 'mcp__aiterm__runShellCommand') {
+                  silentTimeoutMs = 10 * 60_000
+                }
+              }
               if (
-                event.eventType === 'tool_start' &&
+                event.eventType === 'tool_result' &&
+                event.toolName &&
                 (event.toolName === 'runShellCommand' ||
                   event.toolName === 'mcp__aiterm__runShellCommand')
               ) {
                 mcpShellCommandThisTurnRef.current = true
-                // Long-running remote commands may produce no stream output for a while.
-                silentTimeoutMs = 10 * 60_000
               }
               if (event.text) {
                 if (
@@ -2524,6 +2538,14 @@ export default function AITerminal() {
 
   handleClaudeToolRequestRef.current = (payload: Record<string, unknown>) => {
     const tool = payload.tool as string | undefined
+    if (
+      tool === 'runShellCommand' ||
+      tool === 'connectServer' ||
+      tool === 'disconnectServer' ||
+      tool === 'createNewShell'
+    ) {
+      mcpShellCommandThisTurnRef.current = true
+    }
     if (tool === 'connectServer' && typeof payload.profileId === 'string') {
       const session = foldersRef.current
         .flatMap(f => f.sessions)
@@ -2553,7 +2575,6 @@ export default function AITerminal() {
       tool === 'runShellCommand' &&
       typeof payload.terminalSessionId === 'string'
     ) {
-      mcpShellCommandThisTurnRef.current = true
       const terminalSessionId = payload.terminalSessionId as string
       if (typeof payload.requestId === 'string' && typeof payload.command === 'string') {
         console.log(`[MCP] Executing shell command: ${payload.command}, requestId: ${payload.requestId}`)

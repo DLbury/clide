@@ -17,6 +17,7 @@ const child = spawn(process.execPath, [script], {
   stdio: ['pipe', 'pipe', 'inherit'],
   cwd: root,
   env: process.env,
+  windowsHide: true,
 })
 
 process.stdin.pipe(child.stdin)

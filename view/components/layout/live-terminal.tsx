@@ -11,7 +11,6 @@ import {
   getTerminalOutputBuffer,
   subscribeTerminalOutput,
   onTerminalResync,
-  requestTerminalResync,
 } from '@/lib/terminal-stream'
 import { useAppTheme } from '@/hooks/use-app-theme'
 
@@ -148,6 +147,18 @@ export function LiveTerminal({
     bufferSyncedRef.current = buffered.length
   }, [sessionId])
 
+  /** 从滚动缓冲完整重绘 xterm（切换标签 / 漏帧时），必须先 clear 再 write，避免重复叠加 */
+  const replayBufferToTerm = useCallback(() => {
+    const term = termRef.current
+    if (!term) return
+    const buffered = getTerminalOutputBuffer(sessionId)
+    term.clear()
+    if (buffered) {
+      term.write(buffered)
+    }
+    bufferSyncedRef.current = buffered.length
+  }, [sessionId])
+
   useEffect(() => {
     if (!termReady) return
 
@@ -162,13 +173,12 @@ export function LiveTerminal({
 
     const unsubResync = onTerminalResync(sid => {
       if (sid !== sessionId) return
-      bufferSyncedRef.current = 0
-      syncBufferToTerm()
+      replayBufferToTerm()
     })
 
     const unsubInput = registerTerminalInputHandler(sessionId, async data => {
       await writeTerminal(sessionId, data)
-      requestTerminalResync(sessionId)
+      // PTY 输出经 subscribeTerminalOutput 增量写入，无需 resync（否则会整屏重复渲染）
     })
 
     return () => {
@@ -177,7 +187,7 @@ export function LiveTerminal({
       unsubResync()
       unsubInput()
     }
-  }, [sessionId, termReady, syncBufferToTerm])
+  }, [sessionId, termReady, syncBufferToTerm, replayBufferToTerm])
 
   useEffect(() => {
     if (connected && inputEnabled) {

@@ -45,6 +45,8 @@ export function DeleteRemoteFileDialog({
   const canConfirm = confirmText === CONFIRM_PHRASE && !busy
   const kindLabel = file?.type === 'directory' ? '文件夹' : '文件'
 
+  if (!open) return null
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="sm:max-w-md">
