@@ -1,3 +1,4 @@
+pub mod app_logging;
 pub mod app_paths;
 pub mod claude;
 pub mod mcp_stdio_proxy;
@@ -17,7 +18,7 @@ use runtime::RuntimeStore;
 use shell_tool::ShellToolCoordinator;
 use state::IdeContext;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use terminal::{ConnectRequest, TerminalManager};
 
 pub struct AppState {
@@ -262,19 +263,32 @@ async fn claude_send_message(
 
     if let Some((port, token, _)) = &bridge_info {
         let _ = claude::sync_mcp_bridge_env(&mcp_paths, *port, token);
-        let tool_count = claude::wait_for_mcp_ready(
+        match claude::wait_for_mcp_ready(
             &mcp_paths,
             *port,
             token,
             std::time::Duration::from_secs(15),
         )
         .await
-        .map_err(|e| {
-            format!(
-                "MCP 工具未就绪，无法启动 Claude：{e}。请确认已安装 Node.js，侧栏 IDE 桥接已就绪，并重试。"
-            )
-        })?;
-        tracing::info!("Claude 启动前 MCP 已就绪: {tool_count} 个工具");
+        {
+            Ok(tool_count) => {
+                tracing::info!("Claude 启动前 MCP 已就绪: {tool_count} 个工具");
+            }
+            Err(e) => {
+                app_logging::log_diag("mcp_preflight", &e);
+                let _ = app.emit(
+                    "claude:diag",
+                    serde_json::json!({
+                        "kind": "mcp_preflight",
+                        "message": e,
+                    }),
+                );
+                // 不阻断 Claude 启动：打包版 GUI 环境常导致 MCP 预检失败，但仍可尝试对话
+                tracing::warn!(
+                    "MCP 预检未通过，仍将启动 Claude（远程 Shell 工具可能不可用）: {e}"
+                );
+            }
+        }
         tokio::time::sleep(std::time::Duration::from_millis(450)).await;
     } else {
         let _ = claude::ensure_project_mcp_json(&mcp_paths, None);
@@ -439,17 +453,17 @@ async fn terminal_get_host_stats(
     terminal::get_remote_host_stats(request).await
 }
 
+#[tauri::command]
+fn claude_log_file_path(app: AppHandle) -> Option<String> {
+    app_logging::log_file_path(&app)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     tauri::Builder::default()
         .setup(|app| {
+            let _log = app_logging::init(&app.handle());
+            crate::process_util::fix_gui_environment();
             let handle = app.handle().clone();
             // Never block app startup on MCP scripts.
             // Desktop launchers often have a different environment; MCP may be temporarily unavailable.
@@ -493,6 +507,7 @@ pub fn run() {
             shell_tool_ack,
             complete_shell_tool_command,
             claude_send_message,
+            claude_log_file_path,
             claude_cancel_message,
             claude_cancel_all_messages,
             terminal_connect,

@@ -108,10 +108,15 @@ export async function executeShellToolInTab(
   console.log(`[ShellTool] Starting execution: ${payload.requestId}, command: ${payload.command}`)
 
   const isSerial = payload.sessionType === 'serial'
-  const requestedWaitMs = payload.waitMs ?? 30_000
-  const waitMs = isSerial ? Math.min(requestedWaitMs, 3_000) : Math.min(requestedWaitMs, 60_000)
+  // 不再强制限制 waitMs 上限，由调用方决定；0 表示无限等待
+  const waitMs = payload.waitMs ?? 30_000
   const stableTarget = isSerial ? 2 : 4
   const sessionId = payload.terminalSessionId
+
+  // Claude Code MCP 工具调用的内置超时约 60 秒（实测可能更短）
+  // 为避免被 Claude Code 超时中断，我们在 45 秒时主动返回临时结果
+  const SAFETY_TIMEOUT_MS = 45_000
+  const useSafetyTimeout = waitMs === 0 || waitMs > SAFETY_TIMEOUT_MS
 
   const line = normalizeShellCommandForPty(payload.command)
   const cmdKey = shellCommandKey(sessionId, line)
@@ -147,14 +152,16 @@ export async function executeShellToolInTab(
     // 初始等待，让命令有时间执行并产生输出
     await new Promise<void>(resolve => setTimeout(resolve, 300))
 
-    const deadline = Date.now() + waitMs
+    const hasTimeout = waitMs > 0
+    const deadline = hasTimeout ? Date.now() + waitMs : null
+    const safetyDeadline = useSafetyTimeout ? Date.now() + SAFETY_TIMEOUT_MS : null
     let lastLen = getTerminalOutputBuffer(sessionId).length
     let stableTicks = 0
     let sawNewOutput = false
 
-    console.log(`[ShellTool] Waiting for output (timeout: ${waitMs}ms)...`)
+    console.log(`[ShellTool] Waiting for output${hasTimeout ? ` (timeout: ${waitMs}ms)` : ' (no timeout)'}${useSafetyTimeout ? `, safety cutoff: ${SAFETY_TIMEOUT_MS}ms` : ''}...`)
 
-    while (Date.now() < deadline) {
+    while (hasTimeout ? Date.now() < deadline! : true) {
       await new Promise<void>(resolve => setTimeout(resolve, 150))
       const buf = getTerminalOutputBuffer(sessionId)
       const len = buf.length
@@ -166,6 +173,12 @@ export async function executeShellToolInTab(
         // 看到提示符了，再等一小会儿确保稳定
         await new Promise<void>(resolve => setTimeout(resolve, 200))
         console.log(`[ShellTool] Shell prompt detected, command completed`)
+        break
+      }
+
+      // 安全超时检查：在 Claude Code MCP 超时前主动返回
+      if (safetyDeadline && Date.now() >= safetyDeadline) {
+        console.log(`[ShellTool] Safety timeout reached (${SAFETY_TIMEOUT_MS}ms), returning partial output`)
         break
       }
 
@@ -194,7 +207,7 @@ export async function executeShellToolInTab(
     if (cleaned === line.trim()) {
       output = ''
     }
-    const isTimeout = Date.now() >= deadline
+    const isTimeout = hasTimeout && deadline !== null && Date.now() >= deadline
     const finalOutput = output || '(无输出)'
 
     if (isTimeout) {

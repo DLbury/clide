@@ -88,9 +88,12 @@ impl ShellToolCoordinator {
     }
 
     pub fn wait(&self, request_id: &str, wait_ms: u64) -> Result<ShellToolResult, String> {
-        // 防止模型给出极大 waitMs 导致界面长时间卡住。
-        let actual_wait_ms = wait_ms.clamp(5_000, 60_000);
-        let deadline = Instant::now() + Duration::from_millis(actual_wait_ms);
+        // wait_ms 为 0 时表示无限等待，由用户主动停止
+        let deadline_opt = if wait_ms == 0 {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_millis(wait_ms))
+        };
 
         loop {
             {
@@ -108,12 +111,14 @@ impl ShellToolCoordinator {
                     });
                 }
             }
-            if Instant::now() >= deadline {
-                // 后端等待超时：由调用方决定如何对模型提示（不强制标记失败）
-                return Ok(ShellToolResult {
-                    output: String::new(),
-                    timed_out: true,
-                });
+            if let Some(deadline) = deadline_opt {
+                if Instant::now() >= deadline {
+                    // 后端等待超时：由调用方决定如何对模型提示（不强制标记失败）
+                    return Ok(ShellToolResult {
+                        output: String::new(),
+                        timed_out: true,
+                    });
+                }
             }
             std::thread::sleep(Duration::from_millis(80));
         }

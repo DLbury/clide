@@ -117,9 +117,20 @@ export function NewSessionModal({
       setHost(editSession.host)
       setPort(editSession.port?.toString() ?? '22')
       setUser(editSession.user ?? '')
-      setAuthMethod(editSession.authMethod ?? 'none')
-      setPassword(editSession.password ?? '')
-      setPrivateKeyPath(editSession.privateKeyPath ?? '')
+      setAuthMethod(
+        editSession.authMethod ??
+          (editSession.authConfig?.type === 'password-plain'
+            ? 'password'
+            : editSession.authConfig?.type === 'key-path'
+              ? 'key'
+              : 'none')
+      )
+      setPassword(
+        editSession.password ?? editSession.authConfig?.plainPassword ?? ''
+      )
+      setPrivateKeyPath(
+        editSession.privateKeyPath ?? editSession.authConfig?.keyPath ?? ''
+      )
       setSerialPort(editSession.serialPort ?? editSession.host ?? '/dev/ttyUSB0')
       setBaudRate(String(editSession.baudRate ?? 115200))
       setFolderId(resolveInitialFolderId(folders, defaultFolderId, editSessionFolderId))
@@ -178,14 +189,35 @@ export function NewSessionModal({
           return null
         }
 
-        return {
+        const portNum = parseInt(port, 10) || 22
+        const sshSession: Omit<Session, 'id' | 'status' | 'lastActive'> = {
           ...baseSession,
           host: trimmedHost,
-          port: parseInt(port, 10) || 22,
+          port: portNum,
           user: trimmedUser,
           authMethod,
-          authConfig: undefined,
         }
+
+        if (authMethod === 'password') {
+          const pw = password.trim()
+          if (pw) {
+            sshSession.password = pw
+            sshSession.authConfig = { type: 'password-plain', plainPassword: pw }
+          } else {
+            // 编辑时留空表示保留 vault 中已有密码；新建留空则连接时再输入
+            sshSession.authConfig = { type: 'password-plain' }
+          }
+        } else if (authMethod === 'key') {
+          const keyPath = privateKeyPath.trim()
+          sshSession.privateKeyPath = keyPath
+          sshSession.authConfig = keyPath
+            ? { type: 'key-path', keyPath }
+            : undefined
+        } else {
+          sshSession.authConfig = { type: 'default-keys' }
+        }
+
+        return sshSession
       }
       case 'telnet':
         return {

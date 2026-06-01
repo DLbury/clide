@@ -6,6 +6,7 @@ import {
   getClaudeBridgeStatus,
   listenBridgeConnected,
   listenClaudeStream,
+  listenClaudeDiag,
   registerClaudeMcp,
   waitClaudeMcpTools,
   restartClaudeBridge,
@@ -56,6 +57,8 @@ export function useClaudeCode({
   const [mcpStatus, setMcpStatus] = useState<McpRegisterStatus | null>(null)
   const [mcpRegisterError, setMcpRegisterError] = useState<string | null>(null)
   const [mcpRegistering, setMcpRegistering] = useState(false)
+  const [streamListenError, setStreamListenError] = useState<string | null>(null)
+  const [lastDiag, setLastDiag] = useState<string | null>(null)
   const pendingRequests = useRef(new Map<string, (event: ClaudeStreamEvent) => void>())
   const getIdeContextRef = useRef(getIdeContext)
   getIdeContextRef.current = getIdeContext
@@ -196,13 +199,22 @@ export function useClaudeCode({
       if (event.sessionId) {
         setSessionId(prev => (prev === event.sessionId ? prev : event.sessionId))
       }
-    }).then(fn => {
-      streamReadyRef.current = true
-      unlistenStreamRef.current = fn
-    }).catch(err => {
-      streamReadyRef.current = false
-      console.error('listenClaudeStream failed', err)
     })
+      .then(fn => {
+        streamReadyRef.current = true
+        setStreamListenError(null)
+        unlistenStreamRef.current = fn
+      })
+      .catch(err => {
+        streamReadyRef.current = false
+        const msg = err instanceof Error ? err.message : String(err)
+        setStreamListenError(`Claude 事件通道监听失败: ${msg}`)
+        console.error('listenClaudeStream failed', err)
+      })
+
+    listenClaudeDiag(event => {
+      if (event?.message) setLastDiag(`[${event.kind}] ${event.message}`)
+    }).catch(() => {})
 
     listenBridgeConnected(() => {
       getClaudeBridgeStatus().then(setBridge).catch(console.error)
@@ -282,6 +294,8 @@ export function useClaudeCode({
     mcpStatus,
     mcpRegisterError,
     mcpRegistering,
+    streamListenError,
+    lastDiag,
     retryMcpRegister,
     ensureBridgeReady,
     ensureMcpReady,

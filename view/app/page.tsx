@@ -10,6 +10,7 @@ import { useAiSettings } from '@/lib/ai-settings'
 import {
   sendClaudeMessage,
   cancelClaudeMessage,
+  detectClaude,
   isIdeBridgeReady,
   type IdeContext,
 } from '@/lib/claude-client'
@@ -291,6 +292,23 @@ export default function AITerminal() {
     (payload: Record<string, unknown>) => void
   >(() => {})
   const claudeRequestsByConnectionRef = useRef<Map<string, Set<string>>>(new Map())
+  /** 按 requestId 续期 Claude 静默超时（MCP/Shell 阻塞时 stdout 可能长时间无事件） */
+  const claudeSilentKeepaliveRef = useRef(
+    new Map<
+      string,
+      { touch: () => void; markLongRunning: () => void; dispose: () => void }
+    >()
+  )
+  const keepalivePendingClaudeRequests = (connectionId: string | undefined, long = true) => {
+    if (!connectionId) return
+    const pending = claudeRequestsByConnectionRef.current.get(connectionId)
+    if (!pending) return
+    for (const rid of pending) {
+      const k = claudeSilentKeepaliveRef.current.get(rid)
+      if (long) k?.markLongRunning()
+      else k?.touch()
+    }
+  }
   const claudeCodeRef = useRef<ReturnType<typeof useClaudeCode> | null>(null)
   const aiSettingsRef = useRef(aiSettings)
   aiSettingsRef.current = aiSettings
@@ -697,6 +715,7 @@ export default function AITerminal() {
       const pending = claudeRequestsByConnectionRef.current.get(connectionId)
       if (pending) {
         for (const requestId of pending) {
+          claudeSilentKeepaliveRef.current.get(requestId)?.dispose()
           await cancelClaudeMessage(requestId).catch(() => {})
         }
         claudeRequestsByConnectionRef.current.delete(connectionId)
@@ -1182,7 +1201,8 @@ export default function AITerminal() {
         return
       }
 
-      void resetConnectionClaudeSession(existingConn.id, { clearChat: true })
+      // 仅重置 AI 思考状态，不清除对话历史和 session ID
+      void resetConnectionClaudeSession(existingConn.id, { clearChat: false })
 
       if (!isTerminalBackendSupported(folderSession.type)) return
 
@@ -1995,6 +2015,17 @@ export default function AITerminal() {
 
       if (useClaudeCodeBackend) {
         try {
+          if (claudeCode.streamListenError) {
+            throw new Error(claudeCode.streamListenError)
+          }
+          const detected =
+            claudeCode.detected ?? (await detectClaude().catch(() => null))
+          if (!detected?.found) {
+            const logHint = claudeCode.lastDiag ? `\n${claudeCode.lastDiag}` : ''
+            throw new Error(
+              `未检测到 Claude Code CLI。请先安装并登录（npm i -g @anthropic-ai/claude-code），或在设置中填写 claude 路径。${logHint}`
+            )
+          }
           await claudeCode.ensureStreamReady()
           const bridgeStatus = await claudeCode.ensureBridgeReady()
           const mcpStatus = await claudeCode.ensureMcpReady()
@@ -2028,13 +2059,21 @@ export default function AITerminal() {
           let staleRetried = false
 
           const registerHandler = (requestId: string) => {
+            const SILENT_DEFAULT_MS = 120_000
+            const SILENT_LONG_MS = 15 * 60_000
             let silentTimer: ReturnType<typeof setTimeout> | null = null
-            let silentTimeoutMs = 90_000
+            let silentTimeoutMs = SILENT_DEFAULT_MS
             let sawStreamingText = false
             let bufferedResultText = ''
+            const disposeSilentKeepalive = () => {
+              if (silentTimer) clearTimeout(silentTimer)
+              silentTimer = null
+              claudeSilentKeepaliveRef.current.delete(requestId)
+            }
             const armSilentTimeout = () => {
               if (silentTimer) clearTimeout(silentTimer)
               silentTimer = setTimeout(() => {
+                disposeSilentKeepalive()
                 void cancelClaudeMessage(requestId).catch(() => {})
                 setConnections(prev =>
                   prev.map(conn => {
@@ -2060,6 +2099,15 @@ export default function AITerminal() {
                 pending?.delete(requestId)
               }, silentTimeoutMs)
             }
+            const markLongRunning = () => {
+              silentTimeoutMs = SILENT_LONG_MS
+              armSilentTimeout()
+            }
+            claudeSilentKeepaliveRef.current.set(requestId, {
+              touch: armSilentTimeout,
+              markLongRunning,
+              dispose: disposeSilentKeepalive,
+            })
             armSilentTimeout()
             claudeCode.registerStreamHandler(requestId, event => {
               armSilentTimeout()
@@ -2075,18 +2123,24 @@ export default function AITerminal() {
                   tn === 'connectServer'
                 ) {
                   mcpShellCommandThisTurnRef.current = true
-                }
-                if (tn === 'runShellCommand' || tn === 'mcp__aiterm__runShellCommand') {
-                  silentTimeoutMs = 10 * 60_000
+                  markLongRunning()
                 }
               }
-              if (
-                event.eventType === 'tool_result' &&
-                event.toolName &&
-                (event.toolName === 'runShellCommand' ||
-                  event.toolName === 'mcp__aiterm__runShellCommand')
-              ) {
-                mcpShellCommandThisTurnRef.current = true
+              if (event.eventType === 'tool_result' && event.toolName) {
+                const tn = event.toolName
+                if (
+                  tn.startsWith('mcp__aiterm__') ||
+                  tn === 'runShellCommand' ||
+                  tn === 'getFocusedServer' ||
+                  tn === 'listActiveConnections' ||
+                  tn === 'connectServer'
+                ) {
+                  mcpShellCommandThisTurnRef.current = true
+                  markLongRunning()
+                }
+              }
+              if (event.eventType === 'reasoning_delta') {
+                markLongRunning()
               }
               if (event.text) {
                 if (
@@ -2170,10 +2224,7 @@ export default function AITerminal() {
                     })
                   )
                 }
-                if (silentTimer) {
-                  clearTimeout(silentTimer)
-                  silentTimer = null
-                }
+                disposeSilentKeepalive()
                 const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
                 pending?.delete(requestId)
 
@@ -2235,7 +2286,34 @@ export default function AITerminal() {
                       }
                     })
                   )
-          } else {
+                } else if (
+                  !assistantAccumulated.trim() &&
+                  !bufferedResultText?.trim() &&
+                  !sawStreamingText
+                ) {
+                  const diag = claudeCode.lastDiag ? `\n\n诊断: ${claudeCode.lastDiag}` : ''
+                  const logHint =
+                    '可在 %LOCALAPPDATA%\\com.dlbury.clide\\logs\\clide.log 查看详细日志（若存在）。'
+                  setConnections(prev =>
+                    prev.map(conn => {
+                      if (conn.id !== activeConnectionId) return conn
+                      return {
+                        ...conn,
+                        aiMessages: conn.aiMessages.map(m =>
+                          m.id === assistantId
+                            ? {
+                                ...m,
+                                content:
+                                  m.content ||
+                                  `Claude 已结束但未返回任何内容。请确认已安装并登录 Claude Code CLI，且设置中的路径正确。${logHint}${diag}`,
+                              }
+                            : m
+                        ),
+                        aiThinking: false,
+                      }
+                    })
+                  )
+                } else {
                   setConnections(prev =>
                     prev.map(conn =>
                       conn.id === activeConnectionId ? { ...conn, aiThinking: false } : conn
@@ -2347,6 +2425,7 @@ export default function AITerminal() {
     const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
     if (!pending || pending.size === 0) return
     for (const requestId of pending) {
+      claudeSilentKeepaliveRef.current.get(requestId)?.dispose()
       void cancelClaudeMessage(requestId).catch(() => {})
     }
     claudeRequestsByConnectionRef.current.delete(activeConnectionId)
@@ -2542,9 +2621,13 @@ export default function AITerminal() {
       tool === 'runShellCommand' ||
       tool === 'connectServer' ||
       tool === 'disconnectServer' ||
-      tool === 'createNewShell'
+      tool === 'createNewShell' ||
+      tool === 'getTerminalContext' ||
+      tool === 'listRemoteFiles' ||
+      tool === 'readRemoteFile'
     ) {
       mcpShellCommandThisTurnRef.current = true
+      keepalivePendingClaudeRequests(activeConnectionIdRef.current, true)
     }
     if (tool === 'connectServer' && typeof payload.profileId === 'string') {
       const session = foldersRef.current
@@ -2616,8 +2699,13 @@ export default function AITerminal() {
 
     void listenToolActivity(event => {
       setToolActivities(prev => [event, ...prev].slice(0, 50))
-      // shell_command 已由 Claude stream 的 tool_start/tool_result 渲染，避免重复插入工具块
-      if (event.kind === 'shell_command') return
+      if (event.kind === 'shell_command') {
+        if (event.status === 'running' || event.status === 'completed' || event.status === 'error') {
+          keepalivePendingClaudeRequests(activeConnectionIdRef.current, true)
+        }
+        // shell_command 已由 Claude stream 的 tool_start/tool_result 渲染，避免重复插入工具块
+        return
+      }
       const assistantId = activeAssistantIdRef.current
       const connId = activeConnectionIdRef.current
       if (assistantId && connId) {
@@ -2842,6 +2930,8 @@ export default function AITerminal() {
               mcpStatus={claudeCode.mcpStatus}
               mcpRegisterError={claudeCode.mcpRegisterError}
               mcpRegistering={claudeCode.mcpRegistering}
+              streamListenError={claudeCode.streamListenError}
+              lastDiag={claudeCode.lastDiag}
               onRetryMcpRegister={() => void claudeCode.retryMcpRegister()}
               onSendMessage={handleAiMessage}
               onStopMessage={handleStopAiMessage}

@@ -40,6 +40,8 @@ interface AiPaneProps {
   mcpStatus?: McpRegisterStatus | null
   mcpRegisterError?: string | null
   mcpRegistering?: boolean
+  streamListenError?: string | null
+  lastDiag?: string | null
   onRetryMcpRegister?: () => void
   onSendMessage: (message: string) => void
   onStopMessage?: () => void
@@ -80,6 +82,8 @@ export function AiPane({
   mcpStatus,
   mcpRegisterError,
   mcpRegistering = false,
+  streamListenError,
+  lastDiag,
   onRetryMcpRegister,
   onSendMessage,
   onStopMessage,
@@ -270,8 +274,14 @@ export function AiPane({
                       手动注册 MCP
                     </button>
                   )}
+                  {streamListenError && (
+                    <p className="text-red-600 dark:text-red-400 break-words">{streamListenError}</p>
+                  )}
                   {mcpRegisterError && (
                     <p className="text-amber-600 dark:text-amber-400 break-words">{mcpRegisterError}</p>
+                  )}
+                  {lastDiag && !mcpRegisterError && (
+                    <p className="text-muted-foreground break-words text-[10px]">{lastDiag}</p>
                   )}
                 </>
               )}

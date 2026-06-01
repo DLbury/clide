@@ -159,3 +159,23 @@ export async function listenBridgeConnected(handler: () => void): Promise<() => 
   const unlisten = await listen('claude:bridge-connected', () => handler())
   return unlisten
 }
+
+export async function getClaudeLogFilePath(): Promise<string | null> {
+  if (!isTauriRuntime()) return null
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<string | null>('claude_log_file_path')
+}
+
+export interface ClaudeDiagEvent {
+  kind: string
+  message: string
+}
+
+export async function listenClaudeDiag(
+  handler: (event: ClaudeDiagEvent) => void
+): Promise<() => void> {
+  if (!isTauriRuntime()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  const unlisten = await listen<ClaudeDiagEvent>('claude:diag', e => handler(e.payload))
+  return unlisten
+}

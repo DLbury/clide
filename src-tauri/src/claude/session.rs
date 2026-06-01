@@ -108,6 +108,11 @@ impl ClaudeSessionManager {
         mcp_config: Option<PathBuf>,
     ) -> Result<(), String> {
         let claude = resolve_claude_path(claude_path)?;
+        tracing::info!(
+            "Spawning Claude CLI: path={claude}, request_id={request_id}, bridge_port={:?}, workspace={:?}",
+            bridge_port,
+            workspace_dir.as_ref().map(|p| p.display().to_string())
+        );
 
         let mut args = vec![
             "-p".to_string(),
@@ -183,7 +188,11 @@ impl ClaudeSessionManager {
 
         let mut child = command
             .spawn()
-            .map_err(|e| format!("启动 Claude Code 失败 ({claude}): {e}"))?;
+            .map_err(|e| {
+                let msg = format!("启动 Claude Code 失败 ({claude}): {e}");
+                tracing::error!("{msg}");
+                msg
+            })?;
 
         let stdout = child.stdout.take().ok_or("无法读取 Claude Code 输出")?;
         let stderr = child.stderr.take().ok_or("无法读取 Claude Code 错误输出")?;

@@ -460,8 +460,7 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let wait_ms = args
         .get("waitMs")
         .and_then(|v| v.as_u64())
-        .unwrap_or(30000)
-        .clamp(1000, 60000);
+        .unwrap_or(30000);
 
     let (Some(pid), Some(cmd)) = (profile_id, command) else {
         tracing::warn!("runShellCommand: missing profileId or command");
@@ -538,11 +537,8 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     // 等前端 xterm 标签接管后再等待输出，避免 Rust 阻塞时 UI 尚未写入 PTY
     let _ = ctx.shell_tools.wait_until_started(&request_id, 4000);
 
-    let effective_wait = if session_type == "serial" {
-        wait_ms.min(3000)
-    } else {
-        wait_ms
-    };
+    // 不再强制限制 wait_ms，由调用方决定；0 表示无限等待
+    let effective_wait = wait_ms;
 
     let result = ctx.shell_tools.wait(&request_id, effective_wait);
     ctx.shell_tools.cleanup(&request_id);
