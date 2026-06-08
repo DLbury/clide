@@ -28,6 +28,9 @@ export interface McpRegisterStatus {
   projectMcpConfigReady: boolean
   claudeProjectRegistered: boolean
   ready: boolean
+  runtimeToolsReady?: boolean
+  runtimeToolCount?: number
+  runtimeError?: string | null
 }
 
 export interface IdeContext {

@@ -255,6 +255,15 @@ export function AiPane({
                     .mcp.json：{mcpStatus.projectMcpConfigReady ? '已配置' : '未配置'}
                     {' · '}
                     Claude 登记：{mcpStatus.claudeProjectRegistered ? '已登记' : '自动加载'}
+                    {mcpStatus.runtimeToolsReady != null && (
+                      <>
+                        {' · '}
+                        运行时工具：
+                        {mcpStatus.runtimeToolsReady
+                          ? `${mcpStatus.runtimeToolCount ?? '?'} 个`
+                          : '未就绪'}
+                      </>
+                    )}
                   </p>
                   {showManualMcp && onRetryMcpRegister && (
                     <button

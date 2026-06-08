@@ -1,5 +1,6 @@
 pub mod app_logging;
 pub mod app_paths;
+pub mod connect_tool;
 pub mod claude;
 pub mod mcp_stdio_proxy;
 pub mod process_util;
@@ -15,6 +16,7 @@ use claude::detect::{detect_claude_binary, ClaudeAutoDetectManager, ClaudeDetect
 use claude::session::ClaudeSessionManager;
 use parking_lot::Mutex;
 use runtime::RuntimeStore;
+use connect_tool::ConnectToolCoordinator;
 use shell_tool::ShellToolCoordinator;
 use state::IdeContext;
 use std::sync::Arc;
@@ -28,6 +30,8 @@ pub struct AppState {
     pub runtime: Arc<RuntimeStore>,
     pub terminals: TerminalManager,
     pub shell_tools: Arc<ShellToolCoordinator>,
+    pub connect_tools: Arc<ConnectToolCoordinator>,
+    pub mcp_runtime: Arc<claude::McpRuntimeCache>,
     pub claude_auto_detect: Arc<ClaudeAutoDetectManager>,
 }
 
@@ -108,10 +112,22 @@ fn claude_bridge_status(state: State<'_, AppState>) -> Result<Option<claude::bri
 
 #[tauri::command]
 fn claude_mcp_status(
+    state: State<'_, AppState>,
     mcp_paths: State<'_, McpBundlePaths>,
     claude_path: Option<String>,
 ) -> Result<claude::McpRegisterStatus, String> {
-    Ok(claude::check_mcp_status(&mcp_paths, claude_path))
+    let bridge_running = state
+        .bridge
+        .lock()
+        .as_ref()
+        .map(|b| b.is_running())
+        .unwrap_or(false);
+    Ok(claude::check_mcp_status(
+        &mcp_paths,
+        claude_path,
+        Some(state.mcp_runtime.as_ref()),
+        bridge_running,
+    ))
 }
 
 #[tauri::command]
@@ -130,7 +146,12 @@ fn claude_register_mcp(
     let bridge_ref = bridge_env
         .as_ref()
         .map(|(p, t)| (*p, t.as_str()));
-    claude::register_mcp(&mcp_paths, claude_path, bridge_ref)
+    claude::register_mcp(
+        &mcp_paths,
+        claude_path,
+        bridge_ref,
+        Some(state.mcp_runtime.as_ref()),
+    )
 }
 
 #[tauri::command]
@@ -148,7 +169,14 @@ async fn claude_wait_mcp_tools(
         (b.port(), b.auth_token().to_string())
     };
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(10_000).clamp(2000, 30_000));
-    claude::wait_for_mcp_ready(&mcp_paths, port, &token, timeout).await
+    claude::wait_for_mcp_ready(
+        &mcp_paths,
+        port,
+        &token,
+        timeout,
+        Some(state.mcp_runtime.as_ref()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -206,6 +234,23 @@ fn complete_shell_tool_command(
             Ok(())
         }
         Err(e) => Err(e),
+    }
+}
+
+#[tauri::command]
+fn complete_connect_tool(
+    state: State<'_, AppState>,
+    request_id: String,
+    success: bool,
+    error: Option<String>,
+) -> Result<(), String> {
+    if success {
+        state.connect_tools.complete_success(&request_id)
+    } else {
+        state.connect_tools.complete_error(
+            &request_id,
+            error.unwrap_or_else(|| "连接失败".to_string()),
+        )
     }
 }
 
@@ -268,6 +313,7 @@ async fn claude_send_message(
             *port,
             token,
             std::time::Duration::from_secs(15),
+            Some(state.mcp_runtime.as_ref()),
         )
         .await
         {
@@ -478,6 +524,22 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
+
+            // 定期清理超过 10 分钟未完成的孤儿 shell/connect tool 条目
+            // setup 阶段尚无 Tokio runtime，用 std::thread（gc_stale 为同步调用）
+            let shell_tools_gc = app.state::<AppState>().shell_tools.clone();
+            let connect_tools_gc = app.state::<AppState>().connect_tools.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(300));
+                    let r1 = shell_tools_gc.gc_stale();
+                    let r2 = connect_tools_gc.gc_stale();
+                    if r1 + r2 > 0 {
+                        tracing::info!("Tool GC: removed {r1} shell + {r2} connect stale entries");
+                    }
+                }
+            });
+
             Ok(())
         })
         .manage(AppState {
@@ -487,6 +549,8 @@ pub fn run() {
             runtime: Arc::new(RuntimeStore::new()),
             terminals: TerminalManager::new(),
             shell_tools: Arc::new(ShellToolCoordinator::new()),
+            connect_tools: Arc::new(ConnectToolCoordinator::new()),
+            mcp_runtime: Arc::new(claude::McpRuntimeCache::default()),
             claude_auto_detect: Arc::new(ClaudeAutoDetectManager::new()),
         })
         .invoke_handler(tauri::generate_handler![
@@ -506,6 +570,7 @@ pub fn run() {
             register_profile_auth,
             shell_tool_ack,
             complete_shell_tool_command,
+            complete_connect_tool,
             claude_send_message,
             claude_log_file_path,
             claude_cancel_message,

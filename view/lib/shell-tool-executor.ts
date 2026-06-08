@@ -9,9 +9,24 @@ const MAX_COMPLETED_SHELL_TOOL_IDS = 256
 /** 同一终端短时间内相同命令只执行一次（Claude MCP 重试时会带新 requestId） */
 const recentShellCommands = new Map<string, { command: string; at: number }>()
 const SHELL_COMMAND_DEDUP_MS = 4000
+const SHELL_COMMAND_CLEANUP_INTERVAL_MS = 60_000
 
 function shellCommandKey(sessionId: string, command: string): string {
   return `${sessionId}\0${command.trim()}`
+}
+
+function gcRecentShellCommands() {
+  const cutoff = Date.now() - SHELL_COMMAND_DEDUP_MS * 2
+  for (const [key, entry] of recentShellCommands) {
+    if (entry.at < cutoff) recentShellCommands.delete(key)
+  }
+}
+
+// 定期清理过期条目，防止内存泄漏
+let _shellCmdCleanupTimer: ReturnType<typeof setInterval> | null = null
+function ensureShellCmdCleanup() {
+  if (_shellCmdCleanupTimer) return
+  _shellCmdCleanupTimer = setInterval(gcRecentShellCommands, SHELL_COMMAND_CLEANUP_INTERVAL_MS)
 }
 
 async function completeShellTool(
@@ -39,27 +54,32 @@ function rememberCompletedShellTool(requestId: string) {
 
 /**
  * 检测是否出现了 shell 提示符（命令执行完成的标志）
- * 例如：user@host:path$ 或 C:\> 或 % 结尾
+ * 例如：user@host:path$ 或 C:\> 或 %
+ * 采用高置信度模式，避免 git diff / 文件路径 / markdown 等误判
  */
 function looksLikeShellPrompt(output: string): boolean {
-  // 移除 ANSI 转义序列
   const cleanOutput = output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][0-9;]*\x07/g, '').replace(/\x00/g, '')
 
-  // 获取最后几行
   const lines = cleanOutput.split('\n').filter(l => l.trim())
   if (lines.length === 0) return false
 
   const lastLine = lines[lines.length - 1].trim()
-  if (lastLine.length > 200) return false
+  if (lastLine.length > 120) return false
 
-  // 检测常见提示符结尾
-  if (/[$#%>]$/.test(lastLine)) return true
+  // bash/zsh: user@host:path$ 或 user@host:path#
+  if (/^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+:.*[$#]\s?$/.test(lastLine)) return true
 
-  // 检测 user@host 模式 (user@host:path$)
-  if (/@.*:.*[$#%]/.test(lastLine)) return true
+  // Windows cmd: C:\Users\path>
+  if (/^[A-Z]:\\.*>\s?$/.test(lastLine)) return true
 
-  // 检测 Windows cmd/ps (C:\> 或 PS C:\>)
-  if (/^[A-Z]:\\/.test(lastLine) || lastLine.startsWith('PS ')) return true
+  // PowerShell: PS C:\path>
+  if (/^PS\s+[A-Z]:\\.*>\s?$/.test(lastLine)) return true
+
+  // 极短提示符：单独一行只有 $、#、%、> （可选尾部空格）
+  if (/^[$#%>]\s?$/.test(lastLine)) return true
+
+  // 路径结尾的提示符：/path/to/dir$ 或 C:\dir# 或 ~$
+  if (/^[~/\\A-Z]:.*[$#]\s?$/.test(lastLine) && lastLine.length <= 80) return true
 
   return false
 }
@@ -110,13 +130,13 @@ export async function executeShellToolInTab(
   const isSerial = payload.sessionType === 'serial'
   // 不再强制限制 waitMs 上限，由调用方决定；0 表示无限等待
   const waitMs = payload.waitMs ?? 30_000
-  const stableTarget = isSerial ? 2 : 4
+  const stableTarget = isSerial ? 3 : 8
   const sessionId = payload.terminalSessionId
 
-  // Claude Code MCP 工具调用的内置超时约 60 秒（实测可能更短）
-  // 为避免被 Claude Code 超时中断，我们在 45 秒时主动返回临时结果
-  const SAFETY_TIMEOUT_MS = 45_000
-  const useSafetyTimeout = waitMs === 0 || waitMs > SAFETY_TIMEOUT_MS
+  // 长命令：在 Rust 侧超时前略早返回部分输出，避免 MCP 调用被 Claude 内置超时打断
+  const SAFETY_TIMEOUT_MS =
+    waitMs > 0 ? Math.min(waitMs + 8_000, 300_000) : 120_000
+  const useSafetyTimeout = waitMs === 0 || waitMs >= 35_000
 
   const line = normalizeShellCommandForPty(payload.command)
   const cmdKey = shellCommandKey(sessionId, line)
@@ -132,6 +152,8 @@ export async function executeShellToolInTab(
     return
   }
   recentShellCommands.set(cmdKey, { command: line.trim(), at: Date.now() })
+  ensureShellCmdCleanup()
+  gcRecentShellCommands()
 
   try {
     await payload.beforeExecute?.()

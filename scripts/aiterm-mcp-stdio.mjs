@@ -76,6 +76,13 @@ function createWsRpc(port, authToken) {
   let nextId = 1
   const pending = new Map()
 
+  function rejectAllPending(err) {
+    for (const [id, handler] of pending) {
+      pending.delete(id)
+      handler({ error: { message: err } })
+    }
+  }
+
   const connect = () =>
     new Promise((resolve, reject) => {
       ws = new WebSocket(`ws://127.0.0.1:${port}`, {
@@ -91,6 +98,9 @@ function createWsRpc(port, authToken) {
       ws.addEventListener('error', () => {
         clearTimeout(timeout)
         reject(new Error(`无法连接 AITerm IDE 桥接 ws://127.0.0.1:${port}`))
+      })
+      ws.addEventListener('close', () => {
+        rejectAllPending('AITerm 桥接连接已断开')
       })
       ws.addEventListener('message', ev => {
         let msg
@@ -157,23 +167,44 @@ function replyError(id, code, message) {
 async function main() {
   let rpc = null
   let upstreamTools = []
-  let connecting = false
   let lastToolCount = 0
   let upstreamKey = ''
+  /** 当前正在进行的连接 Promise，防止并发重复连接 */
+  let connectingPromise = null
+  /** 最近一次成功请求的时间戳，用于检测静默死亡的 WebSocket */
+  let lastSuccessAt = Date.now()
+  const STALE_CONNECTION_MS = 60_000
 
   async function ensureUpstream(forceReconnect = false) {
-    if (connecting) return upstreamTools
-    connecting = true
+    // 已有连接且无需强制重连：直接返回
+    if (
+      !forceReconnect &&
+      rpc &&
+      upstreamKey &&
+      upstreamTools.length > 0
+    ) {
+      return upstreamTools
+    }
+
+    // 已有正在进行的连接：等待其完成（除非强制重连）
+    if (!forceReconnect && connectingPromise) {
+      return connectingPromise
+    }
+
+    connectingPromise = doConnect(forceReconnect)
+    try {
+      return await connectingPromise
+    } finally {
+      connectingPromise = null
+    }
+  }
+
+  async function doConnect(forceReconnect) {
     try {
       const { port, authToken } = findBridge()
       const key = `${port}:${authToken}`
 
-      if (
-        !forceReconnect &&
-        rpc &&
-        upstreamKey === key &&
-        upstreamTools.length > 0
-      ) {
+      if (!forceReconnect && rpc && upstreamKey === key && upstreamTools.length > 0) {
         return upstreamTools
       }
 
@@ -188,6 +219,7 @@ async function main() {
         rpc = nextRpc
         upstreamKey = key
         upstreamTools = tools
+        lastSuccessAt = Date.now()
       } else if (!upstreamTools.length) {
         const tools = await rpc.request('tools/list', {})
         upstreamTools = tools?.tools ?? []
@@ -210,13 +242,20 @@ async function main() {
         notifyToolsChanged()
       }
       log(`上游未就绪（${RETRY_MS}ms 后重试）: ${e.message}`)
-    } finally {
-      connecting = false
     }
     return upstreamTools
   }
 
   const retryTimer = setInterval(() => {
+    // 静默死亡检测：WebSocket 存在但长时间无成功请求
+    if (rpc && Date.now() - lastSuccessAt > STALE_CONNECTION_MS) {
+      log('桥接连接疑似静默死亡，强制重连')
+      rpc.close()
+      rpc = null
+      upstreamTools = []
+      lastToolCount = 0
+      notifyToolsChanged()
+    }
     // 仅在未连通/无工具时重试，避免运行中工具调用被重连打断。
     if (!rpc || upstreamTools.length === 0) {
       void ensureUpstream()
@@ -254,16 +293,9 @@ async function main() {
       }
 
       if (method === 'tools/list') {
-        // 如果正在连接且当前无工具，等待连接完成（最多 10s）
-        if (connecting && upstreamTools.length === 0) {
-          let waited = 0
-          while (connecting && upstreamTools.length === 0 && waited < 10000) {
-            await new Promise(r => setTimeout(r, 100))
-            waited += 100
-          }
-        }
         const tools = await ensureUpstream()
         reply(id, { tools })
+        if (rpc) lastSuccessAt = Date.now()
         return
       }
 
@@ -299,6 +331,7 @@ async function main() {
           result = await rpc.request('tools/call', params)
         }
         reply(id, result)
+        lastSuccessAt = Date.now()
         return
       }
 

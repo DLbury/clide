@@ -1,5 +1,6 @@
 use crate::runtime::{self, RuntimeStore};
 use crate::secrets::{self, redact_for_display, substitute_command_placeholders};
+use crate::connect_tool::ConnectToolCoordinator;
 use crate::shell_tool::ShellToolCoordinator;
 use crate::state::IdeContext;
 use crate::terminal::{self, tail_snippet, TerminalManager};
@@ -14,6 +15,7 @@ pub struct ToolContext<'a> {
     pub runtime: &'a Arc<RuntimeStore>,
     pub terminals: &'a TerminalManager,
     pub shell_tools: &'a Arc<ShellToolCoordinator>,
+    pub connect_tools: &'a Arc<ConnectToolCoordinator>,
 }
 
 pub fn get_available_tools() -> Vec<Value> {
@@ -53,7 +55,7 @@ pub fn get_available_tools() -> Vec<Value> {
                 "profileId": { "type": "string", "description": "服务器 profile ID" }
             }), &["profileId"]),
         ),
-        tool_def_always_load(
+        tool_def(
             "runShellCommand",
             "在 UI 左侧 Shell 执行命令（与手动输入相同 PTY）。注意：如果返回 output 为空或'(无输出)'，说明命令可能仍在执行中，请调用 getTerminalContext 查询实际终端输出。sudo 等交互密码：用户在左侧终端自行输入，AI 不得索要或嵌入密码。",
             object_schema(json!({
@@ -130,7 +132,7 @@ fn tool_def_with_meta(
     tool
 }
 
-pub fn execute_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> String {
+pub async fn execute_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> String {
     let result = match name {
         "listServerProfiles"
         | "list_server_profiles"
@@ -149,7 +151,7 @@ pub fn execute_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> String {
             tool_create_new_shell(ctx, args)
         }
         "connectServer" | "connect_server" | "connectSession" | "mcp__aiterm__connectServer" => {
-            tool_connect(ctx, args)
+            tool_connect(ctx, args).await
         }
         "disconnectServer"
         | "disconnect_server"
@@ -158,12 +160,12 @@ pub fn execute_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> String {
         "runShellCommand"
         | "run_shell_command"
         | "executeCommand"
-        | "mcp__aiterm__runShellCommand" => tool_run_command(ctx, args),
+        | "mcp__aiterm__runShellCommand" => tool_run_command(ctx, args).await,
         "listRemoteFiles" | "list_remote_files" | "mcp__aiterm__listRemoteFiles" => {
-            tool_list_files(ctx, args)
+            tool_list_files(ctx, args).await
         }
         "readRemoteFile" | "read_remote_file" | "mcp__aiterm__readRemoteFile" => {
-            tool_read_file(ctx, args)
+            tool_read_file(ctx, args).await
         }
         "getWorkspaceFolders" | "get_workspace_folders" | "mcp__aiterm__getWorkspaceFolders" => {
             tool_workspace(ctx)
@@ -377,7 +379,22 @@ fn tool_create_new_shell(ctx: &ToolContext<'_>, args: &Value) -> Value {
     })
 }
 
-fn tool_connect(ctx: &ToolContext<'_>, args: &Value) -> Value {
+fn profile_has_connected_terminal(ctx: &ToolContext<'_>, profile_id: &str) -> Option<String> {
+    let snap = ctx.runtime.get();
+    for conn in &snap.connections {
+        if conn.profile_id != profile_id {
+            continue;
+        }
+        for shell in &conn.shells {
+            if ctx.terminals.is_connected(&shell.terminal_session_id) {
+                return Some(shell.terminal_session_id.clone());
+            }
+        }
+    }
+    None
+}
+
+async fn tool_connect(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let profile_id = args
         .get("profileId")
         .or_else(|| args.get("sessionId"))
@@ -385,12 +402,24 @@ fn tool_connect(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let Some(pid) = profile_id else {
         return json!({ "success": false, "error": "缺少 profileId" });
     };
+
+    if let Some(tid) = profile_has_connected_terminal(ctx, pid) {
+        return json!({
+            "success": true,
+            "message": format!("已连接服务器 {pid}"),
+            "profileId": pid,
+            "terminalSessionId": tid,
+        });
+    }
+
+    let request_id = uuid::Uuid::new_v4().to_string();
+    ctx.connect_tools.begin(request_id.clone());
     let _ = ctx.app.emit(
         "claude:tool-request",
         json!({
             "tool": "connectServer",
             "profileId": pid,
-            "requestId": uuid::Uuid::new_v4().to_string(),
+            "requestId": request_id,
         }),
     );
     emit_activity(
@@ -401,11 +430,29 @@ fn tool_connect(ctx: &ToolContext<'_>, args: &Value) -> Value {
             "displayCommand": format!("连接服务器 {pid}"),
         }),
     );
-    json!({
-        "success": true,
-        "message": format!("已请求连接服务器 {pid}，请在界面查看连接进度"),
-        "profileId": pid,
-    })
+
+    let wait_result = ctx.connect_tools.wait(&request_id, 120_000).await;
+    ctx.connect_tools.cleanup(&request_id);
+
+    match wait_result {
+        Ok(()) => {
+            let terminal_session_id = profile_has_connected_terminal(ctx, pid).or_else(|| {
+                ctx.runtime
+                    .find_terminal_session(pid, None)
+                    .map(|(tid, _, _)| tid)
+            });
+            let mut out = json!({
+                "success": true,
+                "message": format!("已连接服务器 {pid}"),
+                "profileId": pid,
+            });
+            if let Some(tid) = terminal_session_id {
+                out["terminalSessionId"] = json!(tid);
+            }
+            out
+        }
+        Err(e) => json!({ "success": false, "error": e, "profileId": pid }),
+    }
 }
 
 fn tool_disconnect(ctx: &ToolContext<'_>, args: &Value) -> Value {
@@ -450,7 +497,7 @@ fn tool_disconnect(ctx: &ToolContext<'_>, args: &Value) -> Value {
     })
 }
 
-fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
+async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let profile_id = args
         .get("profileId")
         .or_else(|| args.get("sessionId"))
@@ -535,12 +582,18 @@ fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     );
 
     // 等前端 xterm 标签接管后再等待输出，避免 Rust 阻塞时 UI 尚未写入 PTY
-    let _ = ctx.shell_tools.wait_until_started(&request_id, 4000);
+    let started = ctx.shell_tools.wait_until_started(&request_id, 4000).await;
+    if !started {
+        ctx.shell_tools.cleanup(&request_id);
+        return json!({
+            "success": false,
+            "error": "前端 Shell 标签未能在 4s 内接管命令执行，请确认终端已连接且 Shell 可见"
+        });
+    }
 
-    // 不再强制限制 wait_ms，由调用方决定；0 表示无限等待
-    let effective_wait = wait_ms;
-
-    let result = ctx.shell_tools.wait(&request_id, effective_wait);
+    // 前端收集输出需要额外时间（切换标签、稳定检测），Rust 侧多等 12s 避免提前超时
+    let rust_wait = wait_ms.saturating_add(12_000);
+    let result = ctx.shell_tools.wait(&request_id, rust_wait).await;
     ctx.shell_tools.cleanup(&request_id);
 
     match result {
@@ -613,7 +666,7 @@ fn build_connect_request(profile: &crate::runtime::ProfileSnapshot, terminal_ses
     }
 }
 
-fn tool_list_files(ctx: &ToolContext<'_>, args: &Value) -> Value {
+async fn tool_list_files(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let profile_id = args
         .get("profileId")
         .or_else(|| args.get("sessionId"))
@@ -629,17 +682,17 @@ fn tool_list_files(ctx: &ToolContext<'_>, args: &Value) -> Value {
         return json!({ "success": false, "error": "仅 SSH 支持远程文件列表" });
     }
     let request = build_connect_request(&profile, &format!("{pid}::fs"));
-    match tauri::async_runtime::block_on(terminal::list_remote_directory(
+    match terminal::list_remote_directory(
         request,
         path.to_string(),
         false,
-    )) {
+    ).await {
         Ok(entries) => json!({ "success": true, "path": path, "entries": entries }),
         Err(e) => json!({ "success": false, "error": e }),
     }
 }
 
-fn tool_read_file(ctx: &ToolContext<'_>, args: &Value) -> Value {
+async fn tool_read_file(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let profile_id = args
         .get("profileId")
         .or_else(|| args.get("sessionId"))
@@ -652,7 +705,7 @@ fn tool_read_file(ctx: &ToolContext<'_>, args: &Value) -> Value {
         return json!({ "success": false, "error": "未知 profileId" });
     };
     let request = build_connect_request(&profile, &format!("{pid}::fs"));
-    match tauri::async_runtime::block_on(terminal::read_remote_file(request, p.to_string(), false))
+    match terminal::read_remote_file(request, p.to_string(), false).await
     {
         Ok(content) => {
             let preview: String = content.chars().take(8000).collect();

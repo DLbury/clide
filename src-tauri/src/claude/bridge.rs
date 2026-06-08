@@ -476,7 +476,7 @@ async fn handle_connection(
             let text = msg.to_text().map_err(|e| e.to_string())?;
             let value: Value = serde_json::from_str(text).unwrap_or(json!({}));
 
-            let outbound = handle_mcp_message(&value, &app);
+            let outbound = handle_mcp_message(&value, &app).await;
             if let Some(response) = outbound.response {
                 write
                     .send(Message::Text(response.to_string().into()))
@@ -533,7 +533,7 @@ fn tools_list_changed_notification() -> Value {
     })
 }
 
-fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
+async fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
     let Some(method) = message.get("method").and_then(|v| v.as_str()) else {
         return McpOutbound {
             response: None,
@@ -627,15 +627,20 @@ fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
                 runtime: &state.runtime,
                 terminals: &state.terminals,
                 shell_tools: &state.shell_tools,
+                connect_tools: &state.connect_tools,
             };
-            let result = tools::execute_tool(&tool_ctx, name, &args);
+            let result = tools::execute_tool(&tool_ctx, name, &args).await;
+            let is_error = serde_json::from_str::<Value>(&result)
+                .ok()
+                .and_then(|v| v.get("success").and_then(|s| s.as_bool()).map(|b| !b))
+                .unwrap_or(false);
             McpOutbound {
                 response: Some(json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": {
                         "content": [{ "type": "text", "text": result }],
-                        "isError": result.contains("\"success\":false")
+                        "isError": is_error
                     }
                 })),
                 notifications: vec![],

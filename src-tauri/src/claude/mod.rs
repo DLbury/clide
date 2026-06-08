@@ -7,7 +7,7 @@ pub mod tools;
 
 pub use detect::{ClaudeDetectResult, ClaudeAutoDetectManager, detect_claude_binary, resolve_claude_path};
 pub use mcp_register::{
-    McpRegisterStatus, check_mcp_status, ensure_project_mcp_json, register_mcp,
+    McpRegisterStatus, McpRuntimeCache, check_mcp_status, ensure_project_mcp_json, register_mcp,
     sync_mcp_bridge_env, try_auto_ensure_project_mcp, try_auto_register_mcp,
     wait_for_mcp_ready,
 };

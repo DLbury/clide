@@ -287,6 +287,8 @@ export default function AITerminal() {
   activeConnectionIdRef.current = activeConnectionId
   const handleShellChangeRef = useRef<(shellId: string) => void>(() => {})
   const mcpShellCommandThisTurnRef = useRef(false)
+  /** MCP connectServer：profileId → requestId，等待 terminal:status 后 complete_connect_tool */
+  const pendingMcpConnectRef = useRef(new Map<string, string>())
   const activeAssistantIdRef = useRef<string | null>(null)
   const handleClaudeToolRequestRef = useRef<
     (payload: Record<string, unknown>) => void
@@ -887,6 +889,18 @@ export default function AITerminal() {
             setFolders(prev =>
               setSessionStatusInFolders(prev, profileSessionId!, 'connected')
             )
+            const connectRequestId = pendingMcpConnectRef.current.get(profileSessionId)
+            if (connectRequestId) {
+              pendingMcpConnectRef.current.delete(profileSessionId)
+              void import('@tauri-apps/api/core')
+                .then(({ invoke }) =>
+                  invoke('complete_connect_tool', {
+                    requestId: connectRequestId,
+                    success: true,
+                  })
+                )
+                .catch(() => {})
+            }
           }
           if (shouldLoadRemote && connectedSession) {
             void loadRemoteFiles(connectedSession, '~')
@@ -942,6 +956,19 @@ export default function AITerminal() {
             setFolders(prev =>
               setSessionStatusInFolders(prev, profileSessionId!, 'disconnected')
             )
+            const connectRequestId = pendingMcpConnectRef.current.get(profileSessionId)
+            if (connectRequestId) {
+              pendingMcpConnectRef.current.delete(profileSessionId)
+              void import('@tauri-apps/api/core')
+                .then(({ invoke }) =>
+                  invoke('complete_connect_tool', {
+                    requestId: connectRequestId,
+                    success: false,
+                    error: message,
+                  })
+                )
+                .catch(() => {})
+            }
           }
           void disconnectTerminal(event.sessionId).catch(() => {})
           offerPasswordRetryAfterAuthFailure(event.sessionId, message)
@@ -2630,10 +2657,61 @@ export default function AITerminal() {
       keepalivePendingClaudeRequests(activeConnectionIdRef.current, true)
     }
     if (tool === 'connectServer' && typeof payload.profileId === 'string') {
+      const profileId = payload.profileId
+      if (typeof payload.requestId === 'string') {
+        pendingMcpConnectRef.current.set(profileId, payload.requestId)
+        // 130s 后若仍未收到 terminal:status 事件，主动超时清理（Rust 侧 120s 超时）
+        const rid = payload.requestId
+        setTimeout(() => {
+          if (pendingMcpConnectRef.current.get(profileId) === rid) {
+            pendingMcpConnectRef.current.delete(profileId)
+            import('@tauri-apps/api/core')
+              .then(({ invoke }) =>
+                invoke('complete_connect_tool', {
+                  requestId: rid,
+                  success: false,
+                  error: '前端超时：130s 内未收到连接状态变更事件',
+                })
+              )
+              .catch(() => {})
+          }
+        }, 130_000)
+      }
       const session = foldersRef.current
         .flatMap(f => f.sessions)
-        .find(s => s.id === payload.profileId)
-      if (session) handleSessionConnect(session)
+        .find(s => s.id === profileId)
+      if (!session) {
+        if (typeof payload.requestId === 'string') {
+          pendingMcpConnectRef.current.delete(profileId)
+          void import('@tauri-apps/api/core')
+            .then(({ invoke }) =>
+              invoke('complete_connect_tool', {
+                requestId: payload.requestId as string,
+                success: false,
+                error: `未找到会话 profileId=${profileId}`,
+              })
+            )
+            .catch(() => {})
+        }
+      } else {
+        const existingConn = connectionsRef.current.find(c => c.session.id === profileId)
+        const alreadyConnected = existingConn?.shells.some(
+          s => s.terminalStatus === 'connected'
+        )
+        if (alreadyConnected && typeof payload.requestId === 'string') {
+          pendingMcpConnectRef.current.delete(profileId)
+          void import('@tauri-apps/api/core')
+            .then(({ invoke }) =>
+              invoke('complete_connect_tool', {
+                requestId: payload.requestId as string,
+                success: true,
+              })
+            )
+            .catch(() => {})
+        } else {
+          handleSessionConnect(session)
+        }
+      }
     }
     if (tool === 'disconnectServer' && typeof payload.profileId === 'string') {
       handleDisconnectSession(payload.profileId)

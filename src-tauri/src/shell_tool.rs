@@ -2,12 +2,16 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+const STALE_ENTRY_MS: u64 = 600_000; // 10 分钟未完成则视为孤儿，允许 GC 清理
+const ABSOLUTE_MAX_WAIT_MS: u64 = 600_000; // 即使 wait_ms=0，最多等 10 分钟
+
 struct PendingShellTool {
     started: bool,
     output: Option<String>,
     error: Option<String>,
     timed_out: bool,
     done: bool,
+    created_at: Instant,
 }
 
 /// Claude MCP `run_shell_command`：由前端 Shell 标签写入并回传输出，Rust 仅协调等待。
@@ -36,6 +40,7 @@ impl ShellToolCoordinator {
                 error: None,
                 timed_out: false,
                 done: false,
+                created_at: Instant::now(),
             },
         );
     }
@@ -47,7 +52,7 @@ impl ShellToolCoordinator {
     }
 
     /// 等待前端 Shell 标签确认已接管执行（避免 emit 后立刻 wait 而 UI 尚未写入）
-    pub fn wait_until_started(&self, request_id: &str, timeout_ms: u64) -> bool {
+    pub async fn wait_until_started(&self, request_id: &str, timeout_ms: u64) -> bool {
         let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(100));
         loop {
             {
@@ -62,7 +67,7 @@ impl ShellToolCoordinator {
             if Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(Duration::from_millis(20));
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 
@@ -87,13 +92,14 @@ impl ShellToolCoordinator {
         Ok(())
     }
 
-    pub fn wait(&self, request_id: &str, wait_ms: u64) -> Result<ShellToolResult, String> {
-        // wait_ms 为 0 时表示无限等待，由用户主动停止
-        let deadline_opt = if wait_ms == 0 {
-            None
+    pub async fn wait(&self, request_id: &str, wait_ms: u64) -> Result<ShellToolResult, String> {
+        // wait_ms 为 0 时表示由用户主动停止，但仍强制上界避免永久挂起
+        let effective_ms = if wait_ms == 0 {
+            ABSOLUTE_MAX_WAIT_MS
         } else {
-            Some(Instant::now() + Duration::from_millis(wait_ms))
+            wait_ms
         };
+        let deadline = Instant::now() + Duration::from_millis(effective_ms);
 
         loop {
             {
@@ -111,20 +117,32 @@ impl ShellToolCoordinator {
                     });
                 }
             }
-            if let Some(deadline) = deadline_opt {
-                if Instant::now() >= deadline {
-                    // 后端等待超时：由调用方决定如何对模型提示（不强制标记失败）
-                    return Ok(ShellToolResult {
-                        output: String::new(),
-                        timed_out: true,
-                    });
-                }
+            if Instant::now() >= deadline {
+                // 超时前尝试读取前端已写入的部分输出（可能已 complete 但竞态未捕获）
+                let partial = {
+                    let map = self.pending.lock();
+                    map.get(request_id)
+                        .and_then(|s| s.output.clone())
+                        .unwrap_or_default()
+                };
+                return Ok(ShellToolResult {
+                    output: partial,
+                    timed_out: true,
+                });
             }
-            std::thread::sleep(Duration::from_millis(80));
+            tokio::time::sleep(Duration::from_millis(80)).await;
         }
     }
 
     pub fn cleanup(&self, request_id: &str) {
         self.pending.lock().remove(request_id);
+    }
+
+    /// 清理超过 STALE_ENTRY_MS 未完成的孤儿条目，防止内存泄漏
+    pub fn gc_stale(&self) -> usize {
+        let mut map = self.pending.lock();
+        let before = map.len();
+        map.retain(|_id, slot| slot.done || slot.created_at.elapsed().as_millis() < STALE_ENTRY_MS as u128);
+        before - map.len()
     }
 }

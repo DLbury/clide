@@ -8,7 +8,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
+use parking_lot::Mutex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const MCP_SERVER_NAME: &str = "aiterm";
@@ -21,6 +23,49 @@ pub struct McpRegisterStatus {
     pub project_mcp_config_ready: bool,
     pub claude_project_registered: bool,
     pub ready: bool,
+    /// stdio MCP 进程能否列出工具（桥接运行后由预检更新）
+    #[serde(default)]
+    pub runtime_tools_ready: bool,
+    #[serde(default)]
+    pub runtime_tool_count: u32,
+    pub runtime_error: Option<String>,
+}
+
+/// 最近一次 MCP 运行时预检结果（供 UI 查询，避免每次 `claude_mcp_status` 拉起子进程）。
+#[derive(Default)]
+pub struct McpRuntimeCache {
+    tools_ready: AtomicBool,
+    tool_count: AtomicU32,
+    error: Mutex<Option<String>>,
+    checked_at: Mutex<Option<Instant>>,
+}
+
+impl McpRuntimeCache {
+    pub fn record_ok(&self, count: usize) {
+        self.tools_ready.store(true, Ordering::Relaxed);
+        self.tool_count.store(count.min(u32::MAX as usize) as u32, Ordering::Relaxed);
+        *self.error.lock() = None;
+        *self.checked_at.lock() = Some(Instant::now());
+    }
+
+    pub fn record_err(&self, err: String) {
+        self.tools_ready.store(false, Ordering::Relaxed);
+        self.tool_count.store(0, Ordering::Relaxed);
+        *self.error.lock() = Some(err);
+        *self.checked_at.lock() = Some(Instant::now());
+    }
+
+    pub fn apply_to_status(&self, status: &mut McpRegisterStatus, bridge_running: bool) {
+        status.runtime_tools_ready = self.tools_ready.load(Ordering::Relaxed);
+        status.runtime_tool_count = self.tool_count.load(Ordering::Relaxed);
+        status.runtime_error = self.error.lock().clone();
+        let file_ready = status.mcp_script_exists && status.project_mcp_config_ready;
+        if bridge_running {
+            status.ready = file_ready && status.runtime_tools_ready;
+        } else {
+            status.ready = file_ready;
+        }
+    }
 }
 
 fn resolve_node_command() -> String {
@@ -115,6 +160,8 @@ fn config_has_aiterm(content: &str) -> bool {
 pub fn check_mcp_status(
     paths: &McpBundlePaths,
     _claude_path: Option<String>,
+    runtime: Option<&McpRuntimeCache>,
+    bridge_running: bool,
 ) -> McpRegisterStatus {
     tracing::info!("Checking MCP status...");
     tracing::debug!("Launcher script path: {}", paths.launcher_script.display());
@@ -137,16 +184,21 @@ pub fn check_mcp_status(
     // 以本地 .mcp.json 是否就绪作为可用性的主判定。
     let claude_project_registered = project_mcp_config_ready;
 
-    let ready = mcp_script_exists && project_mcp_config_ready;
-    tracing::info!("MCP ready: {}", ready);
-
-    McpRegisterStatus {
+    let mut status = McpRegisterStatus {
         project_root: paths.display_root(),
         mcp_script_exists,
         project_mcp_config_ready,
         claude_project_registered,
-        ready,
+        ready: mcp_script_exists && project_mcp_config_ready,
+        runtime_tools_ready: false,
+        runtime_tool_count: 0,
+        runtime_error: None,
+    };
+    if let Some(cache) = runtime {
+        cache.apply_to_status(&mut status, bridge_running);
     }
+    tracing::info!("MCP ready: {}", status.ready);
+    status
 }
 
 /// 写入/更新应用数据目录下的 `.mcp.json`（可选写入当前桥接端口与 token）。
@@ -170,9 +222,10 @@ pub fn register_mcp(
     paths: &McpBundlePaths,
     _claude_path: Option<String>,
     bridge: Option<(u16, &str)>,
+    runtime: Option<&McpRuntimeCache>,
 ) -> Result<McpRegisterStatus, String> {
     ensure_project_mcp_json(paths, bridge)?;
-    Ok(check_mcp_status(paths, None))
+    Ok(check_mcp_status(paths, None, runtime, bridge.is_some()))
 }
 
 pub fn try_auto_ensure_project_mcp(paths: &McpBundlePaths) {
@@ -192,6 +245,7 @@ pub fn try_auto_register_mcp(
         paths,
         claude_path,
         Some((port, auth_token)),
+        None,
     ) {
         tracing::warn!("自动注册 MCP 失败: {err}");
     }
@@ -292,8 +346,12 @@ async fn preflight_stdio_tools_once(
     let mut init_ok = false;
 
     while tokio::time::Instant::now() < deadline {
-        let line = match tokio::time::timeout(Duration::from_millis(800), lines.next_line()).await {
-            Err(_) => return Err("MCP 预检读取超时".to_string()),
+        let read_budget = deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .min(Duration::from_millis(2000))
+            .max(Duration::from_millis(200));
+        let line = match tokio::time::timeout(read_budget, lines.next_line()).await {
+            Err(_) => continue,
             Ok(Err(e)) => return Err(format!("读取 MCP 预检输出失败: {e}")),
             Ok(Ok(Some(line))) => line,
             Ok(Ok(None)) => {
@@ -373,11 +431,15 @@ pub async fn wait_for_mcp_ready(
     port: u16,
     auth_token: &str,
     timeout: Duration,
+    runtime: Option<&McpRuntimeCache>,
 ) -> Result<usize, String> {
-    let _ = register_mcp(paths, None, Some((port, auth_token)))?;
+    let _ = register_mcp(paths, None, Some((port, auth_token)), runtime)?;
 
     let bridge_slice = timeout.min(Duration::from_secs(3));
-    let _ = bridge::wait_for_bridge_tools(port, auth_token, bridge_slice).await;
+    match bridge::wait_for_bridge_tools(port, auth_token, bridge_slice).await {
+        Ok(n) => tracing::info!("MCP bridge probe: {n} tools"),
+        Err(e) => tracing::warn!("MCP bridge probe failed: {e}"),
+    }
 
     let deadline = tokio::time::Instant::now() + timeout;
     let mut last_err = "MCP stdio 工具未就绪".to_string();
@@ -387,12 +449,18 @@ pub async fn wait_for_mcp_ready(
         match preflight_stdio_tools_once(paths, port, auth_token, attempt).await {
             Ok(n) if n > 0 => {
                 tracing::info!("MCP preflight: {n} tools ready");
+                if let Some(cache) = runtime {
+                    cache.record_ok(n);
+                }
                 return Ok(n);
             }
             Ok(_) => last_err = "MCP tools/list 为空".to_string(),
             Err(e) => last_err = e,
         }
         tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+    if let Some(cache) = runtime {
+        cache.record_err(last_err.clone());
     }
     Err(last_err)
 }

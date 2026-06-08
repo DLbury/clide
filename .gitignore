@@ -26,6 +26,7 @@ Thumbs.db
 # Local tooling
 .claude/
 .spec-workflow/
+.tauri-dev.config.json
 
 # Debug
 npm-debug.log*

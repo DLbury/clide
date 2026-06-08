@@ -73,15 +73,21 @@ export function useClaudeCode({
   const runAutoMcpRegister = useCallback(async (force = false) => {
     if (!isTauriRuntime()) return null
     if (!force && mcpAutoAttemptedRef.current) return null
-    mcpAutoAttemptedRef.current = true
     setMcpRegistering(true)
     setMcpRegisterError(null)
     try {
       const status = await registerClaudeMcp(claudePathRef.current || undefined)
       setMcpStatus(status)
       if (!status.ready) {
-        setMcpRegisterError('MCP 脚本或 .mcp.json 未就绪')
+        const detail =
+          status.runtimeError ??
+          (status.projectMcpConfigReady
+            ? 'MCP 运行时工具未就绪（stdio 预检失败）'
+            : 'MCP 脚本或 .mcp.json 未就绪')
+        setMcpRegisterError(detail)
+        return null
       }
+      mcpAutoAttemptedRef.current = true
       return status
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -106,7 +112,24 @@ export function useClaudeCode({
 
   const warmMcpToolsInBackground = useCallback(() => {
     if (!isTauriRuntime() || !enabled) return
-    void withTimeout(waitClaudeMcpTools(10_000), 12_000, '预热 MCP 工具').catch(() => {})
+    void withTimeout(waitClaudeMcpTools(10_000), 12_000, '预热 MCP 工具')
+      .then(count => {
+        setMcpStatus(prev =>
+          prev
+            ? {
+                ...prev,
+                runtimeToolsReady: true,
+                runtimeToolCount: count,
+                runtimeError: null,
+                ready: prev.projectMcpConfigReady && prev.mcpScriptExists,
+              }
+            : prev
+        )
+      })
+      .catch(err => {
+        const msg = err instanceof Error ? err.message : String(err)
+        setMcpRegisterError(prev => prev ?? `MCP 工具预热失败: ${msg}`)
+      })
   }, [enabled])
 
   const ensureStreamReady = useCallback(async () => {
