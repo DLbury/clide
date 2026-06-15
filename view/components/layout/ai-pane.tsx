@@ -48,6 +48,10 @@ interface AiPaneProps {
   onExecuteCommand: (command: string) => void
   onClearChat: () => void
   claudePath?: string
+  /** 终端等待密码/交互输入时显示的提示信息 */
+  interactivePrompt?: { sessionId: string; command: string; prompt: string } | null
+  onPromptDismiss?: () => void
+  onPromptCancel?: (sessionId: string) => void
 }
 
 function serializeAssistantMessage(msg: ChatMessage): string {
@@ -90,6 +94,9 @@ export function AiPane({
   onExecuteCommand,
   onClearChat,
   claudePath,
+  interactivePrompt,
+  onPromptDismiss,
+  onPromptCancel,
 }: AiPaneProps) {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -296,6 +303,34 @@ export function AiPane({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {interactivePrompt && (
+        <div className="mx-4 mt-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs space-y-2">
+          <div className="font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1">
+            <span>🔒 终端正在等待密码或交互输入</span>
+          </div>
+          <div className="font-mono text-muted-foreground truncate">
+            命令: {interactivePrompt.command}
+          </div>
+          <div className="text-muted-foreground">
+            请在左侧 Shell 标签中手动输入。命令完成后会自动继续。
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              className="px-2 py-1 rounded bg-amber-600 text-white text-xs hover:bg-amber-700"
+              onClick={() => onPromptCancel?.(interactivePrompt.sessionId)}
+            >
+              取消命令 (Ctrl+C)
+            </button>
+            <button
+              className="px-2 py-1 rounded border border-amber-500/40 text-xs hover:bg-amber-500/10"
+              onClick={onPromptDismiss}
+            >
+              密码已输入，继续
+            </button>
+          </div>
         </div>
       )}
 

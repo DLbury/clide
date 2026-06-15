@@ -99,6 +99,41 @@ export function registerShellToolKeepaliveTouch(fn: () => void): () => void {
   }
 }
 
+/** 交互提示事件：密码/passphrase/用户名等需要用户手动输入的场景 */
+type InteractivePromptEvent = {
+  sessionId: string
+  requestId: string
+  command: string
+  prompt: string
+}
+let shellToolPromptListener: ((e: InteractivePromptEvent) => void) | null = null
+export function registerShellToolPromptListener(
+  fn: (e: InteractivePromptEvent) => void
+): () => void {
+  shellToolPromptListener = fn
+  return () => {
+    if (shellToolPromptListener === fn) shellToolPromptListener = null
+  }
+}
+
+/** 取消指定终端会话正在执行的 shell 工具命令（发送 Ctrl+C + abort） */
+export function cancelShellToolForSession(sessionId: string): void {
+  const ac = shellSessionAbort.get(sessionId)
+  if (ac) ac.abort()
+  void submitTerminalInput(sessionId, '\x03').catch(() => {})
+}
+
+/** 检测终端尾部是否出现交互提示（密码、passphrase、用户名等） */
+const INTERACTIVE_PROMPT_RE =
+  /\[sudo\]\s*password|password\s*(for|[:：])|enter\s+passphrase|username\s*[:：]|login\s*[:：]|are you sure you want to continue connecting|fingerprint|verification code|2fa|otp|press enter to continue/i
+
+function detectInteractivePrompt(tail: string): string | null {
+  const cleaned = stripAnsi(tail).replace(/\x00/g, '')
+  const last = cleaned.slice(-400)
+  const m = INTERACTIVE_PROMPT_RE.exec(last)
+  return m ? m[0] : null
+}
+
 const shellSessionAbort = new Map<string, AbortController>()
 
 export interface ShellToolRequestPayload {
@@ -132,9 +167,7 @@ export async function executeShellToolInTab(
   }
   activeShellToolRequests.add(payload.requestId)
 
-  const isSerial = payload.sessionType === 'serial'
   const waitMs = payload.waitMs ?? 30_000
-  const stableTarget = isSerial ? 3 : 8
   const sessionId = payload.terminalSessionId
 
   const SAFETY_TIMEOUT_MS =
@@ -182,13 +215,15 @@ export async function executeShellToolInTab(
     await new Promise<void>(resolve => setTimeout(resolve, 300))
 
     const hasTimeout = waitMs > 0
-    const deadline = hasTimeout ? Date.now() + waitMs : null
-    const safetyDeadline = useSafetyTimeout ? Date.now() + SAFETY_TIMEOUT_MS : null
+    let deadline = hasTimeout ? Date.now() + waitMs : null
+    let safetyDeadline = useSafetyTimeout ? Date.now() + SAFETY_TIMEOUT_MS : null
     let lastLen = baselineOffset
-    let stableTicks = 0
     let sawNewOutput = false
     let sawMeaningfulOutput = false
+    let sawPrompt = false
+    let promptEmitted = ''
     let lastKeepaliveTouch = Date.now()
+    const PROMPT_EXTEND_MS = 3 * 60_000
 
     while (!abort.signal.aborted && (hasTimeout ? Date.now() < deadline! : true)) {
       await new Promise<void>(resolve => setTimeout(resolve, 150))
@@ -206,22 +241,34 @@ export async function executeShellToolInTab(
         sawMeaningfulOutput = true
       }
 
+      // 1. Shell 提示符 = 唯一可靠的完成信号
       if (sawNewOutput && looksLikeShellPrompt(delta)) {
+        sawPrompt = true
         await new Promise<void>(resolve => setTimeout(resolve, 200))
         break
       }
 
+      // 2. 交互提示检测：延长等待、通知 UI、继续轮询（绝不提前 break）
+      const promptHit = detectInteractivePrompt(delta)
+      if (promptHit && promptEmitted !== promptHit) {
+        promptEmitted = promptHit
+        if (hasTimeout && deadline) deadline += PROMPT_EXTEND_MS
+        if (safetyDeadline) safetyDeadline += PROMPT_EXTEND_MS
+        shellToolPromptListener?.({
+          sessionId,
+          requestId: payload.requestId,
+          command: line,
+          prompt: promptHit,
+        })
+      }
+
+      // 3. 硬超时
       if (safetyDeadline && Date.now() >= safetyDeadline) {
         break
       }
 
-      if (currentLen === lastLen) {
-        if (sawMeaningfulOutput) stableTicks += 1
-        if (sawMeaningfulOutput && stableTicks >= stableTarget) {
-          break
-        }
-      } else {
-        stableTicks = 0
+      // 仅跟踪长度变化（不再有 stableTicks 提前返回）
+      if (currentLen !== lastLen) {
         lastLen = currentLen
       }
     }
@@ -249,8 +296,10 @@ export async function executeShellToolInTab(
       output = ''
     }
     const isTimeout = hasTimeout && deadline !== null && Date.now() >= deadline
-    const onlyEchoNoResult = sawNewOutput && !sawMeaningfulOutput && !looksLikeShellPrompt(output)
-    const stillRunning = onlyEchoNoResult || (isTimeout && !sawMeaningfulOutput)
+    const onlyEchoNoResult = sawNewOutput && !sawMeaningfulOutput && !sawPrompt
+    // 看到输出但从未检测到 shell 提示符 = 命令可能仍在运行
+    const stillRunning =
+      onlyEchoNoResult || (sawMeaningfulOutput && !sawPrompt) || (isTimeout && !sawPrompt)
     const finalOutput = output || (stillRunning ? '' : '(无输出)')
 
     await completeShellTool(payload.requestId, finalOutput, null, isTimeout || stillRunning)

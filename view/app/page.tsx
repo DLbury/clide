@@ -96,7 +96,12 @@ import {
   isRemoteConnectionRefusal,
 } from '@/lib/extract-shell-command'
 import { isStaleClaudeSessionError } from '@/lib/claude-session'
-import { executeShellToolInTab, registerShellToolKeepaliveTouch } from '@/lib/shell-tool-executor'
+import {
+  cancelShellToolForSession,
+  executeShellToolInTab,
+  registerShellToolKeepaliveTouch,
+  registerShellToolPromptListener,
+} from '@/lib/shell-tool-executor'
 import {
   applyClaudeStreamEvent,
   applyToolActivityToMessage,
@@ -270,6 +275,13 @@ export default function AITerminal() {
   const [terminalClearSignals, setTerminalClearSignals] = useState<Record<string, number>>({})
   const [toolActivities, setToolActivities] = useState<ToolActivityEvent[]>([])
   const [passwordPrompt, setPasswordPrompt] = useState<PendingPasswordConnect | null>(null)
+  const [interactivePrompt, setInteractivePrompt] = useState<{
+    sessionId: string
+    command: string
+    prompt: string
+  } | null>(null)
+  const interactivePromptRef = useRef(interactivePrompt)
+  interactivePromptRef.current = interactivePrompt
   const [followTerminalCwd, setFollowTerminalCwd] = useState(loadFollowTerminalCwd)
   const [fileRootMode, setFileRootMode] = useState(loadFileRootMode)
   const [transferBusy, setTransferBusy] = useState(false)
@@ -326,6 +338,14 @@ export default function AITerminal() {
   useEffect(() => {
     return registerShellToolKeepaliveTouch(() => {
       keepalivePendingClaudeRequests(activeConnectionIdRef.current, true)
+    })
+  }, [])
+
+  useEffect(() => {
+    return registerShellToolPromptListener(e => {
+      setInteractivePrompt(prev =>
+        prev && prev.sessionId === e.sessionId ? prev : e
+      )
     })
   }, [])
   const claudeCodeRef = useRef<ReturnType<typeof useClaudeCode> | null>(null)
@@ -2801,6 +2821,14 @@ export default function AITerminal() {
         if (event.status === 'running' || event.status === 'completed' || event.status === 'error') {
           keepalivePendingClaudeRequests(activeConnectionIdRef.current, true)
         }
+        // 命令完成/出错时自动清除交互提示横幅
+        if (
+          (event.status === 'completed' || event.status === 'error') &&
+          interactivePromptRef.current &&
+          event.terminalSessionId === interactivePromptRef.current.sessionId
+        ) {
+          setInteractivePrompt(null)
+        }
         // shell_command 已由 Claude stream 的 tool_start/tool_result 渲染，避免重复插入工具块
         return
       }
@@ -3036,6 +3064,12 @@ export default function AITerminal() {
               onExecuteCommand={handleAiExecuteCommand}
               onClearChat={handleClearAiChat}
               claudePath={aiSettings.claudePath || undefined}
+              interactivePrompt={interactivePrompt}
+              onPromptDismiss={() => setInteractivePrompt(null)}
+              onPromptCancel={sid => {
+                cancelShellToolForSession(sid)
+                setInteractivePrompt(null)
+              }}
             />
           </ResizablePanel>
         ) : (

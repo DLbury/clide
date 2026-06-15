@@ -57,12 +57,12 @@ pub fn get_available_tools() -> Vec<Value> {
         ),
         tool_def(
             "runShellCommand",
-            "在 UI 左侧 Shell 执行命令（与手动输入相同 PTY）。注意：如果返回 output 为空或'(无输出)'，说明命令可能仍在执行中，请调用 getTerminalContext 查询实际终端输出。sudo 等交互密码：用户在左侧终端自行输入，AI 不得索要或嵌入密码。",
+            "在 UI 左侧 Shell 执行命令（与手动输入相同 PTY）。命令会等待 shell 提示符出现才返回，不会因输出暂停而提前完成。若检测到密码/交互提示（sudo/passphrase 等），前端会通知用户在终端手动输入，命令继续等待直到用户完成。若返回 incomplete/timed_out，请调用 getTerminalContext 查看最新输出。AI 不得索要或嵌入密码。",
             object_schema(json!({
                 "profileId": { "type": "string", "description": "服务器 profile ID" },
                 "command": { "type": "string", "description": "Shell 命令" },
                 "shellId": { "type": "string", "description": "可选 Shell 标签 ID" },
-                "waitMs": { "type": "number", "description": "等待输出毫秒，默认 30000（30秒）。注意：即使超时也应调用 getTerminalContext 查看实际输出" }
+                "waitMs": { "type": "number", "description": "等待输出毫秒，默认 30000（30秒）。0 = 无限等待（最多 10 分钟）。即使超时也应调用 getTerminalContext 查看实际输出" }
             }), &["profileId", "command"]),
         ),
         tool_def(
