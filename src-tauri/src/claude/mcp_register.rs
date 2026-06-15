@@ -56,12 +56,12 @@ impl McpRuntimeCache {
         *self.checked_at.lock() = Some(Instant::now());
     }
 
-    pub fn apply_to_status(&self, status: &mut McpRegisterStatus, bridge_running: bool) {
+    pub fn apply_to_status(&self, status: &mut McpRegisterStatus, bridge_running: bool, strict_runtime: bool) {
         status.runtime_tools_ready = self.tools_ready.load(Ordering::Relaxed);
         status.runtime_tool_count = self.tool_count.load(Ordering::Relaxed);
         status.runtime_error = self.error.lock().clone();
         let file_ready = status.mcp_script_exists && status.project_mcp_config_ready;
-        if bridge_running {
+        if bridge_running && strict_runtime {
             status.ready = file_ready && status.runtime_tools_ready;
         } else {
             status.ready = file_ready;
@@ -193,6 +193,7 @@ pub fn check_mcp_status(
     _claude_path: Option<String>,
     runtime: Option<&McpRuntimeCache>,
     bridge_running: bool,
+    strict_runtime: bool,
 ) -> McpRegisterStatus {
     tracing::info!("Checking MCP status...");
     tracing::debug!("Launcher script path: {}", paths.launcher_script.display());
@@ -228,7 +229,7 @@ pub fn check_mcp_status(
         runtime_error: None,
     };
     if let Some(cache) = runtime {
-        cache.apply_to_status(&mut status, bridge_running);
+        cache.apply_to_status(&mut status, bridge_running, strict_runtime);
     }
     tracing::info!("MCP ready: {}", status.ready);
     status
@@ -259,7 +260,7 @@ pub fn register_mcp(
 ) -> Result<McpRegisterStatus, String> {
     ensure_project_mcp_json(paths, bridge)?;
     try_claude_mcp_add(claude_path);
-    Ok(check_mcp_status(paths, None, runtime, bridge.is_some()))
+    Ok(check_mcp_status(paths, None, runtime, bridge.is_some(), false))
 }
 
 pub fn try_auto_ensure_project_mcp(paths: &McpBundlePaths) {

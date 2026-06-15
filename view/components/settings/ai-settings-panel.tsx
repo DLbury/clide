@@ -92,7 +92,7 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
           <p className="text-muted-foreground">
             IDE 桥接在 AI 启用时自动启动；MCP 配置写入应用数据目录 .mcp.json，桥接启动时自动同步。
           </p>
-          {(!mcpStatus.ready || !mcpStatus.claudeProjectRegistered) && (
+          {(!mcpStatus.projectMcpConfigReady || !mcpStatus.mcpScriptExists) && (
             <button
               type="button"
               disabled={mcpBusy}

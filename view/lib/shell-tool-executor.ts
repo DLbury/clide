@@ -91,6 +91,19 @@ function stripAnsi(output: string): string {
     .replace(/\x00/g, '')
 }
 
+/** 终端输出是否包含命令回显以外的实质内容 */
+function hasMeaningfulShellOutput(delta: string, commandLine: string): boolean {
+  const cleaned = stripAnsi(delta).trim()
+  const cmd = commandLine.trim()
+  if (!cleaned) return false
+  const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean)
+  const beyondEcho = lines.filter(l => l !== cmd).join('\n').trim()
+  return beyondEcho.length > 0
+}
+
+/** 同一终端上一条 AI shell 命令仍在等待时，新命令先发送 Ctrl+C 打断 */
+const runningShellBySession = new Map<string, string>()
+
 export interface ShellToolRequestPayload {
   requestId: string
   terminalSessionId: string
@@ -157,6 +170,15 @@ export async function executeShellToolInTab(
 
   try {
     await payload.beforeExecute?.()
+
+    const prevRequestId = runningShellBySession.get(sessionId)
+    if (prevRequestId && prevRequestId !== payload.requestId) {
+      console.log(`[ShellTool] Interrupting previous command on ${sessionId}: ${prevRequestId}`)
+      await submitTerminalInput(sessionId, '\x03')
+      await new Promise<void>(resolve => setTimeout(resolve, 300))
+    }
+    runningShellBySession.set(sessionId, payload.requestId)
+
     // 先记录写入前缓冲位置，避免快命令在 submit 后瞬间输出导致被漏掉
     const baselineLen = getTerminalOutputBuffer(sessionId).length
 
@@ -180,6 +202,7 @@ export async function executeShellToolInTab(
     let lastLen = getTerminalOutputBuffer(sessionId).length
     let stableTicks = 0
     let sawNewOutput = false
+    let sawMeaningfulOutput = false
 
     console.log(`[ShellTool] Waiting for output${hasTimeout ? ` (timeout: ${waitMs}ms)` : ' (no timeout)'}${useSafetyTimeout ? `, safety cutoff: ${SAFETY_TIMEOUT_MS}ms` : ''}...`)
 
@@ -189,6 +212,9 @@ export async function executeShellToolInTab(
       const len = buf.length
       const delta = buf.slice(baselineLen)
       if (!sawNewOutput && len > baselineLen) sawNewOutput = true
+      if (!sawMeaningfulOutput && hasMeaningfulShellOutput(delta, line)) {
+        sawMeaningfulOutput = true
+      }
 
       // 检测提示符出现（命令执行完成的标志）
       if (sawNewOutput && looksLikeShellPrompt(delta)) {
@@ -205,9 +231,9 @@ export async function executeShellToolInTab(
       }
 
       if (len === lastLen) {
-        // 没有任何新增输出时不提前判稳，避免快命令竞态返回空
-        if (sawNewOutput) stableTicks += 1
-        if (sawNewOutput && stableTicks >= stableTarget) {
+        // 仅有命令回显、尚无实质输出时不判稳，避免长任务被误判为空输出
+        if (sawMeaningfulOutput) stableTicks += 1
+        if (sawMeaningfulOutput && stableTicks >= stableTarget) {
           console.log(`[ShellTool] Output stabilized after ${stableTicks} ticks`)
           break
         }
@@ -230,15 +256,17 @@ export async function executeShellToolInTab(
       output = ''
     }
     const isTimeout = hasTimeout && deadline !== null && Date.now() >= deadline
-    const finalOutput = output || '(无输出)'
+    const onlyEchoNoResult = sawNewOutput && !sawMeaningfulOutput && !looksLikeShellPrompt(output)
+    const stillRunning = onlyEchoNoResult || (isTimeout && !sawMeaningfulOutput)
+    const finalOutput = output || (stillRunning ? '' : '(无输出)')
 
-    if (isTimeout) {
-      console.log(`[ShellTool] Execution timed out but returning collected output. Length: ${output.length}`)
+    if (isTimeout || stillRunning) {
+      console.log(`[ShellTool] Execution still running or timed out. Length: ${output.length}, onlyEcho: ${onlyEchoNoResult}`)
     } else {
       console.log(`[ShellTool] Execution completed. Output length: ${output.length}, preview: ${output.substring(0, 100)}...`)
     }
 
-    await completeShellTool(payload.requestId, finalOutput, null, isTimeout)
+    await completeShellTool(payload.requestId, finalOutput, null, isTimeout || stillRunning)
     rememberCompletedShellTool(payload.requestId)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -251,5 +279,8 @@ export async function executeShellToolInTab(
     rememberCompletedShellTool(payload.requestId)
   } finally {
     activeShellToolRequests.delete(payload.requestId)
+    if (runningShellBySession.get(sessionId) === payload.requestId) {
+      runningShellBySession.delete(sessionId)
+    }
   }
 }

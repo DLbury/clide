@@ -128,6 +128,7 @@ fn claude_mcp_status(
         claude_path,
         Some(state.mcp_runtime.as_ref()),
         bridge_running,
+        true,
     ))
 }
 

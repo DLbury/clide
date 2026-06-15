@@ -622,10 +622,13 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
                 "command": display_cmd,
                 "output": preview,
             });
-            if outcome.timed_out {
+            let output_empty = preview.trim().is_empty() || preview.trim() == "(无输出)";
+            if outcome.timed_out || output_empty {
                 result["incomplete"] = json!(true);
                 result["status"] = json!("running");
-                result["message"] = json!("命令可能仍在运行，请稍后调用 getTerminalContext 查看最新输出。");
+                result["message"] = json!(
+                    "命令可能仍在运行或尚无输出，请稍后调用 getTerminalContext 查看最新输出。"
+                );
                 result["nextAction"] = json!("poll_getTerminalContext");
             }
             result
