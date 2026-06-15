@@ -412,6 +412,16 @@ fn terminal_is_connected(state: State<'_, AppState>, session_id: String) -> Resu
 }
 
 #[tauri::command]
+fn terminal_buffer_len(session_id: String) -> Result<usize, String> {
+    Ok(crate::terminal::buffer_len(&session_id))
+}
+
+#[tauri::command]
+fn terminal_buffer_read_since(session_id: String, offset: usize) -> Result<String, String> {
+    Ok(crate::terminal::read_since(&session_id, offset))
+}
+
+#[tauri::command]
 async fn terminal_list_directory(
     request: terminal::ConnectRequest,
     path: String,
@@ -582,6 +592,8 @@ pub fn run() {
             terminal_resize,
             terminal_disconnect,
             terminal_is_connected,
+            terminal_buffer_len,
+            terminal_buffer_read_since,
             terminal_list_directory,
             terminal_read_file,
             terminal_write_file,

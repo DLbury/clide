@@ -89,6 +89,7 @@ export function LiveTerminal({
       lineHeight: 1.2,
       fontFamily: 'Consolas, "Courier New", monospace',
       convertEol: false,
+      scrollback: 8000,
       theme: isDark
         ? {
             background: '#1e1e1e',
@@ -138,26 +139,45 @@ export function LiveTerminal({
     }
   }, [isDark, fit, scheduleFit])
 
-  const syncBufferToTerm = useCallback(() => {
-    const term = termRef.current
-    if (!term) return
-    const buffered = getTerminalOutputBuffer(sessionId)
-    if (buffered.length <= bufferSyncedRef.current) return
-    term.write(buffered.slice(bufferSyncedRef.current))
-    bufferSyncedRef.current = buffered.length
-  }, [sessionId])
-
   /** 从滚动缓冲完整重绘 xterm（切换标签 / 漏帧时），必须先 clear 再 write，避免重复叠加 */
   const replayBufferToTerm = useCallback(() => {
     const term = termRef.current
     if (!term) return
     const buffered = getTerminalOutputBuffer(sessionId)
     term.clear()
-    if (buffered) {
-      term.write(buffered)
-    }
     bufferSyncedRef.current = buffered.length
+    if (!buffered) return
+    // 分块写入避免主线程长时间阻塞（缓冲可达 512KB）
+    const CHUNK = 32 * 1024
+    if (buffered.length <= CHUNK) {
+      term.write(buffered)
+      return
+    }
+    let offset = 0
+    const writeNext = () => {
+      if (offset >= buffered.length) return
+      const end = Math.min(offset + CHUNK, buffered.length)
+      termRef.current?.write(buffered.slice(offset, end))
+      offset = end
+      if (offset < buffered.length) {
+        setTimeout(writeNext, 0)
+      }
+    }
+    writeNext()
   }, [sessionId])
+
+  const syncBufferToTerm = useCallback(() => {
+    const term = termRef.current
+    if (!term) return
+    const buffered = getTerminalOutputBuffer(sessionId)
+    if (buffered.length < bufferSyncedRef.current) {
+      replayBufferToTerm()
+      return
+    }
+    if (buffered.length <= bufferSyncedRef.current) return
+    term.write(buffered.slice(bufferSyncedRef.current))
+    bufferSyncedRef.current = buffered.length
+  }, [sessionId, replayBufferToTerm])
 
   useEffect(() => {
     if (!termReady) return

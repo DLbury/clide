@@ -620,16 +620,51 @@ async fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
             };
             tracing::info!("IDE MCP: tools/call {name}");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            let state = app.state::<AppState>();
-            let tool_ctx = ToolContext {
-                app,
-                ide_context: &state.ide_context,
-                runtime: &state.runtime,
-                terminals: &state.terminals,
-                shell_tools: &state.shell_tools,
-                connect_tools: &state.connect_tools,
+            let app_owned = app.clone();
+            let name_owned = name.to_string();
+            let id_for_task = id.clone();
+            // 工具执行绝对上界：防止 hang 住的任务永久占用 WebSocket 处理协程
+            const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(660);
+            let task_result = tokio::time::timeout(
+                TOOL_CALL_TIMEOUT,
+                tokio::spawn(async move {
+                    let state = app_owned.state::<AppState>();
+                    let tool_ctx = ToolContext {
+                        app: &app_owned,
+                        ide_context: &state.ide_context,
+                        runtime: &state.runtime,
+                        terminals: &state.terminals,
+                        shell_tools: &state.shell_tools,
+                        connect_tools: &state.connect_tools,
+                    };
+                    tools::execute_tool(&tool_ctx, &name_owned, &args).await
+                }),
+            )
+            .await;
+            let result = match task_result {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    return McpOutbound {
+                        response: Some(json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32603, "message": format!("tool task join error: {e}") }
+                        })),
+                        notifications: vec![],
+                    };
+                }
+                Err(_) => {
+                    return McpOutbound {
+                        response: Some(json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32603, "message": format!("工具执行超时（{}s）", TOOL_CALL_TIMEOUT.as_secs()) }
+                        })),
+                        notifications: vec![],
+                    };
+                }
             };
-            let result = tools::execute_tool(&tool_ctx, name, &args).await;
+            let _ = id_for_task;
             let is_error = serde_json::from_str::<Value>(&result)
                 .ok()
                 .and_then(|v| v.get("success").and_then(|s| s.as_bool()).map(|b| !b))

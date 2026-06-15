@@ -3,7 +3,8 @@ mod command_prep;
 pub use command_prep::prepare_command_for_pty;
 mod local;
 mod manager;
-mod output_buffer;
+pub mod output_buffer;
+mod output_emit;
 pub mod remote_fs;
 mod remote_stats;
 mod ssh;
@@ -11,8 +12,9 @@ mod ssh_auth;
 mod telnet;
 mod serial;
 
+pub use output_emit::TerminalOutputEvent;
 pub use manager::{push_terminal_display, TerminalManager};
-pub use output_buffer::tail_snippet;
+pub use output_buffer::{buffer_len, read_since, tail_snippet};
 pub use remote_fs::{
     delete_path as delete_remote_path,
     get_cwd as get_remote_cwd,

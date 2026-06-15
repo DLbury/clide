@@ -1,5 +1,5 @@
 use super::channels::TerminalChannels;
-use super::output_buffer;
+use super::output_emit;
 use super::ConnectRequest;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -9,13 +9,6 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TerminalOutputEvent {
-    session_id: String,
-    data: String,
-}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,14 +150,7 @@ fn run_pty_reader(
             }
             Ok(n) => {
                 let text = String::from_utf8_lossy(&buf[..n]).into_owned();
-                output_buffer::append_terminal_output(&session_id, &text);
-                let _ = app.emit(
-                    "terminal:output",
-                    TerminalOutputEvent {
-                        session_id: session_id.clone(),
-                        data: text,
-                    },
-                );
+                output_emit::append_and_emit(&app, &session_id, &text);
             }
             Err(e) => {
                 emit_status("error", Some(format!("读取 PTY 输出失败: {e}")));

@@ -1,5 +1,5 @@
 use super::channels::TerminalChannels;
-use super::output_buffer;
+use super::output_emit;
 use super::ConnectRequest;
 use russh::ChannelMsg;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,13 +7,6 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TerminalOutputEvent {
-    session_id: String,
-    data: String,
-}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,14 +103,7 @@ async fn run_ssh_session(
         match tokio::time::timeout(Duration::from_millis(100), channel.wait()).await {
             Ok(Some(ChannelMsg::Data { ref data })) => {
                 let text = String::from_utf8_lossy(data).into_owned();
-                output_buffer::append_terminal_output(&session_id, &text);
-                let _ = app.emit(
-                    "terminal:output",
-                    TerminalOutputEvent {
-                        session_id: session_id.clone(),
-                        data: text,
-                    },
-                );
+                output_emit::append_and_emit(&app, &session_id, &text);
             }
             Ok(Some(ChannelMsg::ExitStatus { .. })) | Ok(None) => {
                 emit_status("disconnected", None);

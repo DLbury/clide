@@ -1,5 +1,6 @@
 use super::channels::TerminalChannels;
 use super::output_buffer;
+use super::output_emit::{self};
 use super::{local, serial, ssh, telnet, ConnectRequest};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -11,29 +12,15 @@ use tauri::{AppHandle, Emitter};
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TerminalStatusEvent {
+pub struct TerminalStatusEvent {
     session_id: String,
     status: String,
     error: Option<String>,
 }
 
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalOutputEvent {
-    pub session_id: String,
-    pub data: String,
-}
-
 /// 将文本写入会话缓冲并推送到前端 xterm（用于 Claude 工具执行等场景的可视反馈）。
 pub fn push_terminal_display(app: &AppHandle, session_id: &str, data: &str) {
-    output_buffer::append_terminal_output(session_id, data);
-    let _ = app.emit(
-        "terminal:output",
-        TerminalOutputEvent {
-            session_id: session_id.to_string(),
-            data: data.to_string(),
-        },
-    );
+    output_emit::append_and_emit(app, session_id, data);
 }
 
 struct ActiveTerminal {
@@ -133,6 +120,7 @@ impl TerminalManager {
         let removed = self.sessions.lock().remove(session_id);
         if let Some(active) = removed {
             active.abort.store(true, Ordering::Relaxed);
+            output_emit::flush_session(app, session_id);
             let _ = app.emit(
                 "terminal:status",
                 TerminalStatusEvent {

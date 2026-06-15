@@ -1,5 +1,5 @@
 use super::channels::TerminalChannels;
-use super::output_buffer;
+use super::output_emit;
 use super::ConnectRequest;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -8,13 +8,6 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_serial::{DataBits, FlowControl, Parity, SerialPortBuilderExt, StopBits};
-
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TerminalOutputEvent {
-    session_id: String,
-    data: String,
-}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,14 +110,7 @@ async fn run_serial_session(
             }
             Ok(Ok(n)) => {
                 let text = String::from_utf8_lossy(&buf[..n]).into_owned();
-                output_buffer::append_terminal_output(&session_id, &text);
-                let _ = app.emit(
-                    "terminal:output",
-                    TerminalOutputEvent {
-                        session_id: session_id.clone(),
-                        data: text,
-                    },
-                );
+                output_emit::append_and_emit(&app, &session_id, &text);
             }
             Ok(Err(e)) => {
                 emit_status("error", Some(format!("读取串口输出失败: {e}")));

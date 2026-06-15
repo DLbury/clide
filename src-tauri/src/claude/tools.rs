@@ -592,7 +592,7 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     }
 
     // 前端收集输出需要额外时间（切换标签、稳定检测），Rust 侧多等 12s 避免提前超时
-    let rust_wait = wait_ms.saturating_add(12_000);
+    let rust_wait = wait_ms.saturating_add(12_000).min(360_000);
     let result = ctx.shell_tools.wait(&request_id, rust_wait).await;
     ctx.shell_tools.cleanup(&request_id);
 

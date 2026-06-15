@@ -2,6 +2,15 @@ import type { ClaudeStreamEvent } from '@/lib/claude-client'
 import type { ChatMessage, ChatMessagePart, ChatTaskPart, ChatToolPart } from '@/lib/types'
 import type { ToolActivityEvent } from '@/lib/runtime-sync'
 
+/** 工具输出/单条文本最大字符数，防止巨型日志撑爆前端内存 */
+const MAX_TOOL_OUTPUT_CHARS = 15_000
+const MAX_REASONING_CHARS = 20_000
+
+function truncateText(text: string | undefined, max: number): string | undefined {
+  if (!text || text.length <= max) return text
+  return text.slice(text.length - max)
+}
+
 function toolTaskTitle(name: string, input?: unknown): string {
   if (name === 'runShellCommand' || name === 'mcp__aiterm__runShellCommand') {
     const cmd =
@@ -83,9 +92,10 @@ export function applyClaudeStreamEvent(
 
   const reasoningChunk = event.reasoning ?? (event.eventType === 'reasoning_delta' ? event.text : undefined)
   if (reasoningChunk) {
+    const merged = (next.reasoning ?? '') + reasoningChunk
     next = {
       ...next,
-      reasoning: (next.reasoning ?? '') + reasoningChunk,
+      reasoning: merged.length > MAX_REASONING_CHARS ? merged.slice(merged.length - MAX_REASONING_CHARS) : merged,
     }
     next = appendPart(next, { kind: 'reasoning', content: reasoningChunk })
   }
@@ -114,8 +124,8 @@ export function applyClaudeStreamEvent(
         name:
           next.tools?.find(t => t.id === event.toolId)?.name ?? 'tool',
         status: failed ? 'error' : 'completed',
-        output: event.toolOutput,
-        error: event.toolError,
+        output: truncateText(event.toolOutput, MAX_TOOL_OUTPUT_CHARS),
+        error: truncateText(event.toolError, MAX_TOOL_OUTPUT_CHARS),
       }),
       tasks: upsertTask(
         next.tasks,

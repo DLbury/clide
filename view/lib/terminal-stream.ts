@@ -5,8 +5,10 @@ type OutputHandler = (event: TerminalOutputEvent) => void
 
 const subscribers = new Map<string, Set<OutputHandler>>()
 const outputBuffers = new Map<string, string>()
-/** 每个会话保留的滚动缓冲上限（多 Shell 标签共享同一 session 时回放） */
-const MAX_BUFFER_CHARS = 512 * 1024
+const droppedChars = new Map<string, number>()
+/** 每个会话保留的滚动缓冲上限（多 Shell 标签共享同一 session 时回放）
+ *  128KB：足够回放最近输出，又避免 512KB 时每次 append 的 O(N) 字符串拷贝压垮主线程 */
+const MAX_BUFFER_CHARS = 128 * 1024
 
 let listenerPromise: Promise<() => void> | null = null
 let listenerRefCount = 0
@@ -14,11 +16,15 @@ let globalUnlistenFn: (() => void) | null = null
 
 function appendToBuffer(sessionId: string, data: string) {
   let buf = outputBuffers.get(sessionId) ?? ''
+  let dropped = droppedChars.get(sessionId) ?? 0
   buf += data
   if (buf.length > MAX_BUFFER_CHARS) {
-    buf = buf.slice(buf.length - MAX_BUFFER_CHARS)
+    const trim = buf.length - MAX_BUFFER_CHARS
+    buf = buf.slice(trim)
+    dropped += trim
   }
   outputBuffers.set(sessionId, buf)
+  droppedChars.set(sessionId, dropped)
 }
 
 function dispatch(event: TerminalOutputEvent) {
@@ -34,6 +40,7 @@ export function getTerminalOutputBuffer(sessionId: string): string {
 
 export function clearTerminalOutputBuffer(sessionId: string): void {
   outputBuffers.delete(sessionId)
+  droppedChars.delete(sessionId)
 }
 
 const resyncHandlers = new Set<(sessionId: string) => void>()

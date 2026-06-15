@@ -96,7 +96,7 @@ import {
   isRemoteConnectionRefusal,
 } from '@/lib/extract-shell-command'
 import { isStaleClaudeSessionError } from '@/lib/claude-session'
-import { executeShellToolInTab } from '@/lib/shell-tool-executor'
+import { executeShellToolInTab, registerShellToolKeepaliveTouch } from '@/lib/shell-tool-executor'
 import {
   applyClaudeStreamEvent,
   applyToolActivityToMessage,
@@ -182,17 +182,25 @@ interface ServerConnection {
   remotePath?: string
 }
 
+const MAX_HISTORY_LINES = 200
+const MAX_LINE_CONTENT_CHARS = 8000
+const MAX_AI_MESSAGES = 120
+
 function appendTerminalOutput(history: TerminalLine[], data: string): TerminalLine[] {
   const cleaned = sanitizeTerminalOutput(data)
   if (!cleaned) return history
   const last = history[history.length - 1]
   if (last && (last.type === 'output' || last.type === 'error')) {
-    return [
-      ...history.slice(0, -1),
-      { ...last, content: last.content + cleaned },
-    ]
+    const merged = last.content + cleaned
+    // 单行内容过长时截断，避免巨型日志撑爆内存
+    const content =
+      merged.length > MAX_LINE_CONTENT_CHARS
+        ? merged.slice(merged.length - MAX_LINE_CONTENT_CHARS)
+        : merged
+    const next = [...history.slice(0, -1), { ...last, content }]
+    return next.length > MAX_HISTORY_LINES ? next.slice(next.length - MAX_HISTORY_LINES) : next
   }
-  return [
+  const appended = [
     ...history,
     {
       id: `out-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -201,6 +209,9 @@ function appendTerminalOutput(history: TerminalLine[], data: string): TerminalLi
       timestamp: new Date(),
     },
   ]
+  return appended.length > MAX_HISTORY_LINES
+    ? appended.slice(appended.length - MAX_HISTORY_LINES)
+    : appended
 }
 
 function setSessionStatusInFolders(
@@ -311,6 +322,12 @@ export default function AITerminal() {
       else k?.touch()
     }
   }
+
+  useEffect(() => {
+    return registerShellToolKeepaliveTouch(() => {
+      keepalivePendingClaudeRequests(activeConnectionIdRef.current, true)
+    })
+  }, [])
   const claudeCodeRef = useRef<ReturnType<typeof useClaudeCode> | null>(null)
   const aiSettingsRef = useRef(aiSettings)
   aiSettingsRef.current = aiSettings
@@ -2032,7 +2049,10 @@ export default function AITerminal() {
 
           return {
             ...conn,
-            aiMessages: [...conn.aiMessages, userMsg, assistantMsg],
+            aiMessages: (() => {
+              const next = [...conn.aiMessages, userMsg, assistantMsg]
+              return next.length > MAX_AI_MESSAGES ? next.slice(next.length - MAX_AI_MESSAGES) : next
+            })(),
             aiThinking: true,
           }
         })

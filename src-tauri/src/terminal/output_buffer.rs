@@ -4,38 +4,75 @@ use std::sync::LazyLock;
 
 const MAX_BUFFER_CHARS: usize = 512 * 1024;
 
-static BUFFERS: LazyLock<Mutex<HashMap<String, String>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Default)]
+struct SessionBuffer {
+    data: String,
+    /// 已从环形缓冲前端丢弃的字符数（逻辑偏移单调递增）
+    dropped: usize,
+}
 
-pub fn append_terminal_output(session_id: &str, data: &str) {
-    let mut map = BUFFERS.lock();
-    let buf = map.entry(session_id.to_string()).or_default();
-    buf.push_str(data);
-    if buf.len() > MAX_BUFFER_CHARS {
-        let drop = buf.len() - MAX_BUFFER_CHARS;
-        buf.drain(..drop);
+impl SessionBuffer {
+    fn append(&mut self, chunk: &str) {
+        self.data.push_str(chunk);
+        if self.data.len() > MAX_BUFFER_CHARS {
+            let drop = self.data.len() - MAX_BUFFER_CHARS;
+            self.data.drain(..drop);
+            self.dropped += drop;
+        }
+    }
+
+    fn logical_len(&self) -> usize {
+        self.dropped + self.data.len()
+    }
+
+    fn read_since(&self, logical_offset: usize) -> String {
+        if logical_offset < self.dropped {
+            return self.data.clone();
+        }
+        let local = logical_offset - self.dropped;
+        if local >= self.data.len() {
+            String::new()
+        } else {
+            self.data[local..].to_string()
+        }
+    }
+
+    fn tail(&self, max_chars: usize) -> String {
+        if self.data.len() <= max_chars {
+            self.data.clone()
+        } else {
+            self.data[self.data.len() - max_chars..].to_string()
+        }
     }
 }
 
+static BUFFERS: LazyLock<Mutex<HashMap<String, SessionBuffer>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn append_terminal_output(session_id: &str, data: &str) {
+    if data.is_empty() {
+        return;
+    }
+    let mut map = BUFFERS.lock();
+    map.entry(session_id.to_string())
+        .or_default()
+        .append(data);
+}
+
+/// 逻辑偏移（自会话开始累计，裁剪后仍单调有效）
 pub fn buffer_len(session_id: &str) -> usize {
     BUFFERS
         .lock()
         .get(session_id)
-        .map(|s| s.len())
+        .map(|s| s.logical_len())
         .unwrap_or(0)
 }
 
-pub fn read_since(session_id: &str, offset: usize) -> String {
+pub fn read_since(session_id: &str, logical_offset: usize) -> String {
     BUFFERS
         .lock()
         .get(session_id)
-        .map(|s| {
-            if offset >= s.len() {
-                String::new()
-            } else {
-                s[offset..].to_string()
-            }
-        })
+        .map(|s| s.read_since(logical_offset))
         .unwrap_or_default()
 }
 
@@ -48,12 +85,6 @@ pub fn tail_snippet(session_id: &str, max_chars: usize) -> String {
     BUFFERS
         .lock()
         .get(session_id)
-        .map(|s| {
-            if s.len() <= max_chars {
-                s.clone()
-            } else {
-                s[s.len() - max_chars..].to_string()
-            }
-        })
+        .map(|s| s.tail(max_chars))
         .unwrap_or_default()
 }

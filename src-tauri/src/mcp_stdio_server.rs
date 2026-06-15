@@ -17,7 +17,7 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "aiterm";
 const RETRY_MS: u64 = 2500;
 const STALE_MS: u64 = 60_000;
-const WS_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const WS_REQUEST_TIMEOUT: Duration = Duration::from_secs(360);
 
 fn log_stderr(msg: &str) {
     let _ = writeln!(std::io::stderr(), "[clide-mcp] {msg}");

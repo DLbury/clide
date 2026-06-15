@@ -220,6 +220,18 @@ export async function isTerminalConnected(sessionId: string): Promise<boolean> {
   return invoke<boolean>('terminal_is_connected', { sessionId })
 }
 
+/** Rust 侧逻辑偏移（环形缓冲裁剪后仍有效） */
+export async function getTerminalBufferLen(sessionId: string): Promise<number> {
+  return invoke<number>('terminal_buffer_len', { sessionId })
+}
+
+export async function readTerminalBufferSince(
+  sessionId: string,
+  offset: number
+): Promise<string> {
+  return invoke<string>('terminal_buffer_read_since', { sessionId, offset })
+}
+
 export type RemoteFileOptions = {
   useRoot?: boolean
 }
