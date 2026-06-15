@@ -82,7 +82,7 @@ export function useClaudeCode({
         const detail =
           status.runtimeError ??
           (status.projectMcpConfigReady
-            ? 'MCP 运行时工具未就绪（stdio 预检失败）'
+            ? 'MCP 运行时工具未就绪（请确认 Clide 已启动且 IDE 桥接已连接）'
             : 'MCP 脚本或 .mcp.json 未就绪')
         setMcpRegisterError(detail)
         return null

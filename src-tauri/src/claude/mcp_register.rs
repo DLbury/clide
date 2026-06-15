@@ -1,12 +1,13 @@
-use crate::app_paths::{node_script_argv, path_to_js_string, McpBundlePaths};
+use crate::app_paths::McpBundlePaths;
 use crate::claude::bridge;
-use crate::mcp_stdio_proxy::{mcp_node_launcher_command, mcp_stdio_launcher_command};
-use crate::process_util::async_command_no_window;
+use crate::claude::detect::resolve_claude_path;
+use crate::mcp_stdio_proxy::{mcp_stdio_launcher_command, mcp_stdio_proxy_flag};
+use crate::process_util::{async_command_no_window, command_no_window};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fmt::Write as _;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -68,32 +69,14 @@ impl McpRuntimeCache {
     }
 }
 
-fn resolve_node_command() -> String {
-    which::which("node")
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "node".to_string())
-}
-
-fn mcp_config_template(launcher_script: &Path, bridge: Option<(u16, &str)>) -> Value {
-    let mut server = if let Some((command, args)) = mcp_stdio_launcher_command() {
-        json!({
-            "command": command,
-            "args": args,
-            "alwaysLoad": true
-        })
-    } else {
-        let (node, args) = mcp_node_launcher_command(launcher_script)
-            .unwrap_or_else(|_| {
-                let script = node_script_argv(launcher_script)
-                    .unwrap_or_else(|_| path_to_js_string(launcher_script));
-                (resolve_node_command(), vec![script])
-            });
-        json!({
-            "command": node,
-            "args": args,
-            "alwaysLoad": true
-        })
-    };
+fn mcp_config_template(bridge: Option<(u16, &str)>) -> Result<Value, String> {
+    let (command, args) = mcp_stdio_launcher_command()
+        .ok_or_else(|| "无法定位 Clide 可执行文件（MCP 需要 clide --aiterm-mcp-stdio）".to_string())?;
+    let mut server = json!({
+        "command": command,
+        "args": args,
+        "alwaysLoad": true
+    });
     if let Some((port, token)) = bridge {
         server["env"] = json!({
             "AITERM_IDE_PORT": port.to_string(),
@@ -102,27 +85,75 @@ fn mcp_config_template(launcher_script: &Path, bridge: Option<(u16, &str)>) -> V
             "CLAUDE_CODE_SSE_PORT": port.to_string(),
         });
     }
-    json!({
+    Ok(json!({
         "mcpServers": {
             MCP_SERVER_NAME: server
         }
-    })
+    }))
+}
+
+/// 尽力通过 Claude Code CLI 登记 MCP（用户级/项目级），便于终端独立运行 `claude` 时也能发现 aiterm。
+fn try_claude_mcp_add(claude_path: Option<String>) {
+    let Ok(claude) = resolve_claude_path(claude_path) else {
+        return;
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let exe = exe.display().to_string();
+    let flag = mcp_stdio_proxy_flag();
+
+    let attempts: Vec<Vec<String>> = vec![
+        vec![
+            "mcp".into(),
+            "add".into(),
+            "-s".into(),
+            "user".into(),
+            MCP_SERVER_NAME.into(),
+            "--".into(),
+            exe.clone(),
+            flag.into(),
+        ],
+        vec![
+            "mcp".into(),
+            "add".into(),
+            "-s".into(),
+            "project".into(),
+            MCP_SERVER_NAME.into(),
+            "--".into(),
+            exe,
+            flag.into(),
+        ],
+    ];
+
+    for args in attempts {
+        let output = command_no_window(&claude).args(&args).output();
+        match output {
+            Ok(o) if o.status.success() => {
+                tracing::info!("claude mcp add 成功 ({})", args.join(" "));
+                return;
+            }
+            Ok(o) => {
+                tracing::debug!(
+                    "claude mcp add 未成功 ({}): {}",
+                    args.join(" "),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+            }
+            Err(e) => tracing::debug!("claude mcp add 执行失败: {e}"),
+        }
+    }
 }
 
 fn write_mcp_config(paths: &McpBundlePaths, bridge: Option<(u16, &str)>) -> Result<PathBuf, String> {
     tracing::info!("Writing MCP config...");
-    tracing::debug!("Launcher script: {}", paths.launcher_script.display());
+    tracing::debug!("Config file path: {}", paths.mcp_config_file.display());
 
-    if !paths.launcher_script.is_file() {
-        let err_msg = format!(
-            "未找到 MCP 启动脚本: {}",
-            paths.launcher_script.display()
-        );
-        tracing::error!("{}", err_msg);
-        return Err(err_msg);
+    if mcp_stdio_launcher_command().is_none() {
+        return Err("无法定位 Clide 可执行文件，无法写入 MCP 配置".to_string());
     }
 
-    let template = mcp_config_template(&paths.launcher_script, bridge);
+    let template = mcp_config_template(bridge)?;
     let config_json = serde_json::to_string_pretty(&template).map_err(|e| {
         let msg = format!("序列化 MCP 配置失败: {}", e);
         tracing::error!("{}", msg);
@@ -168,8 +199,10 @@ pub fn check_mcp_status(
     tracing::debug!("Config file path: {}", paths.mcp_config_file.display());
     tracing::debug!("Config dir: {}", paths.config_dir.display());
 
-    let mcp_script_exists = paths.launcher_script.is_file();
-    tracing::info!("MCP script exists: {}", mcp_script_exists);
+    let mcp_binary_ready = mcp_stdio_launcher_command().is_some();
+    let mcp_script_exists =
+        mcp_binary_ready || paths.launcher_script.is_file() || paths.stdio_script.is_file();
+    tracing::info!("MCP launcher ready: {}", mcp_script_exists);
 
     let project_mcp_config_ready = paths
         .mcp_config_file
@@ -220,11 +253,12 @@ pub fn sync_mcp_bridge_env(
 
 pub fn register_mcp(
     paths: &McpBundlePaths,
-    _claude_path: Option<String>,
+    claude_path: Option<String>,
     bridge: Option<(u16, &str)>,
     runtime: Option<&McpRuntimeCache>,
 ) -> Result<McpRegisterStatus, String> {
     ensure_project_mcp_json(paths, bridge)?;
+    try_claude_mcp_add(claude_path);
     Ok(check_mcp_status(paths, None, runtime, bridge.is_some()))
 }
 
@@ -251,19 +285,6 @@ pub fn try_auto_register_mcp(
     }
 }
 
-fn mcp_launcher_path(paths: &McpBundlePaths) -> Result<PathBuf, String> {
-    if paths.launcher_script.is_file() {
-        Ok(paths.launcher_script.clone())
-    } else if paths.stdio_script.is_file() {
-        Ok(paths.stdio_script.clone())
-    } else {
-        Err(format!(
-            "未找到 MCP 脚本: {}",
-            paths.launcher_script.display()
-        ))
-    }
-}
-
 /// 启动一次 MCP stdio 子进程并读取 `tools/list`，用于在拉起 Claude 前预热。
 async fn preflight_stdio_tools_once(
     paths: &McpBundlePaths,
@@ -271,19 +292,14 @@ async fn preflight_stdio_tools_once(
     auth_token: &str,
     per_attempt: Duration,
 ) -> Result<usize, String> {
-    let script_path = mcp_launcher_path(paths)?;
-    let workdir = script_path
-        .parent()
-        .ok_or_else(|| format!("MCP 脚本无父目录: {}", script_path.display()))?;
-    let workdir = fs::canonicalize(workdir)
-        .map_err(|e| format!("无法解析 MCP 工作目录 {}: {e}", workdir.display()))?;
+    let _ = paths;
+    let (program, args) = mcp_stdio_launcher_command()
+        .ok_or_else(|| "无法定位 Clide MCP 启动命令（clide --aiterm-mcp-stdio）".to_string())?;
 
-    let (program, args) = if let Some((command, argv)) = mcp_stdio_launcher_command() {
-        (command, argv)
-    } else {
-        let (node, argv) = mcp_node_launcher_command(&script_path)?;
-        (node, argv)
-    };
+    let workdir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(std::env::temp_dir);
 
     tracing::debug!(
         "MCP preflight: program={program} args={args:?} cwd={}",

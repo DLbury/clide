@@ -3,6 +3,7 @@ pub mod app_paths;
 pub mod connect_tool;
 pub mod claude;
 pub mod mcp_stdio_proxy;
+pub mod mcp_stdio_server;
 pub mod process_util;
 pub mod runtime;
 pub mod secrets;

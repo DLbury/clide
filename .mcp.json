@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "aiterm": {
-      "command": "node",
-      "args": ["scripts/run-aiterm-mcp.mjs"],
+      "command": "clide",
+      "args": ["--aiterm-mcp-stdio"],
       "alwaysLoad": true
     }
   }

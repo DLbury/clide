@@ -152,6 +152,7 @@ fn detect_all_claude_candidates() -> Vec<String> {
     {
         // macOS 和 Linux 常见路径
         let common_paths = [
+            "/opt/homebrew/bin/claude",
             "/usr/local/bin/claude",
             "/usr/bin/claude",
             "/opt/claude/bin/claude",

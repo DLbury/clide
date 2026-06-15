@@ -1,11 +1,30 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// GUI 应用启动时补齐 PATH（Windows 从注册表合并用户/系统路径）。
+/// GUI 应用启动时补齐 PATH（Windows 从注册表合并用户/系统路径；Unix 补齐常见 bin 目录）。
 pub fn fix_gui_environment() {
     #[cfg(windows)]
     {
         static FIX_GUI_ENV_ONCE: std::sync::Once = std::sync::Once::new();
         FIX_GUI_ENV_ONCE.call_once(fix_windows_path_from_registry);
+    }
+    #[cfg(not(windows))]
+    {
+        static FIX_GUI_ENV_ONCE: std::sync::Once = std::sync::Once::new();
+        FIX_GUI_ENV_ONCE.call_once(fix_unix_gui_environment);
+    }
+}
+
+#[cfg(not(windows))]
+fn fix_unix_gui_environment() {
+    if std::env::var_os("HOME").is_none() {
+        if let Some(home) = dirs::home_dir() {
+            std::env::set_var("HOME", home.as_os_str());
+        }
+    }
+    let current = std::env::var("PATH").unwrap_or_default();
+    let merged = augment_unix_path(&current);
+    if !merged.is_empty() {
+        std::env::set_var("PATH", &merged);
     }
 }
 
@@ -120,6 +139,7 @@ pub fn command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process:
 
 #[cfg(not(windows))]
 pub fn command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process::Command {
+    fix_gui_environment();
     let mut cmd = std::process::Command::new(program);
     apply_subprocess_environment(&mut cmd);
     cmd
@@ -154,6 +174,7 @@ pub fn async_command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::
 
 #[cfg(not(windows))]
 pub fn async_command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+    fix_gui_environment();
     let mut cmd = tokio::process::Command::new(program);
     apply_subprocess_environment_tokio(&mut cmd);
     cmd
@@ -192,10 +213,16 @@ pub fn apply_subprocess_environment(cmd: &mut std::process::Command) {
 
     #[cfg(not(windows))]
     {
+        fix_gui_environment();
         if std::env::var_os("HOME").is_none() {
             if let Some(home) = dirs::home_dir() {
                 cmd.env("HOME", home.as_os_str());
             }
+        }
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.env("PATH", augment_unix_path(&path));
+        } else {
+            cmd.env("PATH", augment_unix_path(""));
         }
     }
 }
@@ -231,10 +258,16 @@ fn apply_subprocess_environment_tokio(cmd: &mut tokio::process::Command) {
 
     #[cfg(not(windows))]
     {
+        fix_gui_environment();
         if std::env::var_os("HOME").is_none() {
             if let Some(home) = dirs::home_dir() {
                 cmd.env("HOME", home.as_os_str());
             }
+        }
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.env("PATH", augment_unix_path(&path));
+        } else {
+            cmd.env("PATH", augment_unix_path(""));
         }
     }
 }
@@ -267,6 +300,109 @@ fn augment_path_with_npm(path: &str) -> String {
     }
 
     parts.join(";")
+}
+
+#[cfg(not(windows))]
+fn augment_unix_path(path: &str) -> String {
+    let mut parts: Vec<String> = path
+        .split(':')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    let mut extra = vec![
+        "/opt/homebrew/bin".to_string(),
+        "/opt/homebrew/sbin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+        "/snap/bin".to_string(),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        let h = home.display().to_string();
+        extra.push(format!("{h}/.local/bin"));
+        extra.push(format!("{h}/.nvm/current/bin"));
+        extra.push(format!("{h}/.fnm/current/bin"));
+        extra.push(format!("{h}/.volta/bin"));
+        let nvm_versions = home.join(".nvm/versions/node");
+        if nvm_versions.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&nvm_versions) {
+                let mut versions: Vec<PathBuf> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.join("bin/node").is_file())
+                    .collect();
+                versions.sort();
+                if let Some(latest) = versions.last() {
+                    extra.push(latest.join("bin").display().to_string());
+                }
+            }
+        }
+    }
+
+    for dir in extra {
+        if !parts.iter().any(|p| p == &dir) {
+            parts.push(dir);
+        }
+    }
+    parts.join(":")
+}
+
+/// 解析 Node 可执行文件（GUI 子进程 PATH 常不含 node；Ubuntu apt 包名为 nodejs）。
+pub fn resolve_node_executable() -> Result<String, String> {
+    fix_gui_environment();
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(p) = which::which("node") {
+        candidates.push(p);
+    }
+    if let Ok(p) = which::which("nodejs") {
+        candidates.push(p);
+    }
+
+    for fixed in [
+        "/usr/bin/node",
+        "/usr/local/bin/node",
+        "/usr/bin/nodejs",
+        "/usr/local/bin/nodejs",
+        "/snap/bin/node",
+    ] {
+        candidates.push(PathBuf::from(fixed));
+    }
+    if let Some(home) = dirs::home_dir() {
+        for rel in [
+            ".local/bin/node",
+            ".nvm/current/bin/node",
+            ".fnm/current/bin/node",
+            ".volta/bin/node",
+        ] {
+            candidates.push(home.join(rel));
+        }
+        let nvm_versions = home.join(".nvm/versions/node");
+        if nvm_versions.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&nvm_versions) {
+                let mut versions: Vec<PathBuf> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path().join("bin/node"))
+                    .filter(|p| p.is_file())
+                    .collect();
+                versions.sort();
+                candidates.extend(versions);
+            }
+        }
+    }
+
+    for path in candidates {
+        if path.is_file() {
+            return Ok(path.display().to_string());
+        }
+    }
+
+    Err(
+        "未找到 Node.js。MCP 桥接需要本机 Node.js 18+（Ubuntu: sudo apt install nodejs 或 NodeSource/nvm 安装 node）"
+            .to_string(),
+    )
 }
 
 /// 优先选用 `.exe`，避免 npm 全局安装返回 `.cmd` 时启动失败。

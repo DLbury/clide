@@ -133,11 +133,13 @@ fn resolve_scripts_dir(app: &AppHandle) -> Result<PathBuf, String> {
                 .product_name
                 .clone()
                 .unwrap_or_else(|| "Clide".to_string());
+            let product_lower = product.to_lowercase();
             let mut candidates = vec![
                 dir.to_path_buf(),
                 dir.join("scripts"),
                 // Linux .deb: /usr/bin/<bin> + /usr/lib/<productName>/scripts
                 dir.join("../lib").join(&product),
+                dir.join("../lib").join(&product_lower),
                 // macOS .app: Contents/MacOS/<bin> + Contents/Resources/scripts
                 dir.join("../Resources"),
                 dir.join("../Resources").join("scripts"),
@@ -149,6 +151,12 @@ fn resolve_scripts_dir(app: &AppHandle) -> Result<PathBuf, String> {
             candidates.push(
                 dir.join("../lib")
                     .join(&product)
+                    .join("_up_")
+                    .join("scripts"),
+            );
+            candidates.push(
+                dir.join("../lib")
+                    .join(&product_lower)
                     .join("_up_")
                     .join("scripts"),
             );
