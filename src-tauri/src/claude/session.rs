@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
@@ -207,6 +208,14 @@ impl ClaudeSessionManager {
         let request_stderr = request_id.clone();
         let running = self.running.clone();
 
+        /** 共享状态：stderr 收集器 + stdout 事件计数器。
+         *  当 Claude 进程 exit 0 但 stdout 未产生任何可解析事件时，
+         *  将 stderr 内容作为 error 返回，避免前端显示"已结束但未返回任何内容" */
+        let stderr_collector: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let event_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+        let stderr_for_stdout = stderr_collector.clone();
+        let counter_for_stdout = event_counter.clone();
+
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             let mut session_id: Option<String> = None;
@@ -219,9 +228,13 @@ impl ClaudeSessionManager {
                 }
 
                 for event in parse_stream_line(trimmed, &request_stdout, &mut session_id) {
+                    event_counter.fetch_add(1, Ordering::SeqCst);
                     let _ = app_stdout.emit("claude:stream", event);
                 }
             }
+
+            // 等待 stderr 线程读完剩余行（进程退出后管道很快关闭）
+            std::thread::sleep(std::time::Duration::from_millis(300));
 
             let exit_error = running
                 .lock()
@@ -236,7 +249,24 @@ impl ClaudeSessionManager {
                     })
                 });
 
-            if let Some(err) = exit_error {
+            // stdout 无事件且 exit 0：收集 stderr 内容作为真正的错误原因
+            let saw_events = counter_for_stdout.load(Ordering::SeqCst) > 0;
+            let empty_output_error = if !saw_events {
+                let collected: Vec<String> = stderr_for_stdout.lock().drain(..).collect();
+                if collected.is_empty() {
+                    Some(
+                        "Claude Code 进程退出但未产生任何输出。请确认 CLI 已安装、已登录（claude /login）且设置中路径正确。".to_string()
+                    )
+                } else {
+                    Some(collected.join("\n"))
+                }
+            } else {
+                None
+            };
+
+            let final_error = exit_error.or(empty_output_error);
+
+            if let Some(err) = &final_error {
                 let _ = app_stdout.emit(
                     "claude:stream",
                     ClaudeStreamEvent {
@@ -245,7 +275,7 @@ impl ClaudeSessionManager {
                         text: Some(err.clone()),
                         session_id: session_id.clone(),
                         done: false,
-                        error: Some(err),
+                        error: Some(err.clone()),
                         reasoning: None,
                         tool_id: None,
                         tool_name: None,
@@ -264,7 +294,7 @@ impl ClaudeSessionManager {
                     text: None,
                     session_id,
                     done: true,
-                    error: None,
+                    error: final_error,
                     reasoning: None,
                     tool_id: None,
                     tool_name: None,
@@ -281,6 +311,8 @@ impl ClaudeSessionManager {
                 if line.trim().is_empty() {
                     continue;
                 }
+                // 收集所有 stderr 行，供 stdout 线程在无输出时作为错误原因
+                stderr_collector.lock().push(line.clone());
                 let lower = line.to_lowercase();
                 let stale = lower.contains("no conversation found")
                     || lower.contains("conversation not found");
