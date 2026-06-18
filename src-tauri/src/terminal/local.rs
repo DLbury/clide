@@ -36,16 +36,9 @@ fn resolve_system_exe(name: &str) -> Result<PathBuf, String> {
     Err(format!("找不到可执行文件 {name}（PATH 和 System32 均未找到）"))
 }
 
-/// Windows 下按优先级解析 PowerShell：pwsh (PS7+) → Windows PowerShell 5.1 → cmd
+/// Windows 下按优先级解析 PowerShell：内置 PS5.1 → pwsh → PATH → cmd
 fn resolve_windows_shell() -> Result<PathBuf, String> {
-    // PowerShell 7+ (跨平台版本，通常装在独立目录)
-    if let Ok(p) = which::which("pwsh.exe") {
-        return Ok(p);
-    }
-    if let Ok(p) = which::which("pwsh") {
-        return Ok(p);
-    }
-    // Windows PowerShell 5.1（System32\WindowsPowerShell\v1.0\）
+    // 优先 System32 路径，不依赖 PATH（GUI 子进程 PATH 常不完整）
     if let Some(root) = std::env::var_os("SystemRoot") {
         let ps5 = PathBuf::from(&root)
             .join("System32")
@@ -56,11 +49,15 @@ fn resolve_windows_shell() -> Result<PathBuf, String> {
             return Ok(ps5);
         }
     }
-    // PATH 中查找
+    if let Ok(p) = which::which("pwsh.exe") {
+        return Ok(p);
+    }
+    if let Ok(p) = which::which("pwsh") {
+        return Ok(p);
+    }
     if let Ok(p) = which::which("powershell.exe") {
         return Ok(p);
     }
-    // 最后回退到 cmd
     resolve_system_exe("cmd.exe")
 }
 
@@ -104,7 +101,7 @@ pub fn spawn_local_pty(
                     program_str.contains("powershell") || program_str.ends_with("pwsh.exe");
                 let mut c = CommandBuilder::new(shell_path);
                 if is_powershell {
-                    c.args(["-NoLogo", "-NoProfile"]);
+                    c.args(["-NoLogo"]);
                 }
                 c.set_controlling_tty(false);
                 c
@@ -173,6 +170,9 @@ pub fn spawn_local_pty(
     std::thread::spawn(move || {
         run_pty_reader(app, session_id, reader, abort_reader);
     });
+
+    // 触发初始尺寸，让 PowerShell/cmd 在 PTY 就绪后输出首屏提示符（勿发 \r，会多一行空行）
+    let _ = resize_tx.send((120, 32));
 
     Ok(TerminalChannels { write_tx, resize_tx })
 }

@@ -11,6 +11,7 @@ import {
   getTerminalOutputBuffer,
   subscribeTerminalOutput,
   onTerminalResync,
+  injectTerminalOutput,
 } from '@/lib/terminal-stream'
 import { useAppTheme } from '@/hooks/use-app-theme'
 
@@ -230,6 +231,7 @@ export function LiveTerminal({
           if (buf.length > local.length) {
             requestTerminalResync(sessionId)
           } else if (local.length === 0 && buf.length > 0) {
+            injectTerminalOutput(sessionId, buf)
             termRef.current.write(buf)
             bufferSyncedRef.current = buf.length
           }

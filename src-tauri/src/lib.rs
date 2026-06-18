@@ -527,7 +527,13 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let _log = app_logging::init(&app.handle());
-            crate::process_util::fix_gui_environment();
+            // 不在 setup 阶段调用 fix_gui_environment：会同步启动 reg.exe，
+            // 在部分 Windows 安装包环境弹出「程序无法正常启动」且阻塞首屏。
+            // PATH 修复推迟到后台，首次开终端 / 子进程时再惰性执行。
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                crate::process_util::fix_gui_environment();
+            });
             let handle = app.handle().clone();
             // Never block app startup on MCP scripts.
             // Desktop launchers often have a different environment; MCP may be temporarily unavailable.

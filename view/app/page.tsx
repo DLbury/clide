@@ -46,6 +46,7 @@ import {
   getTerminalOutputBuffer,
   injectAiCommandEcho,
   requestTerminalResync,
+  ensureTerminalOutputListener,
 } from '@/lib/terminal-stream'
 import { updateIdeContext } from '@/lib/claude-client'
 import { makeTerminalSessionId } from '@/lib/terminal-session'
@@ -359,14 +360,7 @@ export default function AITerminal() {
     if (initial) {
       setConnections(initial.connections as ServerConnection[])
       setActiveConnectionId(initial.activeConnectionId)
-
-      // Kick off the local PTY connection immediately.
-      // The initial state is "connecting" but without this call it will never transition to "connected".
-      const conn = initial.connections[0]
-      const shell = conn?.shells?.[0]
-      if (conn?.session && shell?.terminalSessionId) {
-        void connectTerminalSession(conn.session as Session, shell.terminalSessionId).catch(() => {})
-      }
+      // PTY 连接在终端监听器就绪后由下方 AutoConnect effect 发起，避免首包丢失
     }
   }, [])
 
@@ -877,6 +871,8 @@ export default function AITerminal() {
     let unlistenStatus: (() => void) | undefined
 
     const setup = async () => {
+      await ensureTerminalOutputListener()
+
       unlistenOutput = subscribeAllTerminalOutput(event => {
         setConnections(prev =>
           prev.map(conn => {
@@ -1039,6 +1035,12 @@ export default function AITerminal() {
           }
         }
       })
+
+      for (const conn of connectionsRef.current) {
+        for (const shell of conn.shells) {
+          requestTerminalResync(shell.terminalSessionId)
+        }
+      }
     }
 
     void setup()
@@ -1446,12 +1448,15 @@ export default function AITerminal() {
     }
   }, [folders, foldersLoaded])
 
-  // 桌面版：首屏已有默认连接，立即发起 PTY 连接（不等待 foldersLoaded / 200ms）
+  // 桌面版：首屏已有默认连接，监听器就绪后再发起 PTY 连接
   useEffect(() => {
     if (!isTauriRuntime() || initialLocalConnectRef.current) return
 
+    let cancelled = false
+    const timers: ReturnType<typeof setTimeout>[] = []
+
     const tryConnect = (): boolean => {
-      if (initialLocalConnectRef.current) return true
+      if (initialLocalConnectRef.current || cancelled) return true
       const conn = connectionsRef.current.find(c => isDefaultLocalShellSession(c.session))
       if (!conn) return false
       const shell = conn.shells[0]
@@ -1468,15 +1473,23 @@ export default function AITerminal() {
       return true
     }
 
-    if (tryConnect()) return
+    void (async () => {
+      await ensureTerminalOutputListener()
+      if (cancelled) return
+      if (tryConnect()) return
+      for (const ms of [50, 200, 500, 1000, 2000]) {
+        timers.push(
+          setTimeout(() => {
+            if (!initialLocalConnectRef.current) tryConnect()
+          }, ms)
+        )
+      }
+    })()
 
-    // 连接尚未就绪（竞态），分级重试
-    const timers = [50, 200, 500, 1000, 2000].map(ms =>
-      setTimeout(() => {
-        if (!initialLocalConnectRef.current) tryConnect()
-      }, ms)
-    )
-    return () => timers.forEach(clearTimeout)
+    return () => {
+      cancelled = true
+      timers.forEach(clearTimeout)
+    }
   }, [runBackendConnect])
 
   // 无标签且非桌面预置连接时，补开本地 Shell

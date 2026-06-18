@@ -85,6 +85,11 @@ async function ensureGlobalListener(): Promise<() => void> {
   return listenerPromise
 }
 
+/** 确保 Tauri terminal:output 全局监听已注册（连接 PTY 前必须 await） */
+export async function ensureTerminalOutputListener(): Promise<void> {
+  await ensureGlobalListener()
+}
+
 /** 单例终端输出订阅，避免多个 LiveTerminal 重复注册 Tauri 监听器 */
 export function subscribeTerminalOutput(
   sessionId: string,
