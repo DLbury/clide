@@ -91,6 +91,11 @@ pub fn spawn_local_pty(
         _ => {
             if cfg!(windows) {
                 let shell_path = resolve_windows_shell()?;
+                tracing::info!(
+                    "Local shell resolved: {} (session={})",
+                    shell_path.display(),
+                    request.sessionId
+                );
                 let program_str = shell_path.to_string_lossy().to_lowercase();
                 let is_powershell =
                     program_str.contains("powershell") || program_str.ends_with("pwsh.exe");

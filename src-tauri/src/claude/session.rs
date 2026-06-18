@@ -213,6 +213,7 @@ impl ClaudeSessionManager {
         }
         command
             .args(&args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -305,6 +306,14 @@ impl ClaudeSessionManager {
             // 统一收集 stderr，供诊断使用
             let collected_stderr: Vec<String> = stderr_for_stdout.lock().drain(..).collect();
             let saw_events = counter_for_stdout.load(Ordering::SeqCst) > 0;
+
+            tracing::info!(
+                "Claude session ended: request_id={}, saw_events={}, stderr_lines={}, exit_error={:?}",
+                request_stdout,
+                saw_events,
+                collected_stderr.len(),
+                exit_error.as_deref().unwrap_or("(none)")
+            );
 
             let final_error = if let Some(exit_err) = exit_error {
                 // 非零退出码：总是附带 stderr 内容，帮助诊断真正的失败原因
