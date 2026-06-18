@@ -69,6 +69,9 @@ pub fn spawn_local_pty(
     request: ConnectRequest,
     abort: Arc<AtomicBool>,
 ) -> Result<TerminalChannels, String> {
+    // 在 spawn shell 前修复 GUI 环境变量（PATH），确保子进程能找到依赖
+    crate::process_util::fix_gui_environment();
+
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
