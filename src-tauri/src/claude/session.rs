@@ -5,11 +5,60 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+
+/// Windows 下 `.cmd` shim 经 `cmd /c` 传参时，系统提示中的特殊字符（`%`、`|`、换行等）
+/// 会被 cmd.exe 误解析导致 Claude CLI 退出码 1。
+/// 此函数绕过 cmd.exe，直接定位 `cli.js` 并用 `node.exe` 启动。
+/// 返回 (program, initial_args)；失败则回退原始路径。
+fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
+    let path = PathBuf::from(claude_path);
+    let is_cmd = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false);
+
+    if !is_cmd {
+        return (claude_path.to_string(), vec![]);
+    }
+
+    let Some(cmd_dir) = path.parent() else {
+        return (claude_path.to_string(), vec![]);
+    };
+
+    // npm 全局安装的 cli.js 位于 cmd 同级 node_modules 下
+    let cli_js = cmd_dir
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code")
+        .join("cli.js");
+    if !cli_js.is_file() {
+        return (claude_path.to_string(), vec![]);
+    }
+
+    // 优先用 cmd 同目录下的 node.exe（npm 内嵌 Node），否则回退 PATH 中的 node
+    let node_exe = cmd_dir.join("node.exe");
+    let program = if node_exe.is_file() {
+        node_exe.to_string_lossy().into_owned()
+    } else if let Ok(n) = which::which("node.exe") {
+        n.to_string_lossy().into_owned()
+    } else {
+        // 找不到 node，回退 .cmd
+        return (claude_path.to_string(), vec![]);
+    };
+
+    tracing::info!(
+        "Bypassing .cmd shim: node={}, cli.js={}",
+        program,
+        cli_js.display()
+    );
+    (program, vec![cli_js.to_string_lossy().into_owned()])
+}
 
 /// IDE 桥接已启用时追加到 Claude，促使其调用 MCP 工具而非仅文字回答。
 const IDE_BRIDGE_APPEND_PROMPT: &str = r#"You are connected to AI Terminal via IDE MCP integration (server `aiterm`).
@@ -109,8 +158,9 @@ impl ClaudeSessionManager {
         mcp_config: Option<PathBuf>,
     ) -> Result<(), String> {
         let claude = resolve_claude_path(claude_path)?;
+        let (claude_program, claude_prefix_args) = resolve_claude_invocation(&claude);
         tracing::info!(
-            "Spawning Claude CLI: path={claude}, request_id={request_id}, bridge_port={:?}, workspace={:?}",
+            "Spawning Claude CLI: resolved={claude}, program={claude_program}, request_id={request_id}, bridge_port={:?}, workspace={:?}",
             bridge_port,
             workspace_dir.as_ref().map(|p| p.display().to_string())
         );
@@ -157,7 +207,10 @@ impl ClaudeSessionManager {
             }
         }
 
-        let mut command = command_no_window(&claude);
+        let mut command = command_no_window(&claude_program);
+        if !claude_prefix_args.is_empty() {
+            command.args(&claude_prefix_args);
+        }
         command
             .args(&args)
             .stdout(Stdio::piped())
@@ -249,22 +302,32 @@ impl ClaudeSessionManager {
                     })
                 });
 
-            // stdout 无事件且 exit 0：收集 stderr 内容作为真正的错误原因
+            // 统一收集 stderr，供诊断使用
+            let collected_stderr: Vec<String> = stderr_for_stdout.lock().drain(..).collect();
             let saw_events = counter_for_stdout.load(Ordering::SeqCst) > 0;
-            let empty_output_error = if !saw_events {
-                let collected: Vec<String> = stderr_for_stdout.lock().drain(..).collect();
-                if collected.is_empty() {
+
+            let final_error = if let Some(exit_err) = exit_error {
+                // 非零退出码：总是附带 stderr 内容，帮助诊断真正的失败原因
+                if !collected_stderr.is_empty() {
+                    Some(format!(
+                        "{exit_err}\n\n--- Claude CLI stderr ---\n{}",
+                        collected_stderr.join("\n")
+                    ))
+                } else {
+                    Some(exit_err)
+                }
+            } else if !saw_events {
+                // exit 0 但无任何 stdout 事件：stderr 可能包含错误原因
+                if !collected_stderr.is_empty() {
+                    Some(collected_stderr.join("\n"))
+                } else {
                     Some(
                         "Claude Code 进程退出但未产生任何输出。请确认 CLI 已安装、已登录（claude /login）且设置中路径正确。".to_string()
                     )
-                } else {
-                    Some(collected.join("\n"))
                 }
             } else {
                 None
             };
-
-            let final_error = exit_error.or(empty_output_error);
 
             if let Some(err) = &final_error {
                 let _ = app_stdout.emit(
