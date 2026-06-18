@@ -4,6 +4,7 @@ use super::ConnectRequest;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -16,6 +17,51 @@ struct TerminalStatusEvent {
     session_id: String,
     status: String,
     error: Option<String>,
+}
+
+/// 解析 System32 下的可执行文件绝对路径，避免 GUI 子系统下 PATH 不含 System32 的极端情况
+fn resolve_system_exe(name: &str) -> Result<PathBuf, String> {
+    // 1. 先尝试 PATH 直接解析（dev 或正常 PATH 时生效）
+    if let Ok(path) = which::which(name) {
+        return Ok(path);
+    }
+    // 2. 回退到 %SystemRoot%\System32\<name>
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("无法定位 SystemRoot 以解析 {name}"))?;
+    let candidate = system_root.join("System32").join(name);
+    if candidate.is_file() {
+        return Ok(candidate);
+    }
+    Err(format!("找不到可执行文件 {name}（PATH 和 System32 均未找到）"))
+}
+
+/// Windows 下按优先级解析 PowerShell：pwsh (PS7+) → Windows PowerShell 5.1 → cmd
+fn resolve_windows_shell() -> Result<PathBuf, String> {
+    // PowerShell 7+ (跨平台版本，通常装在独立目录)
+    if let Ok(p) = which::which("pwsh.exe") {
+        return Ok(p);
+    }
+    if let Ok(p) = which::which("pwsh") {
+        return Ok(p);
+    }
+    // Windows PowerShell 5.1（System32\WindowsPowerShell\v1.0\）
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        let ps5 = PathBuf::from(&root)
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        if ps5.is_file() {
+            return Ok(ps5);
+        }
+    }
+    // PATH 中查找
+    if let Ok(p) = which::which("powershell.exe") {
+        return Ok(p);
+    }
+    // 最后回退到 cmd
+    resolve_system_exe("cmd.exe")
 }
 
 pub fn spawn_local_pty(
@@ -37,15 +83,21 @@ pub fn spawn_local_pty(
 
     let cmd = match request.session_type.as_str() {
         "wsl" => {
-            let mut c = CommandBuilder::new("wsl.exe");
+            let wsl_path = resolve_system_exe("wsl.exe")?;
+            let mut c = CommandBuilder::new(wsl_path);
             c.args(["--", "bash", "-l"]);
             c
         }
         _ => {
             if cfg!(windows) {
-                // Windows 默认 PowerShell，避免 AI 发出的 PS 命令在 cmd 中 `$` 被吃掉
-                let mut c = CommandBuilder::new("powershell.exe");
-                c.args(["-NoLogo", "-NoProfile"]);
+                let shell_path = resolve_windows_shell()?;
+                let program_str = shell_path.to_string_lossy().to_lowercase();
+                let is_powershell =
+                    program_str.contains("powershell") || program_str.ends_with("pwsh.exe");
+                let mut c = CommandBuilder::new(shell_path);
+                if is_powershell {
+                    c.args(["-NoLogo", "-NoProfile"]);
+                }
                 c.set_controlling_tty(false);
                 c
             } else {
@@ -134,9 +186,11 @@ fn run_pty_reader(
         );
     };
 
-    emit_status("connected", None);
+    // 先报 connecting，等实际有数据流过再报 connected
+    emit_status("connecting", None);
 
     let mut buf = [0u8; 8192];
+    let mut connected_emitted = false;
     loop {
         if abort.load(Ordering::Relaxed) {
             emit_status("disconnected", None);
@@ -145,10 +199,25 @@ fn run_pty_reader(
 
         match reader.read(&mut buf) {
             Ok(0) => {
-                emit_status("disconnected", None);
+                // 如果从未收到任何输出就 EOF，说明 shell 启动后立即退出
+                if !connected_emitted {
+                    emit_status(
+                        "error",
+                        Some(
+                            "Shell 启动后立即退出，未产生任何输出。请检查系统 Shell 是否可用。"
+                                .to_string(),
+                        ),
+                    );
+                } else {
+                    emit_status("disconnected", None);
+                }
                 break;
             }
             Ok(n) => {
+                if !connected_emitted {
+                    connected_emitted = true;
+                    emit_status("connected", None);
+                }
                 let text = String::from_utf8_lossy(&buf[..n]).into_owned();
                 output_emit::append_and_emit(&app, &session_id, &text);
             }
