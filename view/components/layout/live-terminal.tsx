@@ -40,6 +40,7 @@ export function LiveTerminal({
   const connectedRef = useRef(connected)
   const inputEnabledRef = useRef(inputEnabled)
   const dataDisposableRef = useRef<{ dispose: () => void } | null>(null)
+  const resizeDisposableRef = useRef<{ dispose: () => void } | null>(null)
   const bufferSyncedRef = useRef(0)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
   const resizeRafRef = useRef<number | null>(null)
@@ -120,6 +121,11 @@ export function LiveTerminal({
       void writeTerminal(sessionIdRef.current, data).catch(() => {})
     })
 
+    resizeDisposableRef.current = term.onResize(({ cols, rows }) => {
+      if (!connectedRef.current || cols < 1 || rows < 1) return
+      void resizeTerminal(sessionIdRef.current, cols, rows).catch(() => {})
+    })
+
     termRef.current = term
     fitRef.current = fitAddon
     setTermReady(true)
@@ -142,6 +148,8 @@ export function LiveTerminal({
       resizeObserverRef.current = null
       dataDisposableRef.current?.dispose()
       dataDisposableRef.current = null
+      resizeDisposableRef.current?.dispose()
+      resizeDisposableRef.current = null
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -149,7 +157,26 @@ export function LiveTerminal({
     }
   }, [isDark, fit, scheduleFit, syncPtySize])
 
-  /** 从滚动缓冲完整重绘 xterm（切换标签 / 漏帧时），必须先 clear 再 write，避免重复叠加 */
+  /** 追赶缓冲增量；仅当环形截断导致偏移回退时才 clear 全量重绘 */
+  const catchUpTerminalBuffer = useCallback(() => {
+    const term = termRef.current
+    if (!term) return
+    const buffered = getTerminalOutputBuffer(sessionId)
+
+    if (buffered.length < bufferSyncedRef.current) {
+      term.clear()
+      bufferSyncedRef.current = 0
+      if (buffered) term.write(buffered)
+      bufferSyncedRef.current = buffered.length
+      return
+    }
+
+    if (buffered.length <= bufferSyncedRef.current) return
+    term.write(buffered.slice(bufferSyncedRef.current))
+    bufferSyncedRef.current = buffered.length
+  }, [sessionId])
+
+  /** 切换标签等场景：在空白 xterm 上写入完整缓冲 */
   const replayBufferToTerm = useCallback(() => {
     const term = termRef.current
     if (!term) return
@@ -157,7 +184,6 @@ export function LiveTerminal({
     term.clear()
     bufferSyncedRef.current = buffered.length
     if (!buffered) return
-    // 分块写入避免主线程长时间阻塞（缓冲可达 512KB）
     const CHUNK = 32 * 1024
     if (buffered.length <= CHUNK) {
       term.write(buffered)
@@ -179,15 +205,12 @@ export function LiveTerminal({
   const syncBufferToTerm = useCallback(() => {
     const term = termRef.current
     if (!term) return
-    const buffered = getTerminalOutputBuffer(sessionId)
-    if (buffered.length < bufferSyncedRef.current) {
+    if (bufferSyncedRef.current === 0) {
       replayBufferToTerm()
       return
     }
-    if (buffered.length <= bufferSyncedRef.current) return
-    term.write(buffered.slice(bufferSyncedRef.current))
-    bufferSyncedRef.current = buffered.length
-  }, [sessionId, replayBufferToTerm])
+    catchUpTerminalBuffer()
+  }, [catchUpTerminalBuffer, replayBufferToTerm])
 
   useEffect(() => {
     if (!termReady) return
@@ -203,7 +226,7 @@ export function LiveTerminal({
 
     const unsubResync = onTerminalResync(sid => {
       if (sid !== sessionId) return
-      replayBufferToTerm()
+      catchUpTerminalBuffer()
     })
 
     const unsubInput = registerTerminalInputHandler(sessionId, async data => {
@@ -217,7 +240,7 @@ export function LiveTerminal({
       unsubResync()
       unsubInput()
     }
-  }, [sessionId, termReady, syncBufferToTerm, replayBufferToTerm])
+  }, [sessionId, termReady, syncBufferToTerm, catchUpTerminalBuffer, replayBufferToTerm])
 
   useEffect(() => {
     if (connected && inputEnabled) {
@@ -240,7 +263,7 @@ export function LiveTerminal({
           if (cancelled || !buf || !termRef.current) return
           const local = getTerminalOutputBuffer(sessionId)
           if (buf.length > local.length) {
-            requestTerminalResync(sessionId)
+            catchUpTerminalBuffer()
           } else if (local.length === 0 && buf.length > 0) {
             injectTerminalOutput(sessionId, buf)
             termRef.current.write(buf)
@@ -248,7 +271,6 @@ export function LiveTerminal({
           }
         })
         .catch(() => {})
-      requestTerminalResync(sessionId)
     }, 120)
     return () => {
       cancelled = true

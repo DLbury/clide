@@ -11,6 +11,7 @@ mod ssh;
 mod ssh_auth;
 mod telnet;
 mod serial;
+mod utf8_chunk;
 
 pub use output_emit::TerminalOutputEvent;
 pub use manager::{push_terminal_display, TerminalManager};

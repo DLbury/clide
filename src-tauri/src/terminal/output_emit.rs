@@ -14,6 +14,8 @@ pub struct TerminalOutputEvent {
 
 const COALESCE_WINDOW: Duration = Duration::from_millis(16);
 const MAX_BATCH_CHARS: usize = 16 * 1024;
+/// 交互式终端（PSReadLine 等）小包立即推送，避免合并导致光标/退格不同步
+const INTERACTIVE_IMMEDIATE_MAX: usize = 512;
 
 struct PendingEmit {
     data: String,
@@ -54,6 +56,7 @@ pub fn append_and_emit(app: &AppHandle, session_id: &str, data: &str) {
     entry.data.push_str(data);
 
     let should_flush = entry.data.len() >= MAX_BATCH_CHARS
+        || data.len() < INTERACTIVE_IMMEDIATE_MAX
         || entry.last_emit.elapsed() >= COALESCE_WINDOW;
     if !should_flush {
         return;

@@ -6,9 +6,8 @@ type OutputHandler = (event: TerminalOutputEvent) => void
 const subscribers = new Map<string, Set<OutputHandler>>()
 const outputBuffers = new Map<string, string>()
 const droppedChars = new Map<string, number>()
-/** 每个会话保留的滚动缓冲上限（多 Shell 标签共享同一 session 时回放）
- *  128KB：足够回放最近输出，又避免 512KB 时每次 append 的 O(N) 字符串拷贝压垮主线程 */
-const MAX_BUFFER_CHARS = 128 * 1024
+/** 每个会话保留的滚动缓冲上限（与 Rust 侧 512KB 对齐，减少截断导致的全屏重绘） */
+const MAX_BUFFER_CHARS = 512 * 1024
 
 let listenerPromise: Promise<() => void> | null = null
 let listenerRefCount = 0
@@ -45,7 +44,7 @@ export function clearTerminalOutputBuffer(sessionId: string): void {
 
 const resyncHandlers = new Set<(sessionId: string) => void>()
 
-/** 强制 xterm 从缓冲重绘（切换标签 / AI 注入命令后） */
+/** 将 xterm 追赶到输出缓冲末尾；仅在缓冲被截断时才 clear 重绘，避免打断 PSReadLine */
 export function requestTerminalResync(sessionId: string): void {
   resyncHandlers.forEach(handler => handler(sessionId))
 }

@@ -1,5 +1,6 @@
 use super::channels::TerminalChannels;
 use super::output_emit;
+use super::utf8_chunk::Utf8ChunkDecoder;
 use super::ConnectRequest;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -198,6 +199,7 @@ fn run_pty_reader(
     emit_status("connected", None);
 
     let mut buf = [0u8; 8192];
+    let mut utf8 = Utf8ChunkDecoder::new();
     loop {
         if abort.load(Ordering::Relaxed) {
             output_emit::flush_session(&app, &session_id);
@@ -212,8 +214,10 @@ fn run_pty_reader(
                 break;
             }
             Ok(n) => {
-                let text = String::from_utf8_lossy(&buf[..n]).into_owned();
-                output_emit::append_and_emit(&app, &session_id, &text);
+                let text = utf8.decode(&buf[..n]);
+                if !text.is_empty() {
+                    output_emit::append_and_emit(&app, &session_id, &text);
+                }
             }
             Err(e) => {
                 emit_status("error", Some(format!("读取 PTY 输出失败: {e}")));
