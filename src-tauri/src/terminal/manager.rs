@@ -43,6 +43,11 @@ impl TerminalManager {
     pub fn connect(&self, app: AppHandle, request: ConnectRequest) -> Result<(), String> {
         let request = super::enrich_connect_request(request);
         let session_id = request.sessionId.clone();
+        tracing::info!(
+            "TerminalManager::connect: session_id={}, type={}",
+            session_id,
+            request.session_type
+        );
 
         let _ = app.emit(
             "terminal:status",

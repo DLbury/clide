@@ -1447,14 +1447,34 @@ export default function AITerminal() {
   // 桌面版：首屏已有默认连接，立即发起 PTY 连接（不等待 foldersLoaded / 200ms）
   useEffect(() => {
     if (!isTauriRuntime() || initialLocalConnectRef.current) return
-    const conn = connectionsRef.current.find(c => isDefaultLocalShellSession(c.session))
-    if (!conn) return
-    const shell = conn.shells[0]
-    if (!shell || shell.terminalStatus === 'connected') return
-    initialLocalConnectRef.current = true
-    runBackendConnect(conn.session, conn.id, shell.id, shell.terminalSessionId, {
-      skipPasswordPrompt: true,
-    })
+
+    const tryConnect = (): boolean => {
+      if (initialLocalConnectRef.current) return true
+      const conn = connectionsRef.current.find(c => isDefaultLocalShellSession(c.session))
+      if (!conn) return false
+      const shell = conn.shells[0]
+      if (!shell) return false
+      if (shell.terminalStatus === 'connected') {
+        initialLocalConnectRef.current = true
+        return true
+      }
+      initialLocalConnectRef.current = true
+      console.log('[AutoConnect] Spawning local shell PTY:', shell.terminalSessionId)
+      runBackendConnect(conn.session, conn.id, shell.id, shell.terminalSessionId, {
+        skipPasswordPrompt: true,
+      })
+      return true
+    }
+
+    if (tryConnect()) return
+
+    // 连接尚未就绪（竞态），分级重试
+    const timers = [50, 200, 500, 1000, 2000].map(ms =>
+      setTimeout(() => {
+        if (!initialLocalConnectRef.current) tryConnect()
+      }, ms)
+    )
+    return () => timers.forEach(clearTimeout)
   }, [runBackendConnect])
 
   // 无标签且非桌面预置连接时，补开本地 Shell

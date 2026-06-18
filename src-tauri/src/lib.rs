@@ -375,6 +375,12 @@ async fn terminal_connect(
     state: State<'_, AppState>,
     request: ConnectRequest,
 ) -> Result<(), String> {
+    tracing::info!(
+        "terminal_connect: session_id={}, session_type={}, host={:?}",
+        request.sessionId,
+        request.session_type,
+        request.host
+    );
     state.terminals.connect(app, request)
 }
 
