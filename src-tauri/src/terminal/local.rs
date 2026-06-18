@@ -194,38 +194,24 @@ fn run_pty_reader(
         );
     };
 
-    // 先报 connecting，等实际有数据流过再报 connected
-    emit_status("connecting", None);
+    // 与 SSH 一致：PTY 就绪即报 connected，输出由 output_emit 异步推送
+    emit_status("connected", None);
 
     let mut buf = [0u8; 8192];
-    let mut connected_emitted = false;
     loop {
         if abort.load(Ordering::Relaxed) {
+            output_emit::flush_session(&app, &session_id);
             emit_status("disconnected", None);
             break;
         }
 
         match reader.read(&mut buf) {
             Ok(0) => {
-                // 如果从未收到任何输出就 EOF，说明 shell 启动后立即退出
-                if !connected_emitted {
-                    emit_status(
-                        "error",
-                        Some(
-                            "Shell 启动后立即退出，未产生任何输出。请检查系统 Shell 是否可用。"
-                                .to_string(),
-                        ),
-                    );
-                } else {
-                    emit_status("disconnected", None);
-                }
+                output_emit::flush_session(&app, &session_id);
+                emit_status("disconnected", None);
                 break;
             }
             Ok(n) => {
-                if !connected_emitted {
-                    connected_emitted = true;
-                    emit_status("connected", None);
-                }
                 let text = String::from_utf8_lossy(&buf[..n]).into_owned();
                 output_emit::append_and_emit(&app, &session_id, &text);
             }

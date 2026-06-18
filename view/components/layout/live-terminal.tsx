@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { writeTerminal, resizeTerminal } from '@/lib/terminal-client'
+import { writeTerminal, resizeTerminal, readTerminalBufferSince } from '@/lib/terminal-client'
 import { registerTerminalInputHandler } from '@/lib/terminal-input-registry'
 import {
   getTerminalOutputBuffer,
@@ -217,6 +217,31 @@ export function LiveTerminal({
       scheduleFit()
     }
   }, [connected, inputEnabled, scheduleFit])
+
+  // 连接成功后从 Rust 缓冲补拉首屏输出（防止 IPC 批量延迟导致仅见光标）
+  useEffect(() => {
+    if (!termReady || !connected) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void readTerminalBufferSince(sessionId, 0)
+        .then(buf => {
+          if (cancelled || !buf || !termRef.current) return
+          const local = getTerminalOutputBuffer(sessionId)
+          if (buf.length > local.length) {
+            requestTerminalResync(sessionId)
+          } else if (local.length === 0 && buf.length > 0) {
+            termRef.current.write(buf)
+            bufferSyncedRef.current = buf.length
+          }
+        })
+        .catch(() => {})
+      requestTerminalResync(sessionId)
+    }, 120)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [sessionId, termReady, connected])
 
   useEffect(() => {
     if (clearSignal > 0) {

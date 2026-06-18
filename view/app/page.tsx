@@ -45,6 +45,7 @@ import {
   clearTerminalOutputBuffer,
   getTerminalOutputBuffer,
   injectAiCommandEcho,
+  requestTerminalResync,
 } from '@/lib/terminal-stream'
 import { updateIdeContext } from '@/lib/claude-client'
 import { makeTerminalSessionId } from '@/lib/terminal-session'
@@ -898,6 +899,7 @@ export default function AITerminal() {
 
       unlistenStatus = await listenTerminalStatus(event => {
         if (event.status === 'connected') {
+          requestTerminalResync(event.sessionId)
           let connectedSession: Session | undefined
           let profileSessionId: string | undefined
           let shouldLoadRemote = false

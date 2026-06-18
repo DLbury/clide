@@ -83,6 +83,7 @@ async fn run_ssh_session(
     loop {
         if abort.load(Ordering::Relaxed) {
             let _ = channel.close().await;
+            output_emit::flush_session(&app, &session_id);
             emit_status("disconnected", None);
             break;
         }
@@ -106,6 +107,7 @@ async fn run_ssh_session(
                 output_emit::append_and_emit(&app, &session_id, &text);
             }
             Ok(Some(ChannelMsg::ExitStatus { .. })) | Ok(None) => {
+                output_emit::flush_session(&app, &session_id);
                 emit_status("disconnected", None);
                 break;
             }
