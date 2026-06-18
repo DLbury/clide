@@ -124,10 +124,19 @@ export function LiveTerminal({
     fitRef.current = fitAddon
     setTermReady(true)
 
+    // 立即同步 PTY 尺寸（PTY 初始为 120x32，需尽快与 xterm 实际尺寸对齐，
+    // 否则 PowerShell PSReadLine 按错误列数计算换行，长命令字符会"消失"）
+    syncPtySize()
+    // 重试几次，防止后端 session 尚未就绪时 resize 被丢弃
+    const syncTimers = [50, 200, 500].map(ms =>
+      setTimeout(() => syncPtySize(), ms)
+    )
+
     resizeObserverRef.current = new ResizeObserver(() => scheduleFit())
     resizeObserverRef.current.observe(container)
 
     return () => {
+      syncTimers.forEach(clearTimeout)
       if (resizeRafRef.current != null) cancelAnimationFrame(resizeRafRef.current)
       resizeObserverRef.current?.disconnect()
       resizeObserverRef.current = null
@@ -138,7 +147,7 @@ export function LiveTerminal({
       fitRef.current = null
       setTermReady(false)
     }
-  }, [isDark, fit, scheduleFit])
+  }, [isDark, fit, scheduleFit, syncPtySize])
 
   /** 从滚动缓冲完整重绘 xterm（切换标签 / 漏帧时），必须先 clear 再 write，避免重复叠加 */
   const replayBufferToTerm = useCallback(() => {
@@ -213,11 +222,13 @@ export function LiveTerminal({
   useEffect(() => {
     if (connected && inputEnabled) {
       termRef.current?.focus()
+      syncPtySize() // 立即同步，不等待 rAF
       scheduleFit()
     } else if (connected) {
+      syncPtySize()
       scheduleFit()
     }
-  }, [connected, inputEnabled, scheduleFit])
+  }, [connected, inputEnabled, scheduleFit, syncPtySize])
 
   // 连接成功后从 Rust 缓冲补拉首屏输出（防止 IPC 批量延迟导致仅见光标）
   useEffect(() => {
