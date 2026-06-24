@@ -693,6 +693,25 @@ fn parse_stream_line(
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
+        if inner_type == "content_block_start" {
+            if let Some(block) = value.pointer("/event/content_block") {
+                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                    let mut ev = mk("tool_start");
+                    ev.tool_id = block
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    ev.tool_name = block
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    ev.tool_input = block.get("input").cloned();
+                    events_out.push(ev);
+                }
+            }
+            return events_out;
+        }
+
         if inner_type == "content_block_delta" {
             if delta_type == "text_delta" {
                 if let Some(text) = value
@@ -911,6 +930,20 @@ mod tests {
         assert!(result.is_some(), "Should find node.exe");
         let path = result.unwrap();
         assert!(path.contains("node.exe"), "Path should contain node.exe");
+    }
+
+    #[test]
+    fn test_parse_content_block_start_tool_use() {
+        let line = r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_abc","name":"mcp__aiterm__runShellCommand","input":{"command":"echo hi"}}}}"#;
+        let mut session_id = Some("sess-1".to_string());
+        let events = parse_stream_line(line, "req-1", &mut session_id);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "tool_start");
+        assert_eq!(events[0].tool_id.as_deref(), Some("toolu_abc"));
+        assert_eq!(
+            events[0].tool_name.as_deref(),
+            Some("mcp__aiterm__runShellCommand")
+        );
     }
 
     #[test]

@@ -37,9 +37,14 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
   const reasoning = message.reasoning?.trim() ?? ''
   const tools = message.tools ?? []
   const tasks = message.tasks ?? []
-  const reasoningStreaming = isStreaming && !message.content.trim()
+  const hasRunningTools = tools.some(t => t.status === 'running' || t.status === 'pending')
+  const reasoningStreaming = isStreaming && !message.content.trim() && !hasRunningTools
 
   const parts = message.parts
+  const toolIdsInParts = new Set(
+    (parts ?? []).filter(p => p.kind === 'tool').map(p => p.toolId)
+  )
+  const orphanTools = tools.filter(t => !toolIdsInParts.has(t.id))
 
   return (
     <div className="space-y-3 min-w-0">
@@ -96,6 +101,22 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
               />
             )
           })
+          .concat(
+            orphanTools.map(tool => (
+              <Tool key={`orphan-tool-${tool.id}`} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
+                <ToolHeader
+                  type="dynamic-tool"
+                  toolName={tool.name.replace(/^mcp__aiterm__/, '')}
+                  state={toolStatusToUiState(tool.status)}
+                  title={tool.name.replace(/^mcp__aiterm__/, '')}
+                />
+                <ToolContent>
+                  {tool.input !== undefined && <ToolInput input={tool.input} />}
+                  <ToolOutput output={tool.output} errorText={tool.error} />
+                </ToolContent>
+              </Tool>
+            ))
+          )
         : (
             <>
               {reasoning && (

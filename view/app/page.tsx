@@ -2865,8 +2865,6 @@ export default function AITerminal() {
         ) {
           setInteractivePrompt(null)
         }
-        // shell_command 已由 Claude stream 的 tool_start/tool_result 渲染，避免重复插入工具块
-        return
       }
       const assistantId = activeAssistantIdRef.current
       const connId = activeConnectionIdRef.current
@@ -2877,9 +2875,7 @@ export default function AITerminal() {
             return {
               ...conn,
               aiMessages: conn.aiMessages.map(m =>
-                m.id === assistantId
-                  ? applyToolActivityToMessage(m, event, Date.now())
-                  : m
+                m.id === assistantId ? applyToolActivityToMessage(m, event) : m
               ),
             }
           })

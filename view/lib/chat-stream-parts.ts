@@ -139,12 +139,38 @@ export function applyClaudeStreamEvent(
   return next
 }
 
+/** 稳定 ID：running/completed 事件必须命中同一条工具记录 */
+export function toolActivityId(activity: ToolActivityEvent): string {
+  if (activity.kind === 'shell_command') {
+    const cmd = (activity.command ?? activity.displayCommand ?? '').trim()
+    const sess = activity.terminalSessionId ?? activity.profileId ?? 'default'
+    return `activity-shell-${sess}-${cmd}`
+  }
+  if (activity.kind === 'connect' || activity.kind === 'disconnect') {
+    return `activity-${activity.kind}-${activity.profileId ?? 'unknown'}`
+  }
+  return `activity-${activity.kind}-${activity.profileId ?? activity.command ?? 'unknown'}`
+}
+
 export function applyToolActivityToMessage(
   message: ChatMessage,
-  activity: ToolActivityEvent,
-  index: number
+  activity: ToolActivityEvent
 ): ChatMessage {
-  const id = `activity-${activity.kind}-${index}-${activity.command ?? activity.profileId ?? ''}`
+  const activityCmd = (activity.command ?? activity.displayCommand ?? '').trim()
+  const existingByCmd =
+    activity.kind === 'shell_command' && activityCmd
+      ? message.tools?.find(t => {
+          if (t.name !== 'mcp__aiterm__runShellCommand' && t.name !== 'runShellCommand') {
+            return false
+          }
+          const input = t.input
+          if (!input || typeof input !== 'object' || input === null || !('command' in input)) {
+            return false
+          }
+          return String((input as { command?: unknown }).command ?? '').trim() === activityCmd
+        })
+      : undefined
+  const id = existingByCmd?.id ?? toolActivityId(activity)
   let title = activity.kind
   let description: string | undefined
   let status: ChatTaskPart['status'] = 'pending'
@@ -162,21 +188,28 @@ export function applyToolActivityToMessage(
       toolStatus = 'completed'
     } else if (activity.status === 'error') {
       toolStatus = 'error'
+      status = 'pending'
     }
   }
 
-  return {
+  let next: ChatMessage = {
     ...message,
     tools: upsertTool(message.tools, {
       id,
-      name: activity.kind === 'shell_command' ? 'runShellCommand' : activity.kind,
-      input: activity.command ? { command: activity.command, profileId: activity.profileId } : undefined,
+      name: activity.kind === 'shell_command' ? 'mcp__aiterm__runShellCommand' : activity.kind,
+      input: activity.command
+        ? { command: activity.command, profileId: activity.profileId }
+        : undefined,
       output: activity.outputPreview,
       error: activity.error,
       status: toolStatus,
     }),
     tasks: upsertTask(message.tasks, id, title, status, description),
   }
+  if (message.role === 'assistant') {
+    next = appendPart(next, { kind: 'tool', toolId: id })
+  }
+  return next
 }
 
 export function toolStatusToUiState(

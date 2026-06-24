@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Clide",
-  "version": "0.1.47",
+  "version": "0.1.48",
   "identifier": "com.dlbury.clide",
   "build": {
     "beforeDevCommand": "node scripts/start-next-dev.mjs 13800",
@@ -51,6 +51,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "sidebarImage": "icons/nsis/installer-sidebar.bmp",
+        "headerImage": "icons/nsis/installer-header.bmp",
+        "uninstallerIcon": "icons/icon.ico",
+        "uninstallerHeaderImage": "icons/nsis/uninstaller-header.bmp"
+      }
+    }
   }
 }
