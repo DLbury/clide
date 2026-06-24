@@ -5,6 +5,8 @@
 
 <p align="center">
   <a href="README.md"><img src="https://img.shields.io/badge/lang-English-blue" alt="English"></a>
+  &nbsp;
+  <a href="README_ZH.md"><img src="https://img.shields.io/badge/lang-中文-red" alt="中文"></a>
 </p>
 
 
