@@ -13,7 +13,7 @@ pub mod terminal;
 
 use app_paths::McpBundlePaths;
 use claude::bridge::ClaudeBridge;
-use claude::detect::{detect_claude_binary, ClaudeAutoDetectManager, ClaudeDetectResult};
+use claude::detect::{detect_claude_binary_with_custom, ClaudeAutoDetectManager, ClaudeDetectResult};
 use claude::session::ClaudeSessionManager;
 use parking_lot::Mutex;
 use runtime::RuntimeStore;
@@ -37,8 +37,8 @@ pub struct AppState {
 }
 
 #[tauri::command]
-fn claude_detect() -> Result<ClaudeDetectResult, String> {
-    Ok(detect_claude_binary())
+fn claude_detect(claude_path: Option<String>) -> Result<ClaudeDetectResult, String> {
+    Ok(detect_claude_binary_with_custom(claude_path))
 }
 
 #[tauri::command]

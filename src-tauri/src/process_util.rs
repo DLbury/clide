@@ -302,6 +302,28 @@ fn augment_path_with_npm(path: &str) -> String {
     parts.join(";")
 }
 
+/// 修复 GUI 进程 PATH 并补齐 npm/node 常见目录，供 claude/node 检测与子进程解析使用。
+pub fn prepare_cli_discovery_environment() {
+    fix_gui_environment();
+    #[cfg(windows)]
+    {
+        let current = std::env::var("PATH")
+            .or_else(|_| std::env::var("Path"))
+            .unwrap_or_default();
+        let merged = augment_path_with_npm(&current);
+        if !merged.is_empty() {
+            std::env::set_var("PATH", &merged);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let merged = augment_unix_path(&std::env::var("PATH").unwrap_or_default());
+        if !merged.is_empty() {
+            std::env::set_var("PATH", &merged);
+        }
+    }
+}
+
 #[cfg(not(windows))]
 fn augment_unix_path(path: &str) -> String {
     let mut parts: Vec<String> = path
@@ -351,7 +373,7 @@ fn augment_unix_path(path: &str) -> String {
 
 /// 解析 Node 可执行文件（GUI 子进程 PATH 常不含 node；Ubuntu apt 包名为 nodejs）。
 pub fn resolve_node_executable() -> Result<String, String> {
-    fix_gui_environment();
+    prepare_cli_discovery_environment();
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(p) = which::which("node") {

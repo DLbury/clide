@@ -176,7 +176,9 @@ export function useClaudeCode({
 
     // 启动阶段不主动拉起 Bridge；仅做轻量检测，避免首屏卡顿。
     const detectTimer = setTimeout(() => {
-      detectClaude().then(setDetected).catch(console.error)
+      detectClaude(claudePathRef.current || undefined)
+        .then(setDetected)
+        .catch(console.error)
     }, 2000)
 
     // AI 启用后预热桥接 + MCP，避免首条消息才注册导致 Claude 拿不到工具

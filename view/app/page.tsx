@@ -2120,8 +2120,9 @@ export default function AITerminal() {
           if (claudeCode.streamListenError) {
             throw new Error(claudeCode.streamListenError)
           }
-          const detected =
-            claudeCode.detected ?? (await detectClaude().catch(() => null))
+          const detected = await detectClaude(aiSettings.claudePath || undefined).catch(
+            () => claudeCode.detected
+          )
           if (!detected?.found) {
             const logHint = claudeCode.lastDiag ? `\n${claudeCode.lastDiag}` : ''
             throw new Error(

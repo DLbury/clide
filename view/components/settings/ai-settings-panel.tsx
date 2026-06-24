@@ -32,7 +32,7 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
 
   useEffect(() => {
     if (!isDesktop) return
-    detectClaude()
+    detectClaude(draft.claudePath || undefined)
       .then(result => {
         if (result.found) {
           setClaudeDetect(

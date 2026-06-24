@@ -1,4 +1,6 @@
-use crate::process_util::{command_no_window, normalize_path, prefer_claude_executable};
+use crate::process_util::{
+    command_no_window, normalize_path, prefer_claude_executable, prepare_cli_discovery_environment,
+};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,7 +50,7 @@ impl ClaudeAutoDetectManager {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             while running.load(Ordering::SeqCst) {
-                let result = detect_claude_binary_internal(true);
+                let result = detect_claude_binary_internal(true, None);
                 let mut guard = last_result.write().await;
                 *guard = result;
                 guard.candidates = detect_all_claude_candidates();
@@ -69,7 +71,7 @@ impl ClaudeAutoDetectManager {
 
     /// 立即执行一次发现
     pub async fn detect_now(&self) -> ClaudeDetectResult {
-        let result = detect_claude_binary_internal(true);
+        let result = detect_claude_binary_internal(true, None);
         let mut guard = self.last_result.write().await;
         *guard = result;
         guard.clone()
@@ -99,6 +101,7 @@ pub fn get_claude_path_from_env() -> Option<String> {
 
 /// 检测所有可能的 Claude Code 候选路径
 fn detect_all_claude_candidates() -> Vec<String> {
+    prepare_cli_discovery_environment();
     let mut candidates = Vec::new();
 
     // 1. 首先检查环境变量
@@ -106,22 +109,32 @@ fn detect_all_claude_candidates() -> Vec<String> {
         candidates.push(path);
     }
 
-    // 2. 检查 PATH 中的 claude
-    if let Ok(path) = which::which("claude") {
-        candidates.push(path.display().to_string());
+    // 2. 检查 PATH 中的 claude（含 Windows 常见别名）
+    for name in ["claude", "claude.exe", "claude.cmd"] {
+        if let Ok(path) = which::which(name) {
+            candidates.push(path.display().to_string());
+        }
     }
 
     // 3. 检查常见的安装路径
     #[cfg(windows)]
     {
+        scan_windows_claude_installs(&mut candidates);
+
         // Windows 常见路径
         let common_paths = [
             "%USERPROFILE%/.claude/local/claude.exe",
             "%USERPROFILE%/.claude/claude.exe",
+            "%USERPROFILE%/.local/bin/claude.exe",
+            "%USERPROFILE%/.local/bin/claude.cmd",
             "%LOCALAPPDATA%/Programs/claude/claude.exe",
+            "%LOCALAPPDATA%/AnthropicClaude/claude.exe",
             "%PROGRAMFILES%/Claude/claude.exe",
             "%PROGRAMFILES(x86)%/Claude/claude.exe",
+            "%APPDATA%/npm/claude.exe",
+            "%APPDATA%/npm/claude.cmd",
             "%USERPROFILE%/AppData/Roaming/npm/claude.exe",
+            "%USERPROFILE%/AppData/Roaming/npm/claude.cmd",
             "%USERPROFILE%/AppData/Local/npm/claude.exe",
         ];
 
@@ -212,15 +225,21 @@ fn detect_all_claude_candidates() -> Vec<String> {
 }
 
 /// 内部检测函数，用于自动发现管理器
-fn detect_claude_binary_internal(skip_version: bool) -> ClaudeDetectResult {
+fn detect_claude_binary_internal(skip_version: bool, custom: Option<&str>) -> ClaudeDetectResult {
     let candidates = detect_all_claude_candidates();
 
-    // 优先使用环境变量指定的路径
-    let path = if let Some(env_path) = get_claude_path_from_env() {
-        Some(env_path)
+    let path = if let Some(custom) = custom.filter(|p| !p.trim().is_empty()) {
+        let custom = custom.trim();
+        if std::path::Path::new(custom).exists() {
+            Some(normalize_path(custom))
+        } else {
+            None
+        }
     } else {
-        candidates.first().cloned()
-    };
+        None
+    }
+    .or_else(get_claude_path_from_env)
+    .or_else(|| candidates.first().cloned());
 
     let version = if skip_version {
         None
@@ -238,12 +257,41 @@ fn detect_claude_binary_internal(skip_version: bool) -> ClaudeDetectResult {
 
 /// 公共 API：检测 Claude Code 二进制文件（快速，不跑 --version 子进程）
 pub fn detect_claude_binary() -> ClaudeDetectResult {
-    detect_claude_binary_internal(true)
+    detect_claude_binary_internal(true, None)
+}
+
+/// 含设置页自定义路径的检测
+pub fn detect_claude_binary_with_custom(custom: Option<String>) -> ClaudeDetectResult {
+    detect_claude_binary_internal(true, custom.as_deref())
 }
 
 /// 含版本信息的完整检测（设置页等场景）
 pub fn detect_claude_binary_full() -> ClaudeDetectResult {
-    detect_claude_binary_internal(false)
+    detect_claude_binary_internal(false, None)
+}
+
+#[cfg(windows)]
+fn scan_windows_claude_installs(candidates: &mut Vec<String>) {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("USERPROFILE") {
+        dirs.push(PathBuf::from(format!("{home}\\AppData\\Roaming\\npm")));
+        dirs.push(PathBuf::from(format!("{home}\\.local\\bin")));
+        dirs.push(PathBuf::from(format!("{home}\\.claude\\local")));
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        dirs.push(PathBuf::from(appdata).join("npm"));
+    }
+    for dir in dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for name in ["claude.exe", "claude.cmd", "claude.bat", "claude"] {
+            let path = dir.join(name);
+            if path.is_file() {
+                candidates.push(path.display().to_string());
+            }
+        }
+    }
 }
 
 /// 读取 Claude Code 版本

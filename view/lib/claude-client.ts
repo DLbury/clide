@@ -69,8 +69,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return tauriInvoke<T>(cmd, args)
 }
 
-export async function detectClaude(): Promise<ClaudeDetectResult> {
-  return invoke<ClaudeDetectResult>('claude_detect')
+export async function detectClaude(claudePath?: string): Promise<ClaudeDetectResult> {
+  return invoke<ClaudeDetectResult>('claude_detect', { claudePath: claudePath || null })
 }
 
 export async function startClaudeBridge(
