@@ -267,6 +267,12 @@ async fn claude_send_message(
     continue_session: bool,
     request_id: Option<String>,
 ) -> Result<String, String> {
+    tracing::info!(
+        "claude_send_message: prompt_len={}, session_id={:?}, continue={}",
+        prompt.len(),
+        session_id,
+        continue_session
+    );
     let workspace_hint =
         claude::bridge::resolve_workspace_folders(&[]);
 
@@ -353,7 +359,11 @@ async fn claude_send_message(
         bridge_auth_token,
         workspace_dir,
         Some(mcp_paths.mcp_config_file.clone()),
-    )?;
+    ).map_err(|e| {
+        tracing::error!("claude_send_message: spawn failed: {e}");
+        e
+    })?;
+    tracing::info!("claude_send_message: spawn succeeded, request_id={request_id}");
     Ok(request_id)
 }
 
