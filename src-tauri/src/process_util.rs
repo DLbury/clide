@@ -427,7 +427,7 @@ pub fn resolve_node_executable() -> Result<String, String> {
     )
 }
 
-/// 优先选用 `.exe`，避免 npm 全局安装返回 `.cmd` 时启动失败。
+/// 优先选用 Windows 可真正启动的格式：`.exe` > `.cmd`/`.bat` > 无扩展名（npm 的 `claude` 常为 Unix shim，直接执行会 os error 193）。
 pub fn prefer_claude_executable(candidates: &[String]) -> Option<String> {
     let mut sorted = candidates.to_vec();
     sorted.sort_by_key(|p| {
@@ -435,12 +435,41 @@ pub fn prefer_claude_executable(candidates: &[String]) -> Option<String> {
         if lower.ends_with(".exe") {
             0
         } else if lower.ends_with(".cmd") || lower.ends_with(".bat") {
-            2
-        } else {
             1
+        } else {
+            2
         }
     });
     sorted.into_iter().find(|p| Path::new(p).exists())
+}
+
+/// Windows 下将 npm 无扩展名 `claude` shim 解析为同目录的 `claude.cmd` / `claude.exe`。
+pub fn normalize_claude_executable(path: &str) -> String {
+    let path = normalize_path(path);
+    #[cfg(windows)]
+    {
+        let pb = Path::new(&path);
+        if !pb.is_file() {
+            return path;
+        }
+        let ext = pb
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        let is_native = matches!(ext.as_deref(), Some("exe") | Some("cmd") | Some("bat"));
+        if is_native {
+            return path;
+        }
+        if let Some(parent) = pb.parent() {
+            for alt in ["claude.cmd", "claude.exe", "claude.bat"] {
+                let candidate = parent.join(alt);
+                if candidate.is_file() {
+                    return candidate.display().to_string();
+                }
+            }
+        }
+    }
+    path
 }
 
 /// 规范化 Windows 路径分隔符。

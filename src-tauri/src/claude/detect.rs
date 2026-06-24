@@ -1,5 +1,6 @@
 use crate::process_util::{
-    command_no_window, normalize_path, prefer_claude_executable, prepare_cli_discovery_environment,
+    command_no_window, normalize_claude_executable, normalize_path, prefer_claude_executable,
+    prepare_cli_discovery_environment,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -109,8 +110,12 @@ fn detect_all_claude_candidates() -> Vec<String> {
         candidates.push(path);
     }
 
-    // 2. 检查 PATH 中的 claude（含 Windows 常见别名）
-    for name in ["claude", "claude.exe", "claude.cmd"] {
+    // 2. 检查 PATH（Windows 优先 .cmd，避免无扩展名 Unix shim）
+    #[cfg(windows)]
+    let which_names = ["claude.cmd", "claude.exe", "claude"];
+    #[cfg(not(windows))]
+    let which_names = ["claude", "claude.exe"];
+    for name in which_names {
         if let Ok(path) = which::which(name) {
             candidates.push(path.display().to_string());
         }
@@ -239,7 +244,8 @@ fn detect_claude_binary_internal(skip_version: bool, custom: Option<&str>) -> Cl
         None
     }
     .or_else(get_claude_path_from_env)
-    .or_else(|| candidates.first().cloned());
+    .or_else(|| candidates.first().cloned())
+    .map(|p| normalize_claude_executable(&p));
 
     let version = if skip_version {
         None
@@ -345,14 +351,14 @@ pub fn resolve_claude_path(custom: Option<String>) -> Result<String, String> {
     // 首先检查环境变量
     if let Some(path) = get_claude_path_from_env() {
         if std::path::Path::new(&path).exists() {
-            return Ok(normalize_path(&path));
+            return Ok(normalize_claude_executable(&path));
         }
     }
 
     // 然后检查用户提供的自定义路径
     if let Some(path) = custom.filter(|p| !p.trim().is_empty()) {
         if std::path::Path::new(&path).exists() {
-            return Ok(normalize_path(&path));
+            return Ok(normalize_claude_executable(&path));
         }
         return Err(format!("未找到 Claude Code: {path}"));
     }
@@ -361,7 +367,6 @@ pub fn resolve_claude_path(custom: Option<String>) -> Result<String, String> {
     let detected = detect_claude_binary();
     detected
         .path
-        .map(|p| normalize_path(&p))
         .ok_or_else(|| "未检测到 Claude Code CLI，请先安装并登录 claude。\n可以通过以下方式安装:\n  npm install -g @anthropic-ai/claude-code\n或者设置环境变量 CLAUDE_CODE_PATH 指定路径。".to_string())
 }
 
