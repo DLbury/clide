@@ -745,3 +745,73 @@ fn tool_result_text(block: &Value) -> Option<String> {
         })
         .filter(|s| !s.is_empty())
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn test_resolve_claude_invocation_with_cmd() {
+        let test_dir = std::env::temp_dir().join("claude_test");
+        let cmd_path = test_dir.join("claude.cmd");
+        
+        if !cmd_path.is_file() {
+            println!("Test .cmd file not found, skipping");
+            return;
+        }
+        
+        let (program, prefix_args) = resolve_claude_invocation(&cmd_path.display().to_string());
+        
+        println!("Program: {}", program);
+        println!("Prefix args: {:?}", prefix_args);
+        
+        // 应该找到 node.exe 并绕过 cmd.exe
+        assert!(program.contains("node.exe"), "Should find node.exe, got: {}", program);
+        assert!(!prefix_args.is_empty(), "Should have cli.js in prefix args");
+        assert!(prefix_args[0].contains("cli.js"), "First arg should be cli.js path");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_parse_cmd_for_cli_js() {
+        let test_dir = std::env::temp_dir().join("claude_test");
+        let cmd_path = test_dir.join("claude.cmd");
+        
+        if !cmd_path.is_file() {
+            println!("Test .cmd file not found, skipping");
+            return;
+        }
+        
+        let result = parse_cmd_for_cli_js(&cmd_path);
+        println!("Parsed cli.js path: {:?}", result);
+        
+        assert!(result.is_some(), "Should parse cli.js path from .cmd");
+        let path = result.unwrap();
+        assert!(path.to_string_lossy().contains("cli.js"), "Path should contain cli.js");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_find_node_exe() {
+        let test_dir = std::env::temp_dir().join("claude_test");
+        
+        let result = find_node_exe(&test_dir);
+        println!("Found node.exe: {:?}", result);
+        
+        assert!(result.is_some(), "Should find node.exe");
+        let path = result.unwrap();
+        assert!(path.contains("node.exe"), "Path should contain node.exe");
+    }
+
+    #[test]
+    fn test_extract_quoted_segments() {
+        let line = r#""%~dp0\node.exe" "%~dp0\node_modules\@anthropic-ai\claude-code\cli.js" %*"#;
+        let segments = extract_quoted_segments(line);
+        
+        println!("Extracted segments: {:?}", segments);
+        
+        assert_eq!(segments.len(), 2, "Should extract 2 quoted segments");
+        assert!(segments[0].contains("node.exe"), "First segment should contain node.exe");
+        assert!(segments[1].contains("cli.js"), "Second segment should contain cli.js");
+    }
+}
