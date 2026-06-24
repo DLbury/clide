@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter};
 /// Windows 下 `.cmd` shim 经 `cmd /c` 传参时，系统提示中的特殊字符（`%`、`|`、换行等）
 /// 会被 cmd.exe 误解析导致 Claude CLI 退出码 1。
 /// 此函数绕过 cmd.exe，直接定位 `cli.js` 并用 `node.exe` 启动。
-/// 返回 (program, initial_args)；失败则回退原始路径。
+/// 返回 (program, initial_args)。
 fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
     let path = PathBuf::from(claude_path);
     let is_cmd = path
@@ -28,29 +28,38 @@ fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
     }
 
     let Some(cmd_dir) = path.parent() else {
+        tracing::warn!(".cmd path has no parent dir: {}", claude_path);
         return (claude_path.to_string(), vec![]);
     };
 
-    // npm 全局安装的 cli.js 位于 cmd 同级 node_modules 下
+    // 策略 1：npm 全局安装，cli.js 位于 cmd 同级 node_modules 下
     let cli_js = cmd_dir
         .join("node_modules")
         .join("@anthropic-ai")
         .join("claude-code")
         .join("cli.js");
-    if !cli_js.is_file() {
-        return (claude_path.to_string(), vec![]);
-    }
 
-    // 优先用 cmd 同目录下的 node.exe（npm 内嵌 Node），否则回退 PATH 中的 node
-    let node_exe = cmd_dir.join("node.exe");
-    let program = if node_exe.is_file() {
-        node_exe.to_string_lossy().into_owned()
-    } else if let Ok(n) = which::which("node.exe") {
-        n.to_string_lossy().into_owned()
+    // 策略 2：解析 .cmd 文件内容，提取实际的 node + cli.js 路径
+    let cli_js = if cli_js.is_file() {
+        cli_js
+    } else if let Some(parsed) = parse_cmd_for_cli_js(&path) {
+        tracing::info!("Parsed .cmd to find cli.js: {}", parsed.display());
+        parsed
     } else {
-        // 找不到 node，回退 .cmd
+        tracing::warn!("Cannot locate cli.js for .cmd bypass: {}", claude_path);
         return (claude_path.to_string(), vec![]);
     };
+
+    // 查找 node.exe：cmd 同目录 > npm 根目录 > 系统 PATH
+    let program = find_node_exe(cmd_dir)
+        .unwrap_or_else(|| {
+            tracing::warn!("Cannot find node.exe for .cmd bypass, falling back to .cmd");
+            claude_path.to_string()
+        });
+
+    if program == claude_path {
+        return (claude_path.to_string(), vec![]);
+    }
 
     tracing::info!(
         "Bypassing .cmd shim: node={}, cli.js={}",
@@ -59,6 +68,124 @@ fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
     );
     (program, vec![cli_js.to_string_lossy().into_owned()])
 }
+
+/// 解析 .cmd 文件内容，提取 cli.js 路径。
+/// npm 生成的 .cmd 通常包含形如：
+///   "%~dp0\node.exe" "%~dp0\node_modules\@anthropic-ai\claude-code\cli.js" %*
+/// 或：
+///   "@ECHO off" ... "node.exe" "C:\path\to\cli.js"
+#[cfg(windows)]
+fn parse_cmd_for_cli_js(cmd_path: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(cmd_path).ok()?;
+    let cmd_dir = cmd_path.parent()?;
+
+    for line in content.lines() {
+        let lower = line.to_lowercase();
+        if !lower.contains("cli.js") && !lower.contains("claude-code") {
+            continue;
+        }
+
+        // 提取引号内的 cli.js 路径
+        for segment in extract_quoted_segments(line) {
+            let normalized = segment.replace("%~dp0", &format!("{}\\", cmd_dir.display()));
+            let normalized = normalized.replace("%dp0%", &format!("{}\\", cmd_dir.display()));
+            let p = PathBuf::from(&normalized);
+            if p.is_file() {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.eq_ignore_ascii_case("cli.js") {
+                    return Some(p);
+                }
+            }
+        }
+
+        // 尝试标准路径拼接
+        let standard = cmd_dir
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("cli.js");
+        if standard.is_file() {
+            return Some(standard);
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn parse_cmd_for_cli_js(_cmd_path: &Path) -> Option<PathBuf> {
+    None
+}
+
+/// 从命令行文本中提取所有双引号包裹的片段。
+fn extract_quoted_segments(line: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut in_quotes = false;
+    let mut current = String::new();
+    for ch in line.chars() {
+        if ch == '"' {
+            if in_quotes {
+                segments.push(std::mem::take(&mut current));
+            }
+            in_quotes = !in_quotes;
+        } else if in_quotes {
+            current.push(ch);
+        }
+    }
+    segments
+}
+
+/// 在多个位置搜索 node.exe。
+#[cfg(windows)]
+fn find_node_exe(cmd_dir: &Path) -> Option<String> {
+    // cmd 同目录（npm 内嵌 Node）
+    let node_in_cmd_dir = cmd_dir.join("node.exe");
+    if node_in_cmd_dir.is_file() {
+        return Some(node_in_cmd_dir.to_string_lossy().into_owned());
+    }
+    // npm 根目录（cmd 在 npm/ 子目录下时）
+    let node_in_parent = cmd_dir.join("..").join("node.exe");
+    if node_in_parent.is_file() {
+        return Some(node_in_parent.to_string_lossy().into_owned());
+    }
+    // npm 根目录再上一级（某些安装布局）
+    let node_in_grandparent = cmd_dir.join("..").join("..").join("node.exe");
+    if node_in_grandparent.is_file() {
+        return Some(node_in_grandparent.to_string_lossy().into_owned());
+    }
+    // 系统 PATH
+    if let Ok(n) = which::which("node.exe") {
+        return Some(n.to_string_lossy().into_owned());
+    }
+    // 常见安装路径
+    if let Some(home) = std::env::var_os("LOCALAPPDATA") {
+        let p = PathBuf::from(home).join("fnm_multishells").join("node.exe");
+        if p.is_file() { return Some(p.to_string_lossy().into_owned()); }
+    }
+    if let Some(home) = std::env::var_os("APPDATA") {
+        for sub in &["nvm\\current", "volta"] {
+            let p = PathBuf::from(home.clone()).join(sub).join("node.exe");
+            if p.is_file() { return Some(p.to_string_lossy().into_owned()); }
+        }
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        for sub in &[".nvm\\current\\bin", ".volta\\bin", ".fnm\\current"] {
+            let p = PathBuf::from(home.clone()).join(sub).join("node.exe");
+            if p.is_file() { return Some(p.to_string_lossy().into_owned()); }
+        }
+    }
+    // Program Files
+    if let Some(pf) = std::env::var_os("PROGRAMFILES") {
+        let p = PathBuf::from(pf).join("nodejs").join("node.exe");
+        if p.is_file() { return Some(p.to_string_lossy().into_owned()); }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn find_node_exe(_cmd_dir: &Path) -> Option<String> {
+    which::which("node").ok().map(|p| p.to_string_lossy().into_owned())
+}
+
 
 /// IDE 桥接已启用时追加到 Claude，促使其调用 MCP 工具而非仅文字回答。
 const IDE_BRIDGE_APPEND_PROMPT: &str = r#"You are connected to AI Terminal via IDE MCP integration (server `aiterm`).
@@ -267,8 +394,10 @@ impl ClaudeSessionManager {
          *  将 stderr 内容作为 error 返回，避免前端显示"已结束但未返回任何内容" */
         let stderr_collector: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let event_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+        let raw_line_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
         let stderr_for_stdout = stderr_collector.clone();
         let counter_for_stdout = event_counter.clone();
+        let raw_counter_for_stdout = raw_line_counter.clone();
 
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
@@ -285,6 +414,7 @@ impl ClaudeSessionManager {
                     event_counter.fetch_add(1, Ordering::SeqCst);
                     let _ = app_stdout.emit("claude:stream", event);
                 }
+                raw_line_counter.fetch_add(1, Ordering::SeqCst);
             }
 
             // 等待 stderr 线程读完剩余行（进程退出后管道很快关闭）
@@ -327,12 +457,15 @@ impl ClaudeSessionManager {
                 }
             } else if !saw_events {
                 // exit 0 但无任何 stdout 事件：stderr 可能包含错误原因
+                let raw_lines = raw_counter_for_stdout.load(Ordering::SeqCst);
                 if !collected_stderr.is_empty() {
                     Some(collected_stderr.join("\n"))
                 } else {
-                    Some(
-                        "Claude Code 进程退出但未产生任何输出。请确认 CLI 已安装、已登录（claude /login）且设置中路径正确。".to_string()
-                    )
+                    let mut msg = "Claude Code 进程退出但未产生任何输出。请确认 CLI 已安装、已登录（claude /login）且设置中路径正确。".to_string();
+                    if raw_lines > 0 {
+                        msg.push_str(&format!("（CLI 输出了 {} 行但均无法解析为 stream-json 事件，可能版本不兼容）", raw_lines));
+                    }
+                    Some(msg)
                 }
             } else {
                 None
