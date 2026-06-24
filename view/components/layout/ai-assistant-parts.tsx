@@ -25,7 +25,7 @@ import {
   ToolInput,
   ToolOutput,
 } from '@/components/ai-elements/tool'
-import { toolStatusToUiState } from '@/lib/chat-stream-parts'
+import { toolStatusToUiState, messageHasTextContent, messageHasRunningTools } from '@/lib/chat-stream-parts'
 import type { ChatMessage } from '@/lib/types'
 import { Loader2 } from 'lucide-react'
 
@@ -38,9 +38,11 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
   const reasoning = message.reasoning?.trim() ?? ''
   const tools = message.tools ?? []
   const tasks = message.tasks ?? []
-  const hasRunningTools = tools.some(t => t.status === 'running' || t.status === 'pending')
+  const hasText = messageHasTextContent(message)
+  const hasRunningTools = messageHasRunningTools(message)
   const reasoningStreaming =
-    isStreaming && !message.content.trim() && !hasRunningTools && !reasoning
+    isStreaming && !hasText && !hasRunningTools && !reasoning
+  const awaitingReply = isStreaming && Boolean(reasoning) && !hasText && !hasRunningTools
 
   const parts = message.parts
   const toolIdsInParts = new Set(
@@ -153,11 +155,13 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
                 </Tool>
               ))}
 
-              {message.content.trim() && <AiMarkdown content={message.content} isStreaming={isStreaming} />}
+              {message.content.trim() && (
+                <AiMarkdown content={message.content} isStreaming={isStreaming} />
+              )}
             </>
           )}
 
-      {isStreaming && reasoning && !message.content.trim() && !hasRunningTools && (
+      {awaitingReply && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="w-3 h-3 animate-spin" />
           <span>正在生成回复…</span>

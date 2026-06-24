@@ -32,6 +32,26 @@ function toolTaskTitle(name: string, input?: unknown): string {
   return name.replace(/^mcp__aiterm__/, '')
 }
 
+function shellCommandFromToolInput(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object' || input === null || !('command' in input)) {
+    return undefined
+  }
+  const cmd = (input as { command?: unknown }).command
+  return typeof cmd === 'string' ? cmd.trim() : undefined
+}
+
+/** 正文可能在 message.content 或 timeline parts 中 */
+export function messageHasTextContent(message: ChatMessage): boolean {
+  if (message.content?.trim()) return true
+  return message.parts?.some(p => p.kind === 'text' && p.content.trim()) ?? false
+}
+
+export function messageHasRunningTools(message: ChatMessage): boolean {
+  return (
+    message.tools?.some(t => t.status === 'running' || t.status === 'pending') ?? false
+  )
+}
+
 function upsertTask(
   tasks: ChatTaskPart[] | undefined,
   id: string,
@@ -77,6 +97,24 @@ function appendPart(message: ChatMessage, part: ChatMessagePart): ChatMessage {
     parts.push(part)
   }
   return { ...message, parts }
+}
+
+/** 回合结束时收尾：未收到 tool_result 的 MCP 工具不再显示 Running */
+export function finalizeAssistantTurn(message: ChatMessage): ChatMessage {
+  if (message.role !== 'assistant') return message
+
+  const tools = message.tools?.map(tool => {
+    if (tool.status === 'running' || tool.status === 'pending') {
+      return { ...tool, status: 'completed' as const }
+    }
+    return tool
+  })
+
+  const tasks = message.tasks?.map(task =>
+    task.status === 'pending' ? { ...task, status: 'completed' as const } : task
+  )
+
+  return { ...message, tools, tasks }
 }
 
 export function appendAssistantTextPart(message: ChatMessage, chunk: string): ChatMessage {
@@ -206,6 +244,24 @@ export function applyToolActivityToMessage(
     }),
     tasks: upsertTask(message.tasks, id, title, status, description),
   }
+
+  // IDE MCP 经 tool-activity 完成时，同步更新 stream-json 里 toolu_* 的 running 条目
+  if (activity.kind === 'shell_command' && activityCmd) {
+    next = {
+      ...next,
+      tools: (next.tools ?? []).map(tool => {
+        if (tool.status !== 'running' && tool.status !== 'pending') return tool
+        if (shellCommandFromToolInput(tool.input) !== activityCmd) return tool
+        return {
+          ...tool,
+          status: toolStatus,
+          output: activity.outputPreview ?? tool.output,
+          error: activity.error ?? tool.error,
+        }
+      }),
+    }
+  }
+
   if (message.role === 'assistant') {
     next = appendPart(next, { kind: 'tool', toolId: id })
   }

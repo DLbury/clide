@@ -107,6 +107,9 @@ import {
 import {
   applyClaudeStreamEvent,
   applyToolActivityToMessage,
+  finalizeAssistantTurn,
+  messageHasRunningTools,
+  messageHasTextContent,
 } from '@/lib/chat-stream-parts'
 // Keep import separate to avoid circular edits near large file blocks.
 import { appendAssistantTextPart } from '@/lib/chat-stream-parts'
@@ -2171,6 +2174,7 @@ export default function AITerminal() {
             const disposeSilentKeepalive = () => {
               if (silentTimer) clearTimeout(silentTimer)
               silentTimer = null
+              clearSettleTimer()
               claudeSilentKeepaliveRef.current.delete(requestId)
             }
             const armSilentTimeout = () => {
@@ -2213,8 +2217,47 @@ export default function AITerminal() {
             })
             armSilentTimeout()
             let sawReasoning = false
+            let settleTimer: ReturnType<typeof setTimeout> | null = null
+            const clearSettleTimer = () => {
+              if (settleTimer) clearTimeout(settleTimer)
+              settleTimer = null
+            }
+            const armSettleTimer = () => {
+              clearSettleTimer()
+              settleTimer = setTimeout(() => {
+                settleTimer = null
+                const pendingSet = claudeRequestsByConnectionRef.current.get(activeConnectionId)
+                if (pendingSet && pendingSet.size > 1) return
+                setConnections(prev =>
+                  prev.map(conn => {
+                    if (conn.id !== activeConnectionId || !conn.aiThinking) return conn
+                    const msg = conn.aiMessages.find(m => m.id === assistantId)
+                    if (!msg || !messageHasTextContent(msg) || messageHasRunningTools(msg)) {
+                      return conn
+                    }
+                    pendingSet?.delete(requestId)
+                    const stillPending = Boolean(
+                      pendingSet && pendingSet.size > 0
+                    )
+                    return {
+                      ...conn,
+                      aiMessages: conn.aiMessages.map(m =>
+                        m.id === assistantId ? finalizeAssistantTurn(m) : m
+                      ),
+                      aiThinking: stillPending,
+                    }
+                  })
+                )
+                if (
+                  !claudeRequestsByConnectionRef.current.get(activeConnectionId)?.size
+                ) {
+                  activeAssistantIdRef.current = null
+                }
+              }, 3500)
+            }
             claudeCode.registerStreamHandler(requestId, event => {
               armSilentTimeout()
+              armSettleTimer()
               let streamText: string | undefined
               // 任意 aiterm MCP 工具调用后禁用「从回复文本提取命令」的回退，避免与 MCP 重复执行
               if (event.eventType === 'tool_start' && event.toolName) {
@@ -2293,6 +2336,10 @@ export default function AITerminal() {
                 staleRetried = true
                 clearClaudeSessionId()
                 assistantAccumulated = ''
+                disposeSilentKeepalive()
+                const stalePending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
+                stalePending?.delete(requestId)
+                void cancelClaudeMessage(requestId).catch(() => {})
                 setConnections(prev =>
                   prev.map(conn =>
                     conn.id === activeConnectionId
@@ -2331,6 +2378,7 @@ export default function AITerminal() {
                 disposeSilentKeepalive()
                 const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
                 pending?.delete(requestId)
+                const stillPending = Boolean(pending && pending.size > 0)
 
                 if (event.sessionId) {
                   setConnections(prev =>
@@ -2343,12 +2391,14 @@ export default function AITerminal() {
                 }
                 const fallbackCmds = extractShellCommands(assistantAccumulated)
                 const shouldAutoRun =
+                  !stillPending &&
+                  !event.error &&
                   !mcpShellCommandThisTurnRef.current &&
                   activeShellConnected &&
                   fallbackCmds.length > 0 &&
                   (aiSettings.autoExecuteCommands ||
                     isRemoteConnectionRefusal(assistantAccumulated))
-                if (!event.error && shouldAutoRun) {
+                if (shouldAutoRun) {
                   for (const cmd of fallbackCmds) {
                     handleAiExecuteCommand(cmd)
                   }
@@ -2372,70 +2422,46 @@ export default function AITerminal() {
                     )
                   }
                 }
-                if (event.error) {
-                  setConnections(prev =>
-                    prev.map(conn => {
-                      if (conn.id !== activeConnectionId) return conn
-                      return {
-                        ...conn,
-                        aiMessages: conn.aiMessages.map(m =>
-                          m.id === assistantId
-                            ? {
-                                ...m,
-                                content: m.content || `Claude Code 错误: ${event.error}`,
-                              }
-                            : m
-                        ),
-                        aiThinking: false,
-                      }
-                    })
-                  )
-                } else if (
-                  !assistantAccumulated.trim() &&
-                  !bufferedResultText?.trim() &&
-                  !sawStreamingText &&
-                  sawReasoning
-                ) {
-                  setConnections(prev =>
-                    prev.map(conn =>
-                      conn.id === activeConnectionId ? { ...conn, aiThinking: false } : conn
-                    )
-                  )
-                } else if (
-                  !assistantAccumulated.trim() &&
-                  !bufferedResultText?.trim() &&
-                  !sawStreamingText
-                ) {
-                  const diag = claudeCode.lastDiag ? `\n\n诊断: ${claudeCode.lastDiag}` : ''
-                  const logHint =
-                    '可在 %LOCALAPPDATA%\\com.dlbury.clide\\logs\\clide.log 查看详细日志（若存在）。'
-                  setConnections(prev =>
-                    prev.map(conn => {
-                      if (conn.id !== activeConnectionId) return conn
-                      return {
-                        ...conn,
-                        aiMessages: conn.aiMessages.map(m =>
-                          m.id === assistantId
-                            ? {
-                                ...m,
-                                content:
-                                  m.content ||
-                                  `Claude 已结束但未返回任何内容。请确认已安装并登录 Claude Code CLI，且设置中的路径正确。${logHint}${diag}`,
-                              }
-                            : m
-                        ),
-                        aiThinking: false,
-                      }
-                    })
-                  )
-                } else {
-                  setConnections(prev =>
-                    prev.map(conn =>
-                      conn.id === activeConnectionId ? { ...conn, aiThinking: false } : conn
-                    )
-                  )
+                const diag = claudeCode.lastDiag ? `\n\n诊断: ${claudeCode.lastDiag}` : ''
+                const logHint =
+                  '可在 %LOCALAPPDATA%\\com.dlbury.clide\\logs\\clide.log 查看详细日志（若存在）。'
+                setConnections(prev =>
+                  prev.map(conn => {
+                    if (conn.id !== activeConnectionId) return conn
+                    return {
+                      ...conn,
+                      aiMessages: conn.aiMessages.map(m => {
+                        if (m.id !== assistantId) return m
+                        let updated = finalizeAssistantTurn(m)
+                        if (event.error && !updated.content.trim()) {
+                          updated = {
+                            ...updated,
+                            content: updated.content || `Claude Code 错误: ${event.error}`,
+                          }
+                        } else if (
+                          !event.error &&
+                          !assistantAccumulated.trim() &&
+                          !bufferedResultText?.trim() &&
+                          !sawStreamingText &&
+                          !updated.content.trim() &&
+                          !sawReasoning
+                        ) {
+                          updated = {
+                            ...updated,
+                            content:
+                              updated.content ||
+                              `Claude 已结束但未返回任何内容。请确认已安装并登录 Claude Code CLI，且设置中的路径正确。${logHint}${diag}`,
+                          }
+                        }
+                        return updated
+                      }),
+                      aiThinking: stillPending,
+                    }
+                  })
+                )
+                if (!stillPending) {
+                  activeAssistantIdRef.current = null
                 }
-                activeAssistantIdRef.current = null
               }
             })
           }
@@ -2539,6 +2565,7 @@ export default function AITerminal() {
     if (!activeConnectionId) return
     const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
     if (!pending || pending.size === 0) return
+    const assistantId = activeAssistantIdRef.current
     for (const requestId of pending) {
       claudeSilentKeepaliveRef.current.get(requestId)?.dispose()
       void cancelClaudeMessage(requestId).catch(() => {})
@@ -2546,9 +2573,16 @@ export default function AITerminal() {
     claudeRequestsByConnectionRef.current.delete(activeConnectionId)
     activeAssistantIdRef.current = null
     setConnections(prev =>
-      prev.map(conn =>
-        conn.id === activeConnectionId ? { ...conn, aiThinking: false } : conn
-      )
+      prev.map(conn => {
+        if (conn.id !== activeConnectionId) return conn
+        return {
+          ...conn,
+          aiMessages: conn.aiMessages.map(m =>
+            m.id === assistantId ? finalizeAssistantTurn(m) : m
+          ),
+          aiThinking: false,
+        }
+      })
     )
   }, [activeConnectionId])
 

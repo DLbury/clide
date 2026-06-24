@@ -207,8 +207,14 @@ export function useClaudeCode({
 
     listenClaudeStream(event => {
       const handler = pendingRequests.current.get(event.requestId)
-      // 让回调异步化，避免同步事件风暴导致 React update depth exceeded
-      if (handler) queueMicrotask(() => handler(event))
+      if (handler) {
+        // done 事件同步处理，避免 UI 在正文已显示后仍保持「进行中」
+        if (event.done) {
+          handler(event)
+        } else {
+          queueMicrotask(() => handler(event))
+        }
+      }
       if (event.done) {
         pendingRequests.current.delete(event.requestId)
       }
