@@ -110,6 +110,22 @@ fn detect_all_claude_candidates() -> Vec<String> {
         candidates.push(path);
     }
 
+    // 1.5 Windows：优先原生 claude.exe（npm shim 易触发 cmd 长度限制 / error 193）
+    #[cfg(windows)]
+    {
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            for rel in [
+                r".local\bin\claude.exe",
+                r".claude\local\claude.exe",
+            ] {
+                let p = PathBuf::from(&home).join(rel);
+                if p.is_file() {
+                    candidates.push(p.display().to_string());
+                }
+            }
+        }
+    }
+
     // 2. 检查 PATH（Windows 优先 .cmd，避免无扩展名 Unix shim）
     #[cfg(windows)]
     let which_names = ["claude.cmd", "claude.exe", "claude"];

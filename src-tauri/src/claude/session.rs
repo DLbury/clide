@@ -1,5 +1,5 @@
 use crate::claude::detect::resolve_claude_path;
-use crate::process_util::command_no_window;
+use crate::process_util::{command_no_window, prepare_cli_discovery_environment};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
@@ -32,34 +32,15 @@ fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
         return (claude_path.to_string(), vec![]);
     };
 
-    // 策略 1：npm 全局安装，cli.js 位于 cmd 同级 node_modules 下
-    let cli_js = cmd_dir
-        .join("node_modules")
-        .join("@anthropic-ai")
-        .join("claude-code")
-        .join("cli.js");
-
-    // 策略 2：解析 .cmd 文件内容，提取实际的 node + cli.js 路径
-    let cli_js = if cli_js.is_file() {
-        cli_js
-    } else if let Some(parsed) = parse_cmd_for_cli_js(&path) {
-        tracing::info!("Parsed .cmd to find cli.js: {}", parsed.display());
-        parsed
-    } else {
+    let Some(cli_js) = locate_claude_cli_js(&path, cmd_dir) else {
         tracing::warn!("Cannot locate cli.js for .cmd bypass: {}", claude_path);
         return (claude_path.to_string(), vec![]);
     };
 
-    // 查找 node.exe：cmd 同目录 > npm 根目录 > 系统 PATH
-    let program = find_node_exe(cmd_dir)
-        .unwrap_or_else(|| {
-            tracing::warn!("Cannot find node.exe for .cmd bypass, falling back to .cmd");
-            claude_path.to_string()
-        });
-
-    if program == claude_path {
+    let Some(program) = find_node_exe(cmd_dir) else {
+        tracing::warn!("Cannot find node.exe for .cmd bypass, falling back to .cmd");
         return (claude_path.to_string(), vec![]);
-    }
+    };
 
     tracing::info!(
         "Bypassing .cmd shim: node={}, cli.js={}",
@@ -67,6 +48,50 @@ fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
         cli_js.display()
     );
     (program, vec![cli_js.to_string_lossy().into_owned()])
+}
+
+/// 定位 npm 全局安装的 cli.js（多种目录布局）。
+fn locate_claude_cli_js(cmd_path: &Path, cmd_dir: &Path) -> Option<PathBuf> {
+    if let Some(parsed) = parse_cmd_for_cli_js(cmd_path) {
+        return Some(parsed);
+    }
+
+    let standard = cmd_dir
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code")
+        .join("cli.js");
+    if standard.is_file() {
+        return Some(standard);
+    }
+
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let global = PathBuf::from(appdata)
+            .join("npm")
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("cli.js");
+        if global.is_file() {
+            return Some(global);
+        }
+    }
+
+    if let Ok(home) = std::env::var("USERPROFILE") {
+        let local = PathBuf::from(home)
+            .join("AppData")
+            .join("Roaming")
+            .join("npm")
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("cli.js");
+        if local.is_file() {
+            return Some(local);
+        }
+    }
+
+    None
 }
 
 /// 解析 .cmd 文件内容，提取 cli.js 路径。
@@ -137,6 +162,7 @@ fn extract_quoted_segments(line: &str) -> Vec<String> {
 /// 在多个位置搜索 node.exe。
 #[cfg(windows)]
 fn find_node_exe(cmd_dir: &Path) -> Option<String> {
+    prepare_cli_discovery_environment();
     // cmd 同目录（npm 内嵌 Node）
     let node_in_cmd_dir = cmd_dir.join("node.exe");
     if node_in_cmd_dir.is_file() {
@@ -183,6 +209,7 @@ fn find_node_exe(cmd_dir: &Path) -> Option<String> {
 
 #[cfg(not(windows))]
 fn find_node_exe(_cmd_dir: &Path) -> Option<String> {
+    prepare_cli_discovery_environment();
     which::which("node").ok().map(|p| p.to_string_lossy().into_owned())
 }
 
@@ -320,8 +347,14 @@ impl ClaudeSessionManager {
                 args.push("--allowed-tools".to_string());
                 args.push(tool.to_string());
             }
-            args.push("--append-system-prompt".to_string());
-            args.push(IDE_BRIDGE_APPEND_PROMPT.to_string());
+            // 避免 Windows cmd.exe 8191 字符限制：长 system prompt 写入临时文件
+            let append_path =
+                std::env::temp_dir().join(format!("clide-ide-prompt-{request_id}.txt"));
+            std::fs::write(&append_path, IDE_BRIDGE_APPEND_PROMPT.as_bytes()).map_err(|e| {
+                format!("无法写入 Claude IDE 提示词临时文件: {e}")
+            })?;
+            args.push("--append-system-prompt-file".to_string());
+            args.push(append_path.display().to_string());
         } else {
             args.push("--permission-mode".to_string());
             args.push("default".to_string());
@@ -393,9 +426,11 @@ impl ClaudeSessionManager {
          *  当 Claude 进程 exit 0 但 stdout 未产生任何可解析事件时，
          *  将 stderr 内容作为 error 返回，避免前端显示"已结束但未返回任何内容" */
         let stderr_collector: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let unhandled_stdout: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let event_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
         let raw_line_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
         let stderr_for_stdout = stderr_collector.clone();
+        let unhandled_for_stdout = unhandled_stdout.clone();
         let counter_for_stdout = event_counter.clone();
         let raw_counter_for_stdout = raw_line_counter.clone();
 
@@ -410,9 +445,19 @@ impl ClaudeSessionManager {
                     continue;
                 }
 
-                for event in parse_stream_line(trimmed, &request_stdout, &mut session_id) {
-                    event_counter.fetch_add(1, Ordering::SeqCst);
-                    let _ = app_stdout.emit("claude:stream", event);
+                let events = parse_stream_line(trimmed, &request_stdout, &mut session_id);
+                if events.is_empty() {
+                    let sample = if trimmed.len() > 240 {
+                        format!("{}…", &trimmed[..240])
+                    } else {
+                        trimmed.to_string()
+                    };
+                    unhandled_for_stdout.lock().push(sample);
+                } else {
+                    for event in events {
+                        event_counter.fetch_add(1, Ordering::SeqCst);
+                        let _ = app_stdout.emit("claude:stream", event);
+                    }
                 }
                 raw_line_counter.fetch_add(1, Ordering::SeqCst);
             }
@@ -458,12 +503,20 @@ impl ClaudeSessionManager {
             } else if !saw_events {
                 // exit 0 但无任何 stdout 事件：stderr 可能包含错误原因
                 let raw_lines = raw_counter_for_stdout.load(Ordering::SeqCst);
+                let unhandled = unhandled_for_stdout.lock().clone();
                 if !collected_stderr.is_empty() {
                     Some(collected_stderr.join("\n"))
+                } else if !unhandled.is_empty() {
+                    Some(format!(
+                        "Claude Code 输出无法解析为 stream-json。\n\n--- CLI stdout ---\n{}",
+                        unhandled.join("\n")
+                    ))
                 } else {
                     let mut msg = "Claude Code 进程退出但未产生任何输出。请确认 CLI 已安装、已登录（claude /login）且设置中路径正确。".to_string();
                     if raw_lines > 0 {
-                        msg.push_str(&format!("（CLI 输出了 {} 行但均无法解析为 stream-json 事件，可能版本不兼容）", raw_lines));
+                        msg.push_str(&format!(
+                            "（CLI 输出了 {raw_lines} 行但均无法解析为 stream-json 事件，可能版本不兼容）"
+                        ));
                     }
                     Some(msg)
                 }
@@ -605,6 +658,18 @@ fn parse_stream_line(
         tool_output: None,
         tool_error: None,
     };
+
+    if event_type == "system" {
+        if let Some(id) = value.get("session_id").and_then(|v| v.as_str()) {
+            *session_id = Some(id.to_string());
+        }
+        let mut ev = mk("system");
+        if value.get("subtype").and_then(|v| v.as_str()) == Some("status") {
+            ev.event_type = "system_status".into();
+        }
+        events_out.push(ev);
+        return events_out;
+    }
 
     if event_type == "stream_event" {
         let inner_type = value
