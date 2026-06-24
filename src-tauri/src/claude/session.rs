@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
@@ -216,6 +216,9 @@ fn find_node_exe(_cmd_dir: &Path) -> Option<String> {
 
 /// IDE 桥接已启用时追加到 Claude，促使其调用 MCP 工具而非仅文字回答。
 const IDE_BRIDGE_APPEND_PROMPT: &str = r#"You are connected to AI Terminal via IDE MCP integration (server `aiterm`).
+
+Conversational messages (greetings, thanks, small talk, general questions):
+- Reply in plain text only. Do NOT call runShellCommand or other MCP tools.
 
 Remote/server shell tasks — mandatory workflow:
 1. Call `getFocusedServer` or `listActiveConnections` to get `profileId`.
@@ -440,6 +443,8 @@ impl ClaudeSessionManager {
         let unhandled_for_stdout = unhandled_stdout.clone();
         let counter_for_stdout = event_counter.clone();
         let raw_counter_for_stdout = raw_line_counter.clone();
+        let saw_text_stream = Arc::new(AtomicBool::new(false));
+        let saw_text_for_stdout = saw_text_stream.clone();
 
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
@@ -452,7 +457,12 @@ impl ClaudeSessionManager {
                     continue;
                 }
 
-                let events = parse_stream_line(trimmed, &request_stdout, &mut session_id);
+                let events = parse_stream_line(
+                    trimmed,
+                    &request_stdout,
+                    &mut session_id,
+                    &saw_text_for_stdout,
+                );
                 let events = if events.is_empty() {
                     parse_plaintext_fallback(trimmed, &request_stdout, &session_id)
                 } else {
@@ -467,6 +477,9 @@ impl ClaudeSessionManager {
                     unhandled_for_stdout.lock().push(sample);
                 } else {
                     for event in events {
+                        if event.event_type == "stream_event" && event.text.is_some() {
+                            saw_text_for_stdout.store(true, Ordering::SeqCst);
+                        }
                         event_counter.fetch_add(1, Ordering::SeqCst);
                         let _ = app_stdout.emit("claude:stream", event);
                     }
@@ -643,6 +656,7 @@ fn parse_stream_line(
     line: &str,
     request_id: &str,
     session_id: &mut Option<String>,
+    saw_text_stream: &AtomicBool,
 ) -> Vec<ClaudeStreamEvent> {
     let value: Value = match serde_json::from_str(line) {
         Ok(v) => v,
@@ -760,7 +774,19 @@ fn parse_stream_line(
                         events_out.push(ev);
                     }
                     Some("text") => {
-                        // 正文已通过 content_block_delta 流式推送；assistant 快照会重复整段文本
+                        // 无 text_delta 时（部分 CLI 版本）从 assistant 快照补发正文
+                        if !saw_text_stream.load(Ordering::SeqCst) {
+                            if let Some(text) = block
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                            {
+                                saw_text_stream.store(true, Ordering::SeqCst);
+                                let mut ev = mk("stream_event");
+                                ev.text = Some(text.to_string());
+                                events_out.push(ev);
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -936,7 +962,8 @@ mod tests {
     fn test_parse_content_block_start_tool_use() {
         let line = r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_abc","name":"mcp__aiterm__runShellCommand","input":{"command":"echo hi"}}}}"#;
         let mut session_id = Some("sess-1".to_string());
-        let events = parse_stream_line(line, "req-1", &mut session_id);
+        let saw_text = AtomicBool::new(false);
+        let events = parse_stream_line(line, "req-1", &mut session_id, &saw_text);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "tool_start");
         assert_eq!(events[0].tool_id.as_deref(), Some("toolu_abc"));

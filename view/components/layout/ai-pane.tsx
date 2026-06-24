@@ -458,7 +458,7 @@ export function AiPane({
             title={isThinking ? '停止回复' : '发送'}
           >
             {isThinking ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Square className="w-4 h-4" />
             ) : (
               <Send className="w-4 h-4" />
             )}

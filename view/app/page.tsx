@@ -2212,6 +2212,7 @@ export default function AITerminal() {
               dispose: disposeSilentKeepalive,
             })
             armSilentTimeout()
+            let sawReasoning = false
             claudeCode.registerStreamHandler(requestId, event => {
               armSilentTimeout()
               let streamText: string | undefined
@@ -2242,8 +2243,8 @@ export default function AITerminal() {
                   markLongRunning()
                 }
               }
-              if (event.eventType === 'reasoning_delta') {
-                markLongRunning()
+              if (event.eventType === 'reasoning_delta' || event.reasoning) {
+                sawReasoning = true
               }
               if (event.text) {
                 if (
@@ -2388,6 +2389,17 @@ export default function AITerminal() {
                         aiThinking: false,
                       }
                     })
+                  )
+                } else if (
+                  !assistantAccumulated.trim() &&
+                  !bufferedResultText?.trim() &&
+                  !sawStreamingText &&
+                  sawReasoning
+                ) {
+                  setConnections(prev =>
+                    prev.map(conn =>
+                      conn.id === activeConnectionId ? { ...conn, aiThinking: false } : conn
+                    )
                   )
                 } else if (
                   !assistantAccumulated.trim() &&

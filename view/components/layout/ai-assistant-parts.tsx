@@ -27,6 +27,7 @@ import {
 } from '@/components/ai-elements/tool'
 import { toolStatusToUiState } from '@/lib/chat-stream-parts'
 import type { ChatMessage } from '@/lib/types'
+import { Loader2 } from 'lucide-react'
 
 interface AiAssistantPartsProps {
   message: ChatMessage
@@ -38,7 +39,8 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
   const tools = message.tools ?? []
   const tasks = message.tasks ?? []
   const hasRunningTools = tools.some(t => t.status === 'running' || t.status === 'pending')
-  const reasoningStreaming = isStreaming && !message.content.trim() && !hasRunningTools
+  const reasoningStreaming =
+    isStreaming && !message.content.trim() && !hasRunningTools && !reasoning
 
   const parts = message.parts
   const toolIdsInParts = new Set(
@@ -154,6 +156,13 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
               {message.content.trim() && <AiMarkdown content={message.content} isStreaming={isStreaming} />}
             </>
           )}
+
+      {isStreaming && reasoning && !message.content.trim() && !hasRunningTools && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          <span>正在生成回复…</span>
+        </div>
+      )}
 
       {/* 任务进度：仅在无 timeline parts 时显示，避免与 parts 内工具块重复 */}
       {tasks.length > 0 && !parts?.length && (

@@ -52,9 +52,11 @@ export function buildIdeToolDirective(input: {
   if (!pid) {
     return `
 
-[AI Terminal] 桥接已连接。远程命令必须调用 MCP 工具 mcp__aiterm__runShellCommand（不要用 Skill、不要用 Bash）：先 mcp__aiterm__getFocusedServer 取 profileId（注意：profileId 不是服务器名字、不是 host、不是 shellId），再执行；禁止只写步骤。`
+[AI Terminal] 桥接已连接。远程/Shell 任务才调用 MCP 工具 mcp__aiterm__runShellCommand（不要用 Skill、不要用 Bash）：先 mcp__aiterm__getFocusedServer 取 profileId（注意：profileId 不是服务器名字、不是 host、不是 shellId），再执行；禁止只写步骤。日常问候与闲聊请直接文字回复，不要调用工具。`
   }
   return `
 
-[AI Terminal] 当前焦点: ${host}，profileId="${pid}"，终端已连接。必须调用 MCP 工具 mcp__aiterm__runShellCommand（禁止 Skill/Bash），profileId="${pid}"，用工具返回的 output 作答。`
+[AI Terminal] 当前焦点: ${host}，profileId="${pid}"，终端已连接。
+- 日常问候、解释、闲聊：直接用文字回复，不要调用 runShellCommand。
+- 仅当用户要求查看/执行服务器或本机 Shell 操作时，才调用 MCP 工具 mcp__aiterm__runShellCommand（禁止 Skill/Bash），profileId="${pid}"，用工具返回的 output 作答。`
 }
