@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -320,8 +320,6 @@ impl ClaudeSessionManager {
         );
 
         let mut args = vec![
-            "-p".to_string(),
-            prompt,
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--verbose".to_string(),
@@ -367,13 +365,16 @@ impl ClaudeSessionManager {
             }
         }
 
+        // -p 无参数时从 stdin 读 prompt，避免 Windows 8191 字符命令行截断导致丢失 stream-json
+        args.push("-p".to_string());
+
         let mut command = command_no_window(&claude_program);
         if !claude_prefix_args.is_empty() {
             command.args(&claude_prefix_args);
         }
         command
             .args(&args)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -408,6 +409,12 @@ impl ClaudeSessionManager {
                 tracing::error!("{msg}");
                 msg
             })?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(prompt.as_bytes());
+            });
+        }
 
         let stdout = child.stdout.take().ok_or("无法读取 Claude Code 输出")?;
         let stderr = child.stderr.take().ok_or("无法读取 Claude Code 错误输出")?;
@@ -446,6 +453,11 @@ impl ClaudeSessionManager {
                 }
 
                 let events = parse_stream_line(trimmed, &request_stdout, &mut session_id);
+                let events = if events.is_empty() {
+                    parse_plaintext_fallback(trimmed, &request_stdout, &session_id)
+                } else {
+                    events
+                };
                 if events.is_empty() {
                     let sample = if trimmed.len() > 240 {
                         format!("{}…", &trimmed[..240])
@@ -793,6 +805,39 @@ fn parse_stream_line(
     }
 
     vec![]
+}
+
+/// CLI 在 stream-json 标志被截断时回退为纯文本；将其当作 assistant 回复。
+fn parse_plaintext_fallback(
+    line: &str,
+    request_id: &str,
+    session_id: &Option<String>,
+) -> Vec<ClaudeStreamEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('{') {
+        return vec![];
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("error:")
+        || lower.starts_with("warning:")
+        || lower.starts_with("usage:")
+    {
+        return vec![];
+    }
+    vec![ClaudeStreamEvent {
+        request_id: request_id.to_string(),
+        event_type: "stream_event".into(),
+        text: Some(trimmed.to_string()),
+        session_id: session_id.clone(),
+        done: false,
+        error: None,
+        reasoning: None,
+        tool_id: None,
+        tool_name: None,
+        tool_input: None,
+        tool_output: None,
+        tool_error: None,
+    }]
 }
 
 fn tool_result_text(block: &Value) -> Option<String> {
