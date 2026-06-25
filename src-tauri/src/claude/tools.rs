@@ -275,10 +275,14 @@ fn tool_get_focused(ctx: &ToolContext<'_>) -> Value {
 }
 
 fn tool_terminal_context(ctx: &ToolContext<'_>) -> Value {
+    tracing::info!("tool_terminal_context: start");
     let snap = ctx.runtime.get();
+    tracing::info!("tool_terminal_context: got runtime snapshot");
     let focused = focused_payload(&snap);
+    tracing::info!("tool_terminal_context: got focused payload");
     let ctx_lock = ctx.ide_context.lock();
-    json!({
+    tracing::info!("tool_terminal_context: got ide_context lock");
+    let result = json!({
         "success": true,
         "sessionName": ctx_lock.active_session_name,
         "sessionHost": focused.get("sessionHost").cloned().unwrap_or_else(|| json!(ctx_lock.active_session_host)),
@@ -289,7 +293,9 @@ fn tool_terminal_context(ctx: &ToolContext<'_>) -> Value {
         "isRemoteSession": focused.get("isRemoteSession"),
         "terminalSessionId": focused.get("terminalSessionId"),
         "focused": focused,
-    })
+    });
+    tracing::info!("tool_terminal_context: done, result_len={}", result.to_string().len());
+    result
 }
 
 fn tool_workspace(ctx: &ToolContext<'_>) -> Value {

@@ -478,10 +478,21 @@ async fn handle_connection(
 
             let outbound = handle_mcp_message(&value, &app).await;
             if let Some(response) = outbound.response {
+                let response_str = response.to_string();
+                let resp_id = response.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                tracing::info!(
+                    "IDE MCP: sending response id={}, len={}",
+                    resp_id,
+                    response_str.len()
+                );
                 write
-                    .send(Message::Text(response.to_string().into()))
+                    .send(Message::Text(response_str.into()))
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        tracing::error!("IDE MCP: write response failed id={resp_id}: {e}");
+                        e.to_string()
+                    })?;
+                tracing::info!("IDE MCP: response sent ok id={resp_id}");
             }
             for notification in outbound.notifications {
                 write
@@ -623,6 +634,7 @@ async fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
             let app_owned = app.clone();
             let name_owned = name.to_string();
             let id_for_task = id.clone();
+            let id_for_log = id.clone();
             // 工具执行绝对上界：防止 hang 住的任务永久占用 WebSocket 处理协程
             const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(660);
             let task_result = tokio::time::timeout(
@@ -637,10 +649,13 @@ async fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
                         shell_tools: &state.shell_tools,
                         connect_tools: &state.connect_tools,
                     };
-                    tools::execute_tool(&tool_ctx, &name_owned, &args).await
+                    let r = tools::execute_tool(&tool_ctx, &name_owned, &args).await;
+                    tracing::info!("IDE MCP: tools/call {name_owned} executed, result_len={}", r.len());
+                    r
                 }),
             )
             .await;
+            tracing::info!("IDE MCP: tools/call {name} task completed, sending response");
             let result = match task_result {
                 Ok(Ok(r)) => r,
                 Ok(Err(e)) => {
