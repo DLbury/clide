@@ -466,6 +466,33 @@ impl ClaudeSessionManager {
                     continue;
                 }
 
+                // 每行事件类型追踪
+                let detected_type = serde_json::from_str::<serde_json::Value>(trimmed)
+                    .ok()
+                    .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(String::from))
+                    .unwrap_or_default();
+                let detail = if detected_type == "stream_event" {
+                    serde_json::from_str::<serde_json::Value>(trimmed)
+                        .ok()
+                        .and_then(|v| {
+                            let inner = v.pointer("/event/type").and_then(|t| t.as_str()).unwrap_or("");
+                            let delta = v.pointer("/event/delta/type").and_then(|t| t.as_str()).unwrap_or("");
+                            Some(format!("{inner}/{delta}"))
+                        })
+                        .unwrap_or_default()
+                } else if detected_type == "assistant" || detected_type == "result" {
+                    let content_types: Vec<String> = serde_json::from_str::<serde_json::Value>(trimmed)
+                        .ok()
+                        .and_then(|v| v.pointer("/message/content").and_then(|c| c.as_array()).map(|arr| {
+                            arr.iter().filter_map(|b| b.get("type").and_then(|t| t.as_str()).map(String::from)).collect()
+                        }))
+                        .unwrap_or_default();
+                    format!("content=[{}]", content_types.join(","))
+                } else {
+                    String::new()
+                };
+                tracing::debug!("stream line: type={detected_type} {detail}");
+
                 let events = parse_stream_line(
                     trimmed,
                     &request_stdout,
