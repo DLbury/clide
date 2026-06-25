@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
+const CLAUDE_FIRST_OUTPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 /// Windows 下 `.cmd` shim 经 `cmd /c` 传参时，系统提示中的特殊字符（`%`、`|`、换行等）
 /// 会被 cmd.exe 误解析导致 Claude CLI 退出码 1。
 /// 此函数绕过 cmd.exe，直接定位 `cli.js` 并用 `node.exe` 启动。
@@ -454,6 +456,27 @@ impl ClaudeSessionManager {
         let raw_counter_for_stdout = raw_line_counter.clone();
         let saw_text_stream = Arc::new(AtomicBool::new(false));
         let saw_text_for_stdout = saw_text_stream.clone();
+        let running_for_watchdog = running.clone();
+        let request_watchdog = request_id.clone();
+        let raw_counter_for_watchdog = raw_line_counter.clone();
+        let event_counter_for_watchdog = event_counter.clone();
+
+        std::thread::spawn(move || {
+            std::thread::sleep(CLAUDE_FIRST_OUTPUT_TIMEOUT);
+            if raw_counter_for_watchdog.load(Ordering::SeqCst) > 0
+                || event_counter_for_watchdog.load(Ordering::SeqCst) > 0
+            {
+                return;
+            }
+            if let Some(child) = running_for_watchdog.lock().get_mut(&request_watchdog) {
+                tracing::warn!(
+                    "Claude produced no stdout for {}s; killing request_id={}",
+                    CLAUDE_FIRST_OUTPUT_TIMEOUT.as_secs(),
+                    request_watchdog
+                );
+                let _ = child.kill();
+            }
+        });
 
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
@@ -491,7 +514,7 @@ impl ClaudeSessionManager {
                 } else {
                     String::new()
                 };
-                tracing::debug!("stream line: type={detected_type} {detail}");
+                tracing::info!("stream line: type={detected_type} {detail}");
 
                 let events = parse_stream_line(
                     trimmed,

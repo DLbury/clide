@@ -69,6 +69,8 @@ export function useClaudeCode({
   const streamReadyRef = useRef(false)
   const claudePathRef = useRef(claudePath)
   claudePathRef.current = claudePath
+  const mcpStatusRef = useRef(mcpStatus)
+  mcpStatusRef.current = mcpStatus
 
   const runAutoMcpRegister = useCallback(async (force = false) => {
     if (!isTauriRuntime()) return null
@@ -116,10 +118,16 @@ export function useClaudeCode({
     return runAutoMcpRegister(true)
   }, [runAutoMcpRegister])
 
-  /** 发送 AI 消息前确保 .mcp.json 已写入（工具预检在 Rust claude_send_message 内完成） */
+  /**
+   * 发送 AI 消息前确保 .mcp.json 已写入（工具预检在 Rust claude_send_message 内完成）。
+   * MCP 配置/工具在一个应用会话内不变，已就绪时直接复用，避免每条消息都重复
+   * registerClaudeMcp + waitClaudeMcpTools（会额外拉起 claude/node 进程，约数秒开销）。
+   */
   const ensureMcpReady = useCallback(async () => {
     if (!isTauriRuntime() || !enabled) return null
-    mcpAutoAttemptedRef.current = false
+    if (mcpAutoAttemptedRef.current && mcpStatusRef.current?.ready) {
+      return mcpStatusRef.current
+    }
     return runAutoMcpRegister(true)
   }, [enabled, runAutoMcpRegister])
 

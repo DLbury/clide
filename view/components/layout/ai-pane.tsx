@@ -5,6 +5,7 @@ import { Send, Sparkles, Play, Loader2, Trash2, PlugZap, Square } from 'lucide-r
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/lib/types'
 import { AiAssistantParts } from '@/components/layout/ai-assistant-parts'
+import { ThinkingIndicator } from '@/components/layout/thinking-indicator'
 import type { McpRegisterStatus } from '@/lib/claude-client'
 import {
   ContextMenu,
@@ -56,23 +57,18 @@ interface AiPaneProps {
 
 function serializeAssistantMessage(msg: ChatMessage): string {
   const sections: string[] = []
-  if (msg.reasoning?.trim()) {
-    sections.push(`【思考】\n${msg.reasoning.trim()}`)
-  }
-  if (msg.tools?.length) {
-    const toolLines = msg.tools.map(t => {
-      const status = t.status
-      const output = t.output?.trim()
-      const err = t.error?.trim()
-      return `- ${t.name} [${status}]${output ? `\n  输出: ${output}` : ''}${err ? `\n  错误: ${err}` : ''}`
-    })
-    sections.push(`【工具调用】\n${toolLines.join('\n')}`)
-  }
   if (msg.content?.trim()) {
-    sections.push(`【回复】\n${msg.content.trim()}`)
+    sections.push(msg.content.trim())
   }
   if (msg.command?.trim()) {
     sections.push(`【命令】\n${msg.command.trim()}`)
+  }
+  if (sections.length === 0 && msg.tools?.length) {
+    const running = msg.tools.some(t => t.status === 'running' || t.status === 'pending')
+    sections.push(running ? '正在执行工具调用…' : '工具调用已完成，等待回复…')
+  }
+  if (sections.length === 0 && msg.reasoning?.trim()) {
+    sections.push('思考中…')
   }
   return sections.join('\n\n').trim()
 }
@@ -410,9 +406,8 @@ export function AiPane({
 
         {showThinkingPlaceholder && (
             <div className="flex justify-start">
-              <div className="bg-muted rounded-lg px-3 py-2 text-sm flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                <span className="text-muted-foreground">思考中...</span>
+              <div className="bg-muted rounded-lg px-3 py-2 text-sm">
+                <ThinkingIndicator label="正在等待 Claude 响应" />
               </div>
             </div>
           )}

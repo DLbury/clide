@@ -2166,7 +2166,9 @@ export default function AITerminal() {
 
           const registerHandler = (requestId: string) => {
             const SILENT_DEFAULT_MS = 180_000
-            const SILENT_LONG_MS = 45_000
+            // 工具返回后 Claude 还要做一轮模型生成（纯静默），此窗口必须覆盖该间隔。
+            // 此前误设为 45s（短于默认值），导致带工具的请求在工具完成后被误判为“无响应”取消。
+            const SILENT_LONG_MS = 180_000
             let silentTimer: ReturnType<typeof setTimeout> | null = null
             let silentTimeoutMs = SILENT_DEFAULT_MS
             let sawStreamingText = false

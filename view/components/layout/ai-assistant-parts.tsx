@@ -1,6 +1,7 @@
 'use client'
 
 import { AiMarkdown } from '@/components/layout/ai-markdown'
+import { ThinkingIndicator } from '@/components/layout/thinking-indicator'
 import {
   Reasoning,
   ReasoningContent,
@@ -25,151 +26,149 @@ import {
   ToolInput,
   ToolOutput,
 } from '@/components/ai-elements/tool'
-import { toolStatusToUiState, messageHasTextContent, messageHasRunningTools } from '@/lib/chat-stream-parts'
-import type { ChatMessage } from '@/lib/types'
-import { Loader2 } from 'lucide-react'
+import { toolStatusToUiState, messageHasRunningTools } from '@/lib/chat-stream-parts'
+import type { ChatMessage, ChatMessagePart } from '@/lib/types'
 
 interface AiAssistantPartsProps {
   message: ChatMessage
   isStreaming?: boolean
 }
 
+function timelineParts(parts: ChatMessagePart[] | undefined): ChatMessagePart[] {
+  return (parts ?? []).filter(p => p.kind === 'reasoning' || p.kind === 'tool')
+}
+
 export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPartsProps) {
   const reasoning = message.reasoning?.trim() ?? ''
   const tools = message.tools ?? []
   const tasks = message.tasks ?? []
-  const hasText = messageHasTextContent(message)
   const hasRunningTools = messageHasRunningTools(message)
-  const reasoningStreaming =
-    isStreaming && !hasText && !hasRunningTools && !reasoning
-  const awaitingReply = isStreaming && Boolean(reasoning) && !hasText && !hasRunningTools
+  const replyText = message.content
+  const showReplyStream = Boolean(replyText.trim()) || (isStreaming && !hasRunningTools)
 
-  const parts = message.parts
+  const reasoningStreaming = isStreaming && !replyText.trim() && !hasRunningTools && !reasoning
+
+  const parts = timelineParts(message.parts)
   const toolIdsInParts = new Set(
-    (parts ?? []).filter(p => p.kind === 'tool').map(p => p.toolId)
+    parts.filter(p => p.kind === 'tool').map(p => p.toolId)
   )
   const orphanTools = tools.filter(t => !toolIdsInParts.has(t.id))
 
+  const renderTimeline = () =>
+    parts.map((p, idx) => {
+      if (p.kind === 'reasoning') {
+        const trimmed = p.content.trim()
+        if (!trimmed) return null
+        return (
+          <Reasoning key={`reasoning-${idx}`} className="w-full mb-0" isStreaming={reasoningStreaming}>
+            <ReasoningTrigger
+              getThinkingMessage={(streaming, duration) => {
+                if (streaming || duration === 0) {
+                  return <span className="text-muted-foreground">思考中…</span>
+                }
+                if (duration === undefined) {
+                  return <span>已完成思考</span>
+                }
+                return <span>思考 {duration} 秒</span>
+              }}
+            />
+            <ReasoningContent>{trimmed}</ReasoningContent>
+          </Reasoning>
+        )
+      }
+
+      if (p.kind === 'tool') {
+        const tool = tools.find(t => t.id === p.toolId)
+        if (!tool) return null
+        return (
+          <Tool key={`tool-${p.toolId}`} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
+            <ToolHeader
+              type="dynamic-tool"
+              toolName={tool.name.replace(/^mcp__aiterm__/, '')}
+              state={toolStatusToUiState(tool.status)}
+              title={tool.name.replace(/^mcp__aiterm__/, '')}
+            />
+            <ToolContent>
+              {tool.input !== undefined && <ToolInput input={tool.input} />}
+              <ToolOutput output={tool.output} errorText={tool.error} />
+            </ToolContent>
+          </Tool>
+        )
+      }
+
+      return null
+    })
+
   return (
     <div className="space-y-3 min-w-0">
-      {parts?.length
-        ? parts.map((p, idx) => {
-            if (p.kind === 'reasoning') {
-              const trimmed = p.content.trim()
-              if (!trimmed) return null
-              return (
-                <Reasoning key={`reasoning-${idx}`} className="w-full mb-0" isStreaming={reasoningStreaming}>
-                  <ReasoningTrigger
-                    getThinkingMessage={(streaming, duration) => {
-                      if (streaming || duration === 0) {
-                        return <span className="text-muted-foreground">思考中…</span>
-                      }
-                      if (duration === undefined) {
-                        return <span>已完成思考</span>
-                      }
-                      return <span>思考 {duration} 秒</span>
-                    }}
-                  />
-                  <ReasoningContent>{trimmed}</ReasoningContent>
-                </Reasoning>
-              )
-            }
-
-            if (p.kind === 'tool') {
-              const tool = tools.find(t => t.id === p.toolId)
-              if (!tool) return null
-              return (
-                <Tool key={`tool-${p.toolId}`} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
-                  <ToolHeader
-                    type="dynamic-tool"
-                    toolName={tool.name.replace(/^mcp__aiterm__/, '')}
-                    state={toolStatusToUiState(tool.status)}
-                    title={tool.name.replace(/^mcp__aiterm__/, '')}
-                  />
-                  <ToolContent>
-                    {tool.input !== undefined && <ToolInput input={tool.input} />}
-                    <ToolOutput output={tool.output} errorText={tool.error} />
-                  </ToolContent>
-                </Tool>
-              )
-            }
-
-            // text
-            const trimmed = p.content
-            if (!trimmed) return null
-            return (
-              <AiMarkdown
-                key={`text-${idx}`}
-                content={trimmed}
-                isStreaming={isStreaming && idx === parts.length - 1}
+      {parts.length > 0 ? (
+        <>
+          {renderTimeline()}
+          {orphanTools.map(tool => (
+            <Tool key={`orphan-tool-${tool.id}`} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
+              <ToolHeader
+                type="dynamic-tool"
+                toolName={tool.name.replace(/^mcp__aiterm__/, '')}
+                state={toolStatusToUiState(tool.status)}
+                title={tool.name.replace(/^mcp__aiterm__/, '')}
               />
-            )
-          })
-          .concat(
-            orphanTools.map(tool => (
-              <Tool key={`orphan-tool-${tool.id}`} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
-                <ToolHeader
-                  type="dynamic-tool"
-                  toolName={tool.name.replace(/^mcp__aiterm__/, '')}
-                  state={toolStatusToUiState(tool.status)}
-                  title={tool.name.replace(/^mcp__aiterm__/, '')}
-                />
-                <ToolContent>
-                  {tool.input !== undefined && <ToolInput input={tool.input} />}
-                  <ToolOutput output={tool.output} errorText={tool.error} />
-                </ToolContent>
-              </Tool>
-            ))
-          )
-        : (
-            <>
-              {reasoning && (
-                <Reasoning className="w-full mb-0" isStreaming={reasoningStreaming}>
-                  <ReasoningTrigger
-                    getThinkingMessage={(streaming, duration) => {
-                      if (streaming || duration === 0) {
-                        return <span className="text-muted-foreground">思考中…</span>
-                      }
-                      if (duration === undefined) {
-                        return <span>已完成思考</span>
-                      }
-                      return <span>思考 {duration} 秒</span>
-                    }}
-                  />
-                  <ReasoningContent>{reasoning}</ReasoningContent>
-                </Reasoning>
-              )}
-
-              {tools.map(tool => (
-                <Tool key={tool.id} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
-                  <ToolHeader
-                    type="dynamic-tool"
-                    toolName={tool.name.replace(/^mcp__aiterm__/, '')}
-                    state={toolStatusToUiState(tool.status)}
-                    title={tool.name.replace(/^mcp__aiterm__/, '')}
-                  />
-                  <ToolContent>
-                    {tool.input !== undefined && <ToolInput input={tool.input} />}
-                    <ToolOutput output={tool.output} errorText={tool.error} />
-                  </ToolContent>
-                </Tool>
-              ))}
-
-              {message.content.trim() && (
-                <AiMarkdown content={message.content} isStreaming={isStreaming} />
-              )}
-            </>
+              <ToolContent>
+                {tool.input !== undefined && <ToolInput input={tool.input} />}
+                <ToolOutput output={tool.output} errorText={tool.error} />
+              </ToolContent>
+            </Tool>
+          ))}
+        </>
+      ) : (
+        <>
+          {reasoning && (
+            <Reasoning className="w-full mb-0" isStreaming={reasoningStreaming}>
+              <ReasoningTrigger
+                getThinkingMessage={(streaming, duration) => {
+                  if (streaming || duration === 0) {
+                    return <span className="text-muted-foreground">思考中…</span>
+                  }
+                  if (duration === undefined) {
+                    return <span>已完成思考</span>
+                  }
+                  return <span>思考 {duration} 秒</span>
+                }}
+              />
+              <ReasoningContent>{reasoning}</ReasoningContent>
+            </Reasoning>
           )}
 
-      {awaitingReply && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          <span>正在生成回复…</span>
-        </div>
+          {tools.map(tool => (
+            <Tool key={tool.id} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
+              <ToolHeader
+                type="dynamic-tool"
+                toolName={tool.name.replace(/^mcp__aiterm__/, '')}
+                state={toolStatusToUiState(tool.status)}
+                title={tool.name.replace(/^mcp__aiterm__/, '')}
+              />
+              <ToolContent>
+                {tool.input !== undefined && <ToolInput input={tool.input} />}
+                <ToolOutput output={tool.output} errorText={tool.error} />
+              </ToolContent>
+            </Tool>
+          ))}
+        </>
       )}
 
-      {/* 任务进度：仅在无 timeline parts 时显示，避免与 parts 内工具块重复 */}
-      {tasks.length > 0 && !parts?.length && (
+      {/* 正文统一走 message.content，保证流式增量可见 */}
+      {showReplyStream && (
+        <AiMarkdown content={replyText} isStreaming={isStreaming && !hasRunningTools} />
+      )}
+
+      {/* Claude 静默间隙（工具执行 / 等待生成回复）的实时活动指示，秒数递增即未卡死 */}
+      {isStreaming && !replyText.trim() && (
+        <ThinkingIndicator
+          label={hasRunningTools ? '正在执行命令' : '处理中'}
+          className="text-xs"
+        />
+      )}
+
+      {tasks.length > 0 && !message.parts?.length && (
         <Queue className="rounded-md border border-border/60 bg-background/40">
           <QueueSection defaultOpen={false}>
             <QueueSectionTrigger>

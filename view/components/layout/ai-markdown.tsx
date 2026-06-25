@@ -12,7 +12,15 @@ interface AiMarkdownProps {
 }
 
 export function AiMarkdown({ content, isStreaming = false, className }: AiMarkdownProps) {
-  if (!content) return null
+  if (!content && !isStreaming) return null
+
+  if (!content && isStreaming) {
+    return (
+      <div className={cn('ai-markdown min-w-0 text-sm leading-relaxed', className)}>
+        <span className="inline-block w-0.5 h-4 bg-primary/80 animate-pulse align-middle" aria-hidden />
+      </div>
+    )
+  }
 
   return (
     <div className={cn('ai-markdown min-w-0 text-sm leading-relaxed', className)}>

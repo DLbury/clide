@@ -4,6 +4,7 @@ import {
   normalizeShellCommandForPty,
   readTerminalBufferSince,
 } from '@/lib/terminal-client'
+import { sanitizeTerminalOutput } from '@/lib/terminal-sanitize'
 import { submitTerminalInput } from '@/lib/terminal-input-registry'
 import { requestTerminalResync } from '@/lib/terminal-stream'
 
@@ -15,6 +16,7 @@ const recentShellCommands = new Map<string, { command: string; at: number }>()
 const SHELL_COMMAND_DEDUP_MS = 4000
 const SHELL_COMMAND_CLEANUP_INTERVAL_MS = 60_000
 const KEEPALIVE_TOUCH_INTERVAL_MS = 5000
+const OUTPUT_STABLE_COMPLETE_MS = 1200
 
 function shellCommandKey(sessionId: string, command: string): string {
   return `${sessionId}\0${command.trim()}`
@@ -81,13 +83,43 @@ function stripAnsi(output: string): string {
     .replace(/\x00/g, '')
 }
 
+function compactForEchoCompare(text: string): string {
+  return text.replace(/\s+/g, '').toLowerCase()
+}
+
+function stripCommonPromptPrefix(line: string): string {
+  return line
+    .replace(/^PS\s+[A-Z]:\\.*?>\s*/i, '')
+    .replace(/^[A-Z]:\\.*?>\s*/i, '')
+    .replace(/^[^@\s]+@[^:\s]+:.*?[$#]\s*/, '')
+    .replace(/^[$#%>]\s*/, '')
+}
+
+function lineLooksLikeCommandEcho(line: string, commandLine: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) return true
+  if (/^(PS\s+)?[A-Z]:\\.*?>\s*$/i.test(trimmed)) return true
+  if (/^[^@\s]+@[^:\s]+:.*?[$#]\s*$/.test(trimmed)) return true
+  if (/^[$#%>]\s*$/.test(trimmed)) return true
+
+  const command = commandLine.replace(/\r/g, '').trim()
+  const compactCommand = compactForEchoCompare(command)
+  const compactLine = compactForEchoCompare(stripCommonPromptPrefix(trimmed))
+  if (!compactCommand || !compactLine) return false
+  if (compactLine.length < 8) return compactCommand.startsWith(compactLine)
+
+  return compactLine === compactCommand || compactCommand.includes(compactLine)
+}
+
+function cleanShellToolOutput(output: string): string {
+  return sanitizeTerminalOutput(output).replace(/\x00/g, '').trim()
+}
+
 function hasMeaningfulShellOutput(delta: string, commandLine: string): boolean {
-  const cleaned = stripAnsi(delta).trim()
-  const cmd = commandLine.trim()
+  const cleaned = cleanShellToolOutput(delta)
   if (!cleaned) return false
   const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean)
-  const beyondEcho = lines.filter(l => l !== cmd).join('\n').trim()
-  return beyondEcho.length > 0
+  return lines.some(l => !lineLooksLikeCommandEcho(l, commandLine))
 }
 
 /** 长任务期间续期 Claude 静默超时，避免误杀 AI 进程 */
@@ -221,8 +253,10 @@ export async function executeShellToolInTab(
     let sawNewOutput = false
     let sawMeaningfulOutput = false
     let sawPrompt = false
+    let assumedCompleteFromStableOutput = false
     let promptEmitted = ''
     let lastKeepaliveTouch = Date.now()
+    let stableSince = Date.now()
     const PROMPT_EXTEND_MS = 3 * 60_000
 
     while (!abort.signal.aborted && (hasTimeout ? Date.now() < deadline! : true)) {
@@ -239,6 +273,10 @@ export async function executeShellToolInTab(
       if (!sawNewOutput && delta.length > 0) sawNewOutput = true
       if (!sawMeaningfulOutput && hasMeaningfulShellOutput(delta, line)) {
         sawMeaningfulOutput = true
+      }
+      if (currentLen !== lastLen) {
+        lastLen = currentLen
+        stableSince = Date.now()
       }
 
       // 1. Shell 提示符 = 唯一可靠的完成信号
@@ -267,9 +305,16 @@ export async function executeShellToolInTab(
         break
       }
 
-      // 仅跟踪长度变化（不再有 stableTicks 提前返回）
-      if (currentLen !== lastLen) {
-        lastLen = currentLen
+      // 4. 兜底完成信号：部分 PowerShell/远程 shell 的提示符不稳定或被 ANSI 包裹，
+      //    但输出已经停止增长。避免 MCP 一直返回 incomplete，导致 Claude 回复卡住。
+      if (
+        sawNewOutput &&
+        !promptEmitted &&
+        Date.now() - stableSince >= OUTPUT_STABLE_COMPLETE_MS &&
+        (sawMeaningfulOutput || !hasTimeout)
+      ) {
+        assumedCompleteFromStableOutput = true
+        break
       }
     }
 
@@ -291,7 +336,8 @@ export async function executeShellToolInTab(
       output = await readTerminalBufferSince(sessionId, baselineOffset)
     }
 
-    const cleaned = stripAnsi(output).trim()
+    output = cleanShellToolOutput(output)
+    const cleaned = output.trim()
     if (cleaned === line.trim()) {
       output = ''
     }
@@ -299,7 +345,8 @@ export async function executeShellToolInTab(
     const onlyEchoNoResult = sawNewOutput && !sawMeaningfulOutput && !sawPrompt
     // 看到输出但从未检测到 shell 提示符 = 命令可能仍在运行
     const stillRunning =
-      onlyEchoNoResult || (sawMeaningfulOutput && !sawPrompt) || (isTimeout && !sawPrompt)
+      !assumedCompleteFromStableOutput &&
+      (onlyEchoNoResult || (sawMeaningfulOutput && !sawPrompt) || (isTimeout && !sawPrompt))
     const finalOutput = output || (stillRunning ? '' : '(无输出)')
 
     await completeShellTool(payload.requestId, finalOutput, null, isTimeout || stillRunning)
