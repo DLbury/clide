@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -368,8 +368,18 @@ impl ClaudeSessionManager {
             }
         }
 
-        // -p 无参数时从 stdin 读 prompt，避免 Windows 8191 字符命令行截断导致丢失 stream-json
+        // -p 无参数时从 stdin 读 prompt
         args.push("-p".to_string());
+
+        // 将 prompt 写入临时文件并作为 stdin，避免 Windows 管道 EOF 竞态：
+        // 独立线程 write_all 后 drop ChildStdin 在 Windows 上可能不立即关闭管道，
+        // 导致 Claude CLI 永远等待 stdin EOF 而卡死。
+        let prompt_path =
+            std::env::temp_dir().join(format!("clide-prompt-{request_id}.txt"));
+        std::fs::write(&prompt_path, prompt.as_bytes())
+            .map_err(|e| format!("无法写入 prompt 临时文件: {e}"))?;
+        let prompt_file = std::fs::File::open(&prompt_path)
+            .map_err(|e| format!("无法打开 prompt 临时文件: {e}"))?;
 
         let mut command = command_no_window(&claude_program);
         if !claude_prefix_args.is_empty() {
@@ -377,7 +387,7 @@ impl ClaudeSessionManager {
         }
         command
             .args(&args)
-            .stdin(Stdio::piped())
+            .stdin(Stdio::from(prompt_file))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -408,16 +418,14 @@ impl ClaudeSessionManager {
         let mut child = command
             .spawn()
             .map_err(|e| {
+                let _ = std::fs::remove_file(&prompt_path);
                 let msg = format!("启动 Claude Code 失败 ({claude}): {e}");
                 tracing::error!("{msg}");
                 msg
             })?;
 
-        if let Some(mut stdin) = child.stdin.take() {
-            std::thread::spawn(move || {
-                let _ = stdin.write_all(prompt.as_bytes());
-            });
-        }
+        // stdin 由临时文件提供（已在 Command 中设置），文件句柄在 spawn 后被 OS 接管
+        // 无需手动写入或关闭——Claude 读取到文件 EOF 即自动开始处理
 
         let stdout = child.stdout.take().ok_or("无法读取 Claude Code 输出")?;
         let stderr = child.stderr.take().ok_or("无法读取 Claude Code 错误输出")?;
@@ -431,6 +439,7 @@ impl ClaudeSessionManager {
         let request_stdout = request_id.clone();
         let request_stderr = request_id.clone();
         let running = self.running.clone();
+        let prompt_cleanup = prompt_path.clone();
 
         /** 共享状态：stderr 收集器 + stdout 事件计数器。
          *  当 Claude 进程 exit 0 但 stdout 未产生任何可解析事件时，
@@ -494,11 +503,13 @@ impl ClaudeSessionManager {
                 .lock()
                 .remove(&request_stdout)
                 .and_then(|mut child| {
-                    child.wait().ok().and_then(|status| {
-                        if status.success() {
+                    let status = child.wait().ok();
+                    let _ = std::fs::remove_file(&prompt_cleanup);
+                    status.and_then(|s| {
+                        if s.success() {
                             None
                         } else {
-                            Some(format!("Claude Code 进程异常退出 ({status})"))
+                            Some(format!("Claude Code 进程异常退出 ({s})"))
                         }
                     })
                 });
@@ -709,18 +720,25 @@ fn parse_stream_line(
 
         if inner_type == "content_block_start" {
             if let Some(block) = value.pointer("/event/content_block") {
-                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                    let mut ev = mk("tool_start");
-                    ev.tool_id = block
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string);
-                    ev.tool_name = block
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string);
-                    ev.tool_input = block.get("input").cloned();
-                    events_out.push(ev);
+                match block.get("type").and_then(|t| t.as_str()) {
+                    Some("tool_use") => {
+                        let mut ev = mk("tool_start");
+                        ev.tool_id = block
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
+                        ev.tool_name = block
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
+                        ev.tool_input = block.get("input").cloned();
+                        events_out.push(ev);
+                    }
+                    Some("text") => {
+                        let mut ev = mk("text_block_start");
+                        events_out.push(ev);
+                    }
+                    _ => {}
                 }
             }
             return events_out;
