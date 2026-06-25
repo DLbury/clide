@@ -735,6 +735,8 @@ fn parse_stream_line(
                         events_out.push(ev);
                     }
                     Some("text") => {
+                        // 新文本块开始时重置标志，确保后续 assistant 快照能正确补发正文
+                        saw_text_stream.store(false, Ordering::SeqCst);
                         let mut ev = mk("text_block_start");
                         events_out.push(ev);
                     }
