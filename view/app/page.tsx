@@ -2165,8 +2165,8 @@ export default function AITerminal() {
           let staleRetried = false
 
           const registerHandler = (requestId: string) => {
-            const SILENT_DEFAULT_MS = 120_000
-            const SILENT_LONG_MS = 15 * 60_000
+            const SILENT_DEFAULT_MS = 180_000
+            const SILENT_LONG_MS = 45_000
             let silentTimer: ReturnType<typeof setTimeout> | null = null
             let silentTimeoutMs = SILENT_DEFAULT_MS
             let sawStreamingText = false
@@ -2187,16 +2187,16 @@ export default function AITerminal() {
         if (conn.id !== activeConnectionId) return conn
                     return {
                       ...conn,
-                      aiMessages: conn.aiMessages.map(m =>
-                        m.id === assistantId
-                          ? {
-                              ...m,
-                              content:
-                                m.content ||
-                                'Claude 请求长时间无响应，已自动取消。请重试一次；若持续出现请检查 Claude CLI 登录状态。',
-                            }
-                          : m
-                      ),
+                      aiMessages: conn.aiMessages.map(m => {
+                        if (m.id !== assistantId) return m
+                        const finalized = finalizeAssistantTurn(m)
+                        return {
+                          ...finalized,
+                          content:
+                            finalized.content ||
+                            'Claude 请求长时间无响应，已自动取消。请重试一次；若持续出现请检查 Claude CLI 登录状态。',
+                        }
+                      }),
                       aiThinking: false,
                     }
                   })
@@ -2298,8 +2298,12 @@ export default function AITerminal() {
                   sawStreamingText = true
                   streamText = event.text
                 } else if (event.eventType === 'result') {
-                  // Do not append result immediately; it can duplicate streamed deltas.
                   bufferedResultText = event.text
+                  // 无增量 delta 时也要立刻显示正文，不能等到 done
+                  if (event.text && !sawStreamingText) {
+                    sawStreamingText = true
+                    streamText = event.text
+                  }
                 }
               }
 
