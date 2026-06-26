@@ -35,7 +35,9 @@ interface AiAssistantPartsProps {
 }
 
 function timelineParts(parts: ChatMessagePart[] | undefined): ChatMessagePart[] {
-  return (parts ?? []).filter(p => p.kind === 'reasoning' || p.kind === 'tool')
+  return (parts ?? []).filter(
+    p => p.kind === 'reasoning' || p.kind === 'tool' || p.kind === 'text'
+  )
 }
 
 export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPartsProps) {
@@ -53,9 +55,23 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
     parts.filter(p => p.kind === 'tool').map(p => p.toolId)
   )
   const orphanTools = tools.filter(t => !toolIdsInParts.has(t.id))
+  // 时间线已内联渲染正文时，底部不再重复渲染整段 message.content
+  const hasInlineText = parts.some(p => p.kind === 'text')
 
   const renderTimeline = () =>
     parts.map((p, idx) => {
+      if (p.kind === 'text') {
+        if (!p.content.trim()) return null
+        const isLastPart = idx === parts.length - 1
+        return (
+          <AiMarkdown
+            key={`text-${idx}`}
+            content={p.content}
+            isStreaming={isStreaming && isLastPart && !hasRunningTools}
+          />
+        )
+      }
+
       if (p.kind === 'reasoning') {
         const trimmed = p.content.trim()
         if (!trimmed) return null
@@ -155,8 +171,8 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
         </>
       )}
 
-      {/* 正文统一走 message.content，保证流式增量可见 */}
-      {showReplyStream && (
+      {/* 时间线未内联正文时（无 parts 或仅工具/思考），底部回退渲染 message.content */}
+      {showReplyStream && !hasInlineText && (
         <AiMarkdown content={replyText} isStreaming={isStreaming && !hasRunningTools} />
       )}
 

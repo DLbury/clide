@@ -11,11 +11,22 @@ struct SessionBuffer {
     dropped: usize,
 }
 
+/// 返回 `idx`（字节偏移）之后最近的 UTF-8 字符边界（上限为字符串长度）。
+/// 偏移量按字节计算，直接切片可能落在多字节字符（如中文）内部导致 panic，
+/// 故所有切片前都需对齐到字符边界。
+fn ceil_char_boundary(s: &str, idx: usize) -> usize {
+    let mut i = idx.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 impl SessionBuffer {
     fn append(&mut self, chunk: &str) {
         self.data.push_str(chunk);
         if self.data.len() > MAX_BUFFER_CHARS {
-            let drop = self.data.len() - MAX_BUFFER_CHARS;
+            let drop = ceil_char_boundary(&self.data, self.data.len() - MAX_BUFFER_CHARS);
             self.data.drain(..drop);
             self.dropped += drop;
         }
@@ -33,7 +44,8 @@ impl SessionBuffer {
         if local >= self.data.len() {
             String::new()
         } else {
-            self.data[local..].to_string()
+            let start = ceil_char_boundary(&self.data, local);
+            self.data[start..].to_string()
         }
     }
 
@@ -41,7 +53,8 @@ impl SessionBuffer {
         if self.data.len() <= max_chars {
             self.data.clone()
         } else {
-            self.data[self.data.len() - max_chars..].to_string()
+            let start = ceil_char_boundary(&self.data, self.data.len() - max_chars);
+            self.data[start..].to_string()
         }
     }
 }

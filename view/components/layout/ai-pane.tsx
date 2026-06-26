@@ -216,86 +216,53 @@ export function AiPane({
             <span
               className={cn(
                 'w-1.5 h-1.5 rounded-full shrink-0',
-                bridgeStatus.running ? 'bg-green-500' : 'bg-muted-foreground'
+                bridgeStatus.running && bridgeStatus.connected
+                  ? 'bg-green-500'
+                  : mcpRegistering || (bridgeStatus.running && !bridgeStatus.connected)
+                    ? 'bg-amber-500'
+                    : 'bg-muted-foreground'
               )}
             />
-            <span className="text-muted-foreground">
-              Claude Code IDE 桥接
-              {bridgeStatus.running
-                ? bridgeStatus.connected
-                  ? ` · 已就绪 (:${bridgeStatus.port})`
-                  : ' · 未启动'
-                : ' · 未启动'}
-              {bridgeStatus.running &&
-                bridgeStatus.connected &&
-                bridgeStatus.hasClient === false && (
-                  <span className="text-amber-600 dark:text-amber-400">
-                    {' '}
-                    · 等待 Claude 连接
-                  </span>
-                )}
+            <span className="text-muted-foreground inline-flex items-center gap-1">
+              Claude Code
+              {bridgeStatus.running && bridgeStatus.connected ? (
+                <>· 已连接</>
+              ) : mcpRegistering || (bridgeStatus.running && !bridgeStatus.connected) ? (
+                <>
+                  · 连接中
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                </>
+              ) : (
+                <>· 未连接</>
+              )}
             </span>
           </div>
-          {bridgeStatus.running && bridgeStatus.connected && (
-            <div className="text-muted-foreground/90 leading-relaxed pl-3.5 space-y-1.5">
-              {bridgeStatus.workspaceFolders && bridgeStatus.workspaceFolders.length > 0 && (
-                <p className="truncate" title={bridgeStatus.workspaceFolders.join(', ')}>
-                  工作区：{bridgeStatus.workspaceFolders[0]}
-                </p>
+          {/* 仅在出问题时提示，正常不打扰用户 */}
+          {(streamListenError || mcpRegisterError) && (
+            <div className="pl-3.5 space-y-1">
+              {streamListenError && (
+                <p className="text-red-600 dark:text-red-400 break-words">{streamListenError}</p>
               )}
-              {mcpRegistering && (
-                <p className="text-muted-foreground inline-flex items-center gap-1">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  正在自动注册 MCP…
-                </p>
+              {mcpRegisterError && (
+                <p className="text-amber-600 dark:text-amber-400 break-words">{mcpRegisterError}</p>
               )}
-              {mcpStatus && (
-                <>
-                  <p className="truncate" title={mcpStatus.projectRoot}>
-                    MCP 根目录：{mcpStatus.projectRoot}
-                  </p>
-                  <p>
-                    .mcp.json：{mcpStatus.projectMcpConfigReady ? '已配置' : '未配置'}
-                    {' · '}
-                    Claude 登记：{mcpStatus.claudeProjectRegistered ? '已登记' : '自动加载'}
-                    {mcpStatus.runtimeToolsReady != null && (
-                      <>
-                        {' · '}
-                        运行时工具：
-                        {mcpStatus.runtimeToolsReady
-                          ? `${mcpStatus.runtimeToolCount ?? '?'} 个`
-                          : '未就绪'}
-                      </>
-                    )}
-                  </p>
-                  {showManualMcp && onRetryMcpRegister && (
-                    <button
-                      type="button"
-                      onClick={() => void handleRegisterMcp()}
-                      disabled={mcpRegistering}
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] border border-border',
-                        'hover:bg-muted/60 transition-colors disabled:opacity-50'
-                      )}
-                    >
-                      {mcpRegistering ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <PlugZap className="w-3 h-3" />
-                      )}
-                      手动注册 MCP
-                    </button>
+              {showManualMcp && onRetryMcpRegister && (
+                <button
+                  type="button"
+                  onClick={() => void handleRegisterMcp()}
+                  disabled={mcpRegistering}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] border border-border',
+                    'hover:bg-muted/60 transition-colors disabled:opacity-50'
                   )}
-                  {streamListenError && (
-                    <p className="text-red-600 dark:text-red-400 break-words">{streamListenError}</p>
+                >
+                  {mcpRegistering ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <PlugZap className="w-3 h-3" />
                   )}
-                  {mcpRegisterError && (
-                    <p className="text-amber-600 dark:text-amber-400 break-words">{mcpRegisterError}</p>
-                  )}
-                  {lastDiag && !mcpRegisterError && (
-                    <p className="text-muted-foreground break-words text-[10px]">{lastDiag}</p>
-                  )}
-                </>
+                  重新连接
+                </button>
               )}
             </div>
           )}
@@ -352,10 +319,10 @@ export function AiPane({
                 <div className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
                   <div
                     className={cn(
-                      'rounded-lg px-3 py-2 text-sm select-text-region',
+                      'text-sm select-text-region',
                       msg.role === 'user'
-                        ? 'max-w-[85%] bg-primary text-primary-foreground'
-                        : 'max-w-full w-full bg-muted/80'
+                        ? 'max-w-[85%] rounded-lg px-3 py-2 bg-primary text-primary-foreground'
+                        : 'max-w-full w-full'
                     )}
                   >
                     {msg.role === 'user' ? (
@@ -406,7 +373,7 @@ export function AiPane({
 
         {showThinkingPlaceholder && (
             <div className="flex justify-start">
-              <div className="bg-muted rounded-lg px-3 py-2 text-sm">
+              <div className="text-sm">
                 <ThinkingIndicator label="正在等待 Claude 响应" />
               </div>
             </div>

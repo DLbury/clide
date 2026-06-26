@@ -316,6 +316,14 @@ async fn claude_send_message(
 
     if let Some((port, token, _)) = &bridge_info {
         let _ = claude::sync_mcp_bridge_env(&mcp_paths, *port, token);
+        // MCP 预检会拉起 node 进程列工具，约 1-2s。最近已就绪则跳过，
+        // 配合常驻 Claude 进程把后续消息的启动开销压到最低。
+        if let Some(n) = state
+            .mcp_runtime
+            .ready_count_if_fresh(std::time::Duration::from_secs(120))
+        {
+            tracing::info!("Claude 启动前 MCP 复用最近预检结果: {n} 个工具，跳过重复预检");
+        } else {
         match claude::wait_for_mcp_ready(
             &mcp_paths,
             *port,
@@ -343,7 +351,8 @@ async fn claude_send_message(
                 );
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+        }
     } else {
         let _ = claude::ensure_project_mcp_json(&mcp_paths, None);
     }

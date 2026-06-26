@@ -56,6 +56,20 @@ impl McpRuntimeCache {
         *self.checked_at.lock() = Some(Instant::now());
     }
 
+    /// 最近一次预检若成功且在 `ttl` 内，返回缓存工具数；否则 None。
+    /// 用于跳过每条消息重复的 MCP stdio 预检（会额外拉起 node 进程）。
+    pub fn ready_count_if_fresh(&self, ttl: Duration) -> Option<usize> {
+        if !self.tools_ready.load(Ordering::Relaxed) {
+            return None;
+        }
+        let checked = (*self.checked_at.lock())?;
+        if checked.elapsed() <= ttl {
+            Some(self.tool_count.load(Ordering::Relaxed) as usize)
+        } else {
+            None
+        }
+    }
+
     pub fn apply_to_status(&self, status: &mut McpRegisterStatus, bridge_running: bool, strict_runtime: bool) {
         status.runtime_tools_ready = self.tools_ready.load(Ordering::Relaxed);
         status.runtime_tool_count = self.tool_count.load(Ordering::Relaxed);
