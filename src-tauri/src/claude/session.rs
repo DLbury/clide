@@ -1,5 +1,8 @@
 use crate::claude::detect::resolve_claude_path;
-use crate::process_util::{command_no_window, prepare_cli_discovery_environment};
+use crate::process_util::{
+    command_no_window, configure_claude_cli_command, is_node_deprecation_noise,
+    prepare_cli_discovery_environment, resolve_node_executable,
+};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
@@ -10,12 +13,23 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
-const CLAUDE_FIRST_OUTPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+const CLAUDE_REQUEST_OUTPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// IDE + MCP 冷启动在部分 Linux 上可能超过 90s 才有首条 stdout。
+const CLAUDE_REQUEST_OUTPUT_TIMEOUT_IDE: std::time::Duration = std::time::Duration::from_secs(150);
+
+fn request_output_timeout(with_ide_mcp: bool) -> std::time::Duration {
+    if with_ide_mcp {
+        CLAUDE_REQUEST_OUTPUT_TIMEOUT_IDE
+    } else {
+        CLAUDE_REQUEST_OUTPUT_TIMEOUT
+    }
+}
 
 /// Windows 下 `.cmd` shim 经 `cmd /c` 传参时，系统提示中的特殊字符（`%`、`|`、换行等）
 /// 会被 cmd.exe 误解析导致 Claude CLI 退出码 1。
 /// 此函数绕过 cmd.exe，直接定位 `cli.js` 并用 `node.exe` 启动。
 /// 返回 (program, initial_args)。
+#[cfg(windows)]
 fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
     let path = PathBuf::from(claude_path);
     let is_cmd = path
@@ -49,6 +63,114 @@ fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
         cli_js.display()
     );
     (program, vec![cli_js.to_string_lossy().into_owned()])
+}
+
+/// Linux/macOS：npm 全局 `claude` 常为 shell 脚本；GUI 进程 PATH 不完整时 shebang 解析会卡住或失败。
+/// 尽量用显式 node + cli.js 启动（与 Windows 策略一致）。
+#[cfg(not(windows))]
+fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
+    let path = PathBuf::from(claude_path);
+    if !path.is_file() {
+        return (claude_path.to_string(), vec![]);
+    }
+
+    if path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("cli.js"))
+    {
+        if let Ok(node) = resolve_node_executable() {
+            return (node, vec![claude_path.to_string()]);
+        }
+    }
+
+    if let Some(cli_js) = locate_unix_claude_cli_js(&path) {
+        if let Ok(node) = resolve_node_executable() {
+            tracing::info!(
+                "Bypassing claude shim on Unix: node={}, cli.js={}",
+                node,
+                cli_js.display()
+            );
+            return (node, vec![cli_js.to_string_lossy().into_owned()]);
+        }
+        tracing::warn!(
+            "Found cli.js for {claude_path} but node not in PATH; falling back to shim"
+        );
+    }
+
+    (claude_path.to_string(), vec![])
+}
+
+#[cfg(not(windows))]
+fn locate_unix_claude_cli_js(entry: &Path) -> Option<PathBuf> {
+    let resolved = std::fs::canonicalize(entry)
+        .ok()
+        .unwrap_or_else(|_| entry.to_path_buf());
+
+    if resolved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("cli.js"))
+    {
+        return Some(resolved);
+    }
+
+    let base_dir = resolved.parent()?;
+
+    for relative in [
+        ["node_modules", "@anthropic-ai", "claude-code", "cli.js"],
+        ["..", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"],
+    ] {
+        let candidate = relative.iter().fold(base_dir.to_path_buf(), |acc, seg| acc.join(seg));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    if let Ok(content) = std::fs::read_to_string(&resolved) {
+        for line in content.lines().take(8) {
+            if !line.contains("cli.js") {
+                continue;
+            }
+            for segment in extract_quoted_segments(line) {
+                let p = PathBuf::from(segment.replace("%~dp0", &format!("{}/", base_dir.display())));
+                if p.is_file()
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.eq_ignore_ascii_case("cli.js"))
+                {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        for rel in [
+            ".local/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+            ".npm/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+            ".npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+            ".config/npm/global/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+        ] {
+            let p = home.join(rel);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
+    for global in [
+        "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+        "/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+        "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+    ] {
+        let p = PathBuf::from(global);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    None
 }
 
 /// 定位 npm 全局安装的 cli.js（多种目录布局）。
@@ -260,6 +382,10 @@ const AITERM_IDE_ALLOWED_TOOLS: &[&str] = &[
     "mcp__aiterm__listRemoteFiles",
     "readRemoteFile",
     "mcp__aiterm__readRemoteFile",
+    "listPortForwards",
+    "mcp__aiterm__listPortForwards",
+    "openRemoteBrowser",
+    "mcp__aiterm__openRemoteBrowser",
     "getWorkspaceFolders",
     "mcp__aiterm__getWorkspaceFolders",
     "getOpenFiles",
@@ -300,6 +426,8 @@ struct Persistent {
     fingerprint: String,
     /// 进程代号；reader 线程退出时据此判断是否仍是当前进程，避免误清掉已重启的新进程。
     generation: u64,
+    /// 是否以 IDE 桥接 + MCP 配置启动（影响看门狗超时时长）。
+    with_ide_mcp: bool,
     /// IDE system prompt 临时文件路径，进程结束时清理。
     prompt_path: Option<PathBuf>,
 }
@@ -312,6 +440,8 @@ pub struct ClaudeSessionManager {
     session_id: Arc<Mutex<Option<String>>>,
     /// 本轮是否已通过 text_delta 推送过正文，供 assistant 快照回退判断。
     saw_text: Arc<AtomicBool>,
+    /// 当前请求是否已收到 stdout（看门狗用，每轮消息重置）。
+    request_output_seen: Arc<AtomicBool>,
     /// 进程代号自增计数器。
     generation: Arc<AtomicU64>,
     /// 首次发送时记录的 AppHandle，供取消时补发 done 事件清理前端 handler。
@@ -360,6 +490,7 @@ impl ClaudeSessionManager {
             current_request: Arc::new(Mutex::new(None)),
             session_id: Arc::new(Mutex::new(None)),
             saw_text: Arc::new(AtomicBool::new(false)),
+            request_output_seen: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             app: Arc::new(Mutex::new(None)),
         }
@@ -384,7 +515,13 @@ impl ClaudeSessionManager {
         let fingerprint =
             build_fingerprint(&claude, bridge_port, workspace_dir.as_ref(), mcp_config.as_ref());
 
-        if self.try_reuse(&request_id, &prompt, &fingerprint, &want_session) {
+        if self.try_reuse(
+            &app,
+            &request_id,
+            &prompt,
+            &fingerprint,
+            &want_session,
+        ) {
             return Ok(());
         }
 
@@ -406,6 +543,7 @@ impl ClaudeSessionManager {
     /// 尝试复用现有常驻进程。成功写入消息返回 true；否则杀掉旧进程并返回 false。
     fn try_reuse(
         &self,
+        app: &AppHandle,
         request_id: &str,
         prompt: &str,
         fingerprint: &str,
@@ -440,11 +578,23 @@ impl ClaudeSessionManager {
         }
 
         self.saw_text.store(false, Ordering::SeqCst);
+        self.request_output_seen.store(false, Ordering::SeqCst);
         *self.current_request.lock() = Some(request_id.to_string());
+        let (generation, with_ide_mcp) = {
+            let p = guard.as_mut().unwrap();
+            (p.generation, p.with_ide_mcp)
+        };
         let p = guard.as_mut().unwrap();
         match write_user_message(&mut p.stdin, prompt) {
             Ok(()) => {
                 tracing::info!("Reusing persistent Claude process for request_id={request_id}");
+                drop(guard);
+                self.arm_request_watchdog(
+                    app.clone(),
+                    request_id.to_string(),
+                    generation,
+                    with_ide_mcp,
+                );
                 true
             }
             Err(e) => {
@@ -569,6 +719,8 @@ impl ClaudeSessionManager {
             }
         }
 
+        configure_claude_cli_command(&mut command);
+
         let mut child = command.spawn().map_err(|e| {
             if let Some(path) = &prompt_path {
                 let _ = std::fs::remove_file(path);
@@ -582,77 +734,104 @@ impl ClaudeSessionManager {
         let stderr = child.stderr.take().ok_or("无法读取 Claude Code 错误输出")?;
         let mut stdin = child.stdin.take().ok_or("无法写入 Claude Code 输入")?;
 
-        // 首条消息：先标记当前请求，再写入 stdin。
+        let with_ide_mcp = bridge_port.is_some();
+        let stderr_collector: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let request_output_seen = self.request_output_seen.clone();
+
         self.saw_text.store(false, Ordering::SeqCst);
+        request_output_seen.store(false, Ordering::SeqCst);
         *self.current_request.lock() = Some(request_id.clone());
         *self.session_id.lock() = None;
-        if let Err(e) = write_user_message(&mut stdin, &prompt) {
-            let _ = child.kill();
-            if let Some(path) = &prompt_path {
-                let _ = std::fs::remove_file(path);
-            }
-            *self.current_request.lock() = None;
-            return Err(format!("写入 Claude 首条消息失败: {e}"));
-        }
-
-        let saw_any_output = Arc::new(AtomicBool::new(false));
-        let stderr_collector: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
         *self.proc.lock() = Some(Persistent {
             child,
             stdin,
             fingerprint,
             generation,
+            with_ide_mcp,
             prompt_path,
         });
 
-        // 冷启动看门狗：新进程若 90s 内无任何 stdout，判定卡死并杀掉。
-        {
-            let proc = self.proc.clone();
-            let current = self.current_request.clone();
-            let session = self.session_id.clone();
-            let saw = saw_any_output.clone();
-            let app_wd = app.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(CLAUDE_FIRST_OUTPUT_TIMEOUT);
-                if saw.load(Ordering::SeqCst) {
-                    return;
-                }
-                let mut guard = proc.lock();
-                if guard.as_ref().map(|p| p.generation) != Some(generation) {
-                    return;
-                }
-                if let Some(mut dead) = guard.take() {
-                    tracing::warn!(
-                        "Claude produced no stdout for {}s; killing gen={}",
-                        CLAUDE_FIRST_OUTPUT_TIMEOUT.as_secs(),
-                        generation
-                    );
-                    let _ = dead.child.kill();
-                    if let Some(path) = &dead.prompt_path {
-                        let _ = std::fs::remove_file(path);
-                    }
-                }
-                drop(guard);
-                if let Some(req) = current.lock().take() {
-                    let sid = session.lock().clone();
-                    let err = "Claude 启动后长时间无任何输出，已终止。请确认 CLI 已安装并登录（claude /login）。".to_string();
-                    emit_turn_failure(&app_wd, &req, sid, err);
-                }
-            });
-        }
-
+        // 先挂 reader 再写 stdin，避免 Linux 上 stderr 填满管道导致子进程阻塞。
         self.spawn_readers(
-            app,
+            app.clone(),
             stdout,
             stderr,
             generation,
-            saw_any_output,
+            request_output_seen.clone(),
             stderr_collector,
         );
 
+        if let Err(e) = {
+            let mut guard = self.proc.lock();
+            let Some(p) = guard.as_mut() else {
+                return Err("Claude 进程意外丢失".to_string());
+            };
+            write_user_message(&mut p.stdin, &prompt)
+        } {
+            if let Some(mut dead) = self.proc.lock().take() {
+                let _ = dead.child.kill();
+                if let Some(path) = &dead.prompt_path {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+            *self.current_request.lock() = None;
+            return Err(format!("写入 Claude 首条消息失败: {e}"));
+        }
+
+        self.arm_request_watchdog(app, request_id.clone(), generation, with_ide_mcp);
+
         tracing::info!("persistent Claude spawned, request_id={request_id}, gen={generation}");
         Ok(())
+    }
+
+    /// 若本轮请求在超时内无任何 stdout，杀掉进程并向前端报错（冷启动与复用均适用）。
+    fn arm_request_watchdog(
+        &self,
+        app: AppHandle,
+        request_id: String,
+        generation: u64,
+        with_ide_mcp: bool,
+    ) {
+        let timeout = request_output_timeout(with_ide_mcp);
+        let proc = self.proc.clone();
+        let current = self.current_request.clone();
+        let session = self.session_id.clone();
+        let saw = self.request_output_seen.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(timeout);
+            if saw.load(Ordering::SeqCst) {
+                return;
+            }
+            if current.lock().as_deref() != Some(request_id.as_str()) {
+                return;
+            }
+            let mut guard = proc.lock();
+            if guard.as_ref().map(|p| p.generation) != Some(generation) {
+                return;
+            }
+            if let Some(mut dead) = guard.take() {
+                tracing::warn!(
+                    "Claude produced no stdout for {}s; killing gen={}",
+                    timeout.as_secs(),
+                    generation
+                );
+                let _ = dead.child.kill();
+                if let Some(path) = &dead.prompt_path {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+            drop(guard);
+            if let Some(req) = current.lock().take() {
+                let sid = session.lock().clone();
+                let hint = if with_ide_mcp {
+                    "Claude 在 MCP/IDE 初始化阶段长时间无输出（部分 Linux 环境较慢）。请确认已登录 Claude CLI（终端执行 claude /login），并检查侧栏 MCP 状态；也可在终端直接运行 claude -p 测试。"
+                } else {
+                    "Claude 启动后长时间无任何输出。请确认 CLI 已安装并登录（claude /login）。"
+                };
+                emit_turn_failure(&app, &req, sid, hint.to_string());
+            }
+        });
     }
 
     /// 为常驻进程挂上 stdout/stderr 读取线程，按当前 request_id 路由事件。
@@ -662,7 +841,7 @@ impl ClaudeSessionManager {
         stdout: std::process::ChildStdout,
         stderr: std::process::ChildStderr,
         generation: u64,
-        saw_any_output: Arc<AtomicBool>,
+        request_output_seen: Arc<AtomicBool>,
         stderr_collector: Arc<Mutex<Vec<String>>>,
     ) {
         let app_stdout = app.clone();
@@ -680,7 +859,7 @@ impl ClaudeSessionManager {
                 if trimmed.is_empty() {
                     continue;
                 }
-                saw_any_output.store(true, Ordering::SeqCst);
+                request_output_seen.store(true, Ordering::SeqCst);
 
                 let detected_type = serde_json::from_str::<serde_json::Value>(trimmed)
                     .ok()
@@ -800,7 +979,7 @@ impl ClaudeSessionManager {
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().flatten() {
-                if line.trim().is_empty() {
+                if line.trim().is_empty() || is_node_deprecation_noise(&line) {
                     continue;
                 }
                 stderr_collector.lock().push(line.clone());
@@ -814,6 +993,9 @@ impl ClaudeSessionManager {
                         || lower.contains("enoent")
                         || lower.contains("cannot find")
                         || lower.contains("command not found")
+                        || lower.contains("not logged in")
+                        || lower.contains("/login")
+                        || lower.contains("authentication required")
                         || lower.contains("error:")
                         || lower.contains("failed"));
                 let stream_error = if stale || fatal {

@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import { AiMarkdown } from '@/components/layout/ai-markdown'
 import { ThinkingIndicator } from '@/components/layout/thinking-indicator'
 import {
@@ -40,7 +41,10 @@ function timelineParts(parts: ChatMessagePart[] | undefined): ChatMessagePart[] 
   )
 }
 
-export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPartsProps) {
+export const AiAssistantParts = memo(function AiAssistantParts({
+  message,
+  isStreaming = false,
+}: AiAssistantPartsProps) {
   const reasoning = message.reasoning?.trim() ?? ''
   const tools = message.tools ?? []
   const tasks = message.tasks ?? []
@@ -97,7 +101,7 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
         const tool = tools.find(t => t.id === p.toolId)
         if (!tool) return null
         return (
-          <Tool key={`tool-${p.toolId}`} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
+          <Tool key={`tool-${p.toolId}`} defaultOpen={false}>
             <ToolHeader
               type="dynamic-tool"
               toolName={tool.name.replace(/^mcp__aiterm__/, '')}
@@ -121,7 +125,7 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
         <>
           {renderTimeline()}
           {orphanTools.map(tool => (
-            <Tool key={`orphan-tool-${tool.id}`} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
+            <Tool key={`orphan-tool-${tool.id}`} defaultOpen={false}>
               <ToolHeader
                 type="dynamic-tool"
                 toolName={tool.name.replace(/^mcp__aiterm__/, '')}
@@ -155,7 +159,7 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
           )}
 
           {tools.map(tool => (
-            <Tool key={tool.id} defaultOpen={tool.status === 'running' || tool.status === 'error'}>
+            <Tool key={tool.id} defaultOpen={false}>
               <ToolHeader
                 type="dynamic-tool"
                 toolName={tool.name.replace(/^mcp__aiterm__/, '')}
@@ -216,4 +220,14 @@ export function AiAssistantParts({ message, isStreaming = false }: AiAssistantPa
       )}
     </div>
   )
-}
+}, (prev, next) => {
+  if (prev.isStreaming !== next.isStreaming) return false
+  if (prev.message.id !== next.message.id) return false
+  return (
+    prev.message.content === next.message.content &&
+    prev.message.reasoning === next.message.reasoning &&
+    prev.message.tools === next.message.tools &&
+    prev.message.tasks === next.message.tasks &&
+    prev.message.parts === next.message.parts
+  )
+})

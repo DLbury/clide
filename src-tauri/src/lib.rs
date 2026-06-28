@@ -22,7 +22,7 @@ use shell_tool::ShellToolCoordinator;
 use state::IdeContext;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
-use terminal::{ConnectRequest, TerminalManager};
+use terminal::{ConnectRequest, SocksInfo, SocksManager, TerminalManager, TunnelInfo, TunnelManager};
 
 pub struct AppState {
     pub bridge: Mutex<Option<ClaudeBridge>>,
@@ -30,6 +30,8 @@ pub struct AppState {
     pub ide_context: Arc<Mutex<IdeContext>>,
     pub runtime: Arc<RuntimeStore>,
     pub terminals: TerminalManager,
+    pub tunnels: TunnelManager,
+    pub socks: SocksManager,
     pub shell_tools: Arc<ShellToolCoordinator>,
     pub connect_tools: Arc<ConnectToolCoordinator>,
     pub mcp_runtime: Arc<claude::McpRuntimeCache>,
@@ -437,6 +439,153 @@ fn terminal_is_connected(state: State<'_, AppState>, session_id: String) -> Resu
 }
 
 #[tauri::command]
+async fn tunnel_start(
+    state: State<'_, AppState>,
+    profile_id: String,
+    remote_host: String,
+    remote_port: u16,
+    local_port: Option<u16>,
+    path: Option<String>,
+) -> Result<TunnelInfo, String> {
+    state
+        .tunnels
+        .start(
+            state.runtime.as_ref(),
+            &profile_id,
+            &remote_host,
+            remote_port,
+            local_port,
+            path.as_deref(),
+        )
+        .await
+}
+
+#[tauri::command]
+fn tunnel_stop(state: State<'_, AppState>, tunnel_id: String) -> Result<bool, String> {
+    Ok(state.tunnels.stop(&tunnel_id))
+}
+
+#[tauri::command]
+fn tunnel_list(state: State<'_, AppState>, profile_id: Option<String>) -> Result<Vec<TunnelInfo>, String> {
+    Ok(match profile_id {
+        Some(id) => state.tunnels.list_for_profile(&id),
+        None => state.tunnels.list(),
+    })
+}
+
+#[tauri::command]
+async fn socks_start(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<SocksInfo, String> {
+    state.socks.start(state.runtime.as_ref(), &profile_id).await
+}
+
+#[tauri::command]
+fn socks_stop(state: State<'_, AppState>, socks_id: String) -> Result<bool, String> {
+    Ok(state.socks.stop(&socks_id))
+}
+
+#[tauri::command]
+fn socks_stop_for_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
+    state.socks.stop_for_profile(&profile_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn socks_list(state: State<'_, AppState>) -> Result<Vec<SocksInfo>, String> {
+    Ok(state.socks.list())
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserNewWindowPayload {
+    parent_label: String,
+    url: String,
+}
+
+/// 在主窗口内创建一个嵌入式子 WebView 作为浏览器标签。
+///
+/// 关键点：当设置 `proxy_url`（SOCKS5）时，必须为该 WebView 指定**独立的数据目录**，
+/// 否则它会与主窗口共用同一个 WebView2 环境（代理是环境级参数），导致 WebView2
+/// 拒绝以不同参数复用同一数据目录 → 黑屏空白。独立目录 = 独立环境，代理方可生效。
+#[tauri::command]
+async fn browser_webview_open(
+    app: AppHandle,
+    window_label: String,
+    label: String,
+    url: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    proxy_url: Option<String>,
+    data_dir_key: Option<String>,
+) -> Result<(), String> {
+    use tauri::webview::{NewWindowResponse, WebviewBuilder};
+    use tauri::{LogicalPosition, LogicalSize, Url, WebviewUrl};
+
+    let window = app
+        .get_window(&window_label)
+        .ok_or_else(|| format!("窗口不存在: {window_label}"))?;
+
+    let target = Url::parse(&url).map_err(|e| format!("URL 无效: {e}"))?;
+
+    let dir_key = data_dir_key.as_deref().unwrap_or(&label);
+    let data_dir = app
+        .path()
+        .app_cache_dir()
+        .ok()
+        .map(|base| base.join("browser-webviews").join(sanitize_dir(dir_key)));
+
+    if let Some(ref dir) = data_dir {
+        let _ = std::fs::create_dir_all(dir);
+    }
+
+    let parent_label = label.clone();
+    let app_for_popup = app.clone();
+
+    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(target)).on_new_window(
+        move |popup_url, _features| {
+            let payload = BrowserNewWindowPayload {
+                parent_label: parent_label.clone(),
+                url: popup_url.to_string(),
+            };
+            if let Err(err) = app_for_popup.emit("browser-new-window", payload) {
+                tracing::warn!("browser-new-window emit failed: {err}");
+            }
+            NewWindowResponse::Deny
+        },
+    );
+
+    if let Some(dir) = data_dir {
+        builder = builder.data_directory(dir);
+    }
+
+    if let Some(proxy) = proxy_url.filter(|p| !p.is_empty()) {
+        let proxy_parsed = Url::parse(&proxy).map_err(|e| format!("代理 URL 无效: {e}"))?;
+        builder = builder.proxy_url(proxy_parsed);
+    }
+
+    window
+        .add_child(
+            builder,
+            LogicalPosition::new(x, y),
+            LogicalSize::new(width, height),
+        )
+        .map_err(|e| format!("创建 WebView 失败: {e}"))?;
+
+    Ok(())
+}
+
+fn sanitize_dir(label: &str) -> String {
+    label
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+#[tauri::command]
 fn terminal_buffer_len(session_id: String) -> Result<usize, String> {
     Ok(crate::terminal::buffer_len(&session_id))
 }
@@ -519,6 +668,17 @@ async fn terminal_move_path(
 }
 
 #[tauri::command]
+async fn terminal_rename_path(
+    request: terminal::ConnectRequest,
+    source: String,
+    new_name: String,
+    use_root: bool,
+) -> Result<(), String> {
+    let request = terminal::enrich_connect_request(request);
+    terminal::rename_remote_path(request, source, new_name, use_root).await
+}
+
+#[tauri::command]
 async fn terminal_delete_path(
     request: terminal::ConnectRequest,
     path: String,
@@ -591,6 +751,8 @@ pub fn run() {
             ide_context: Arc::new(Mutex::new(IdeContext::default())),
             runtime: Arc::new(RuntimeStore::new()),
             terminals: TerminalManager::new(),
+            tunnels: TunnelManager::new(),
+            socks: SocksManager::new(),
             shell_tools: Arc::new(ShellToolCoordinator::new()),
             connect_tools: Arc::new(ConnectToolCoordinator::new()),
             mcp_runtime: Arc::new(claude::McpRuntimeCache::default()),
@@ -623,6 +785,14 @@ pub fn run() {
             terminal_resize,
             terminal_disconnect,
             terminal_is_connected,
+            tunnel_start,
+            tunnel_stop,
+            tunnel_list,
+            socks_start,
+            socks_stop,
+            socks_stop_for_profile,
+            socks_list,
+            browser_webview_open,
             terminal_buffer_len,
             terminal_buffer_read_since,
             terminal_list_directory,
@@ -632,6 +802,7 @@ pub fn run() {
             terminal_write_file_binary,
             terminal_get_cwd,
             terminal_move_path,
+            terminal_rename_path,
             terminal_delete_path,
             terminal_get_host_stats,
         ])

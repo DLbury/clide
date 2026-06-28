@@ -3,7 +3,7 @@ use crate::secrets::{self, redact_for_display, substitute_command_placeholders};
 use crate::connect_tool::ConnectToolCoordinator;
 use crate::shell_tool::ShellToolCoordinator;
 use crate::state::IdeContext;
-use crate::terminal::{self, tail_snippet, TerminalManager};
+use crate::terminal::{self, tail_snippet, TerminalManager, TunnelManager};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -14,6 +14,7 @@ pub struct ToolContext<'a> {
     pub ide_context: &'a Arc<Mutex<IdeContext>>,
     pub runtime: &'a Arc<RuntimeStore>,
     pub terminals: &'a TerminalManager,
+    pub tunnels: &'a TunnelManager,
     pub shell_tools: &'a Arc<ShellToolCoordinator>,
     pub connect_tools: &'a Arc<ConnectToolCoordinator>,
 }
@@ -84,6 +85,24 @@ pub fn get_available_tools() -> Vec<Value> {
         tool_def("getWorkspaceFolders", "获取 IDE 工作区目录（本地项目路径）", json!({})),
         tool_def("getOpenFiles", "获取编辑器中打开的文件", json!({})),
         tool_def("getCurrentSelection", "获取当前选中的文本", json!({})),
+        tool_def(
+            "listPortForwards",
+            "列出指定服务器 profile 上由本应用建立的 SSH 本地端口转发（隧道）",
+            object_schema(json!({
+                "profileId": { "type": "string", "description": "服务器 profile ID" }
+            }), &["profileId"]),
+        ),
+        tool_def(
+            "openRemoteBrowser",
+            "通过 SSH 本地端口转发打开远程 Web 服务，并在工作台新增浏览器标签页。remoteHost 为服务器侧目标地址（如 127.0.0.1 或内网 IP），remotePort 为目标端口。",
+            object_schema(json!({
+                "profileId": { "type": "string", "description": "已连接的 SSH 服务器 profile ID" },
+                "remoteHost": { "type": "string", "description": "远程目标主机，默认 127.0.0.1（服务器本机）" },
+                "remotePort": { "type": "number", "description": "远程目标端口，如 8080、3000" },
+                "path": { "type": "string", "description": "可选 URL 路径，如 /grafana" },
+                "title": { "type": "string", "description": "浏览器标签标题" }
+            }), &["profileId", "remotePort"]),
+        ),
     ]
 }
 
@@ -172,6 +191,12 @@ pub async fn execute_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> St
         }
         "getOpenFiles" | "get_open_files" | "mcp__aiterm__getOpenFiles" => tool_open_files(ctx),
         "getCurrentSelection" | "mcp__aiterm__getCurrentSelection" => tool_selection(ctx),
+        "listPortForwards" | "list_port_forwards" | "mcp__aiterm__listPortForwards" => {
+            tool_list_port_forwards(ctx, args)
+        }
+        "openRemoteBrowser" | "open_remote_browser" | "mcp__aiterm__openRemoteBrowser" => {
+            tool_open_remote_browser(ctx, args).await
+        }
         _ => json!({ "success": false, "error": format!("未知工具: {name}") }),
     };
     serde_json::to_string(&result).unwrap_or_else(|_| "{}".into())
@@ -327,6 +352,92 @@ fn tool_selection(ctx: &ToolContext<'_>) -> Value {
         "text": ctx_lock.selected_text,
         "filePath": ctx_lock.active_file_path,
     })
+}
+
+fn tool_list_port_forwards(ctx: &ToolContext<'_>, args: &Value) -> Value {
+    let profile_id = args
+        .get("profileId")
+        .or_else(|| args.get("sessionId"))
+        .and_then(|v| v.as_str());
+    let Some(pid) = profile_id else {
+        return json!({ "success": false, "error": "缺少 profileId" });
+    };
+    let tunnels = ctx.tunnels.list_for_profile(pid);
+    json!({ "success": true, "profileId": pid, "tunnels": tunnels })
+}
+
+async fn tool_open_remote_browser(ctx: &ToolContext<'_>, args: &Value) -> Value {
+    let profile_id = args
+        .get("profileId")
+        .or_else(|| args.get("sessionId"))
+        .and_then(|v| v.as_str());
+    let Some(pid) = profile_id else {
+        return json!({ "success": false, "error": "缺少 profileId" });
+    };
+    let remote_host = args
+        .get("remoteHost")
+        .and_then(|v| v.as_str())
+        .unwrap_or("127.0.0.1");
+    let Some(remote_port) = args.get("remotePort").and_then(|v| v.as_u64()) else {
+        return json!({ "success": false, "error": "缺少 remotePort" });
+    };
+    if remote_port == 0 || remote_port > u16::MAX as u64 {
+        return json!({ "success": false, "error": "remotePort 无效" });
+    }
+    let path = args.get("path").and_then(|v| v.as_str());
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| remote_host);
+
+    let snap = ctx.runtime.get();
+    if !snap.connections.iter().any(|c| c.profile_id == pid) {
+        return json!({
+            "success": false,
+            "error": format!("服务器 {pid} 未连接，请先调用 connectServer")
+        });
+    }
+
+    match ctx
+        .tunnels
+        .start(
+            ctx.runtime.as_ref(),
+            pid,
+            remote_host,
+            remote_port as u16,
+            None,
+            path,
+        )
+        .await
+    {
+        Ok(info) => {
+            let tab_id = uuid::Uuid::new_v4().to_string();
+            let _ = ctx.app.emit(
+                "claude:tool-request",
+                json!({
+                    "tool": "openRemoteBrowser",
+                    "profileId": pid,
+                    "connectionId": snap.connections.iter().find(|c| c.profile_id == pid).map(|c| &c.id),
+                    "tunnelId": info.id,
+                    "tabId": tab_id,
+                    "localUrl": info.local_url,
+                    "title": format!("{title}:{remote_port}"),
+                }),
+            );
+            emit_activity(
+                ctx.app,
+                json!({
+                    "kind": "open_browser",
+                    "profileId": pid,
+                    "remoteHost": remote_host,
+                    "remotePort": remote_port,
+                    "localUrl": info.local_url,
+                }),
+            );
+            json!({ "success": true, "tunnel": info, "tabId": tab_id })
+        }
+        Err(e) => json!({ "success": false, "error": e }),
+    }
 }
 
 fn tool_create_new_shell(ctx: &ToolContext<'_>, args: &Value) -> Value {

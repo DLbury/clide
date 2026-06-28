@@ -4,6 +4,7 @@ import { isTauriRuntime } from '@/lib/tauri-env'
 import {
   deleteRemotePath,
   moveRemotePath,
+  renameRemotePath,
   readRemoteFileBinary,
   writeRemoteFileBinary,
   type RemoteFileOptions,
@@ -143,6 +144,19 @@ export async function moveRemoteFile(
   }
   const resolved = resolveSessionForConnect(session)
   await moveRemotePath(resolved, sourcePath, destDir, options)
+}
+
+export async function renameRemoteFile(
+  session: Session,
+  sourcePath: string,
+  newName: string,
+  options?: RemoteFileOptions
+): Promise<void> {
+  if (!isTauriRuntime()) {
+    throw new Error('重命名仅 Tauri 桌面版可用')
+  }
+  const resolved = resolveSessionForConnect(session)
+  await renameRemotePath(resolved, sourcePath, newName, options)
 }
 
 export async function deleteRemoteFile(

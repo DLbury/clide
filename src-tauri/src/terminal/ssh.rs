@@ -26,8 +26,10 @@ pub fn spawn_ssh(
     let session_id = request.sessionId.clone();
 
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = run_ssh_session(app.clone(), request, write_rx, resize_rx, abort.clone()).await
-        {
+        let result =
+            run_ssh_session(app.clone(), request, write_rx, resize_rx, abort.clone()).await;
+        super::unregister_terminal_session(&app, &session_id);
+        if let Err(error) = result {
             let _ = app.emit(
                 "terminal:status",
                 TerminalStatusEvent {

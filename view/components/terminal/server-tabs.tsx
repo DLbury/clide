@@ -1,6 +1,6 @@
 'use client'
 
-import { X, Sun, Moon, Settings } from 'lucide-react'
+import { X, Sun, Moon, Settings, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@teispace/next-themes'
 import { useEffect, useState } from 'react'
@@ -124,6 +124,20 @@ export function ServerTabs({
                         )}
                       />
                       <span className="text-sm truncate max-w-[120px]">{conn.session.name}</span>
+                      {conn.session.status !== 'connected' && onReconnectTab && (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation()
+                            onReconnectTab(conn.id)
+                          }}
+                          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-400 hover:bg-amber-500/10 transition-colors shrink-0"
+                          title="重新连接"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          重连
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={e => {

@@ -139,6 +139,22 @@ type InteractivePromptEvent = {
   prompt: string
 }
 let shellToolPromptListener: ((e: InteractivePromptEvent) => void) | null = null
+const dismissedInteractivePrompts = new Set<string>()
+
+function interactivePromptKey(sessionId: string, prompt: string): string {
+  return `${sessionId}\0${prompt}`
+}
+
+/** 用户已在终端完成输入并点击「继续」后，不再重复弹出同一提示 */
+export function acknowledgeInteractivePrompt(sessionId: string, prompt: string): void {
+  dismissedInteractivePrompts.add(interactivePromptKey(sessionId, prompt))
+}
+
+export function clearInteractivePromptAck(sessionId: string): void {
+  for (const key of dismissedInteractivePrompts) {
+    if (key.startsWith(`${sessionId}\0`)) dismissedInteractivePrompts.delete(key)
+  }
+}
 export function registerShellToolPromptListener(
   fn: (e: InteractivePromptEvent) => void
 ): () => void {
@@ -158,6 +174,12 @@ export function cancelShellToolForSession(sessionId: string): void {
 /** 检测终端尾部是否出现交互提示（密码、passphrase、用户名等） */
 const INTERACTIVE_PROMPT_RE =
   /\[sudo\]\s*password|password\s*(for|[:：])|enter\s+passphrase|username\s*[:：]|login\s*[:：]|are you sure you want to continue connecting|fingerprint|verification code|2fa|otp|press enter to continue/i
+
+export function classifyInteractivePrompt(prompt: string): 'password' | 'confirm' | 'generic' {
+  if (/password|passphrase/i.test(prompt)) return 'password'
+  if (/fingerprint|continue connecting|yes\/no|are you sure/i.test(prompt)) return 'confirm'
+  return 'generic'
+}
 
 function detectInteractivePrompt(tail: string): string | null {
   const cleaned = stripAnsi(tail).replace(/\x00/g, '')
@@ -289,15 +311,18 @@ export async function executeShellToolInTab(
       // 2. 交互提示检测：延长等待、通知 UI、继续轮询（绝不提前 break）
       const promptHit = detectInteractivePrompt(delta)
       if (promptHit && promptEmitted !== promptHit) {
-        promptEmitted = promptHit
-        if (hasTimeout && deadline) deadline += PROMPT_EXTEND_MS
-        if (safetyDeadline) safetyDeadline += PROMPT_EXTEND_MS
-        shellToolPromptListener?.({
-          sessionId,
-          requestId: payload.requestId,
-          command: line,
-          prompt: promptHit,
-        })
+        const key = interactivePromptKey(sessionId, promptHit)
+        if (!dismissedInteractivePrompts.has(key)) {
+          promptEmitted = promptHit
+          if (hasTimeout && deadline) deadline += PROMPT_EXTEND_MS
+          if (safetyDeadline) safetyDeadline += PROMPT_EXTEND_MS
+          shellToolPromptListener?.({
+            sessionId,
+            requestId: payload.requestId,
+            command: line,
+            prompt: promptHit,
+          })
+        }
       }
 
       // 3. 硬超时

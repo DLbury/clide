@@ -71,13 +71,19 @@ import {
   deleteRemoteFile,
   downloadRemoteFile,
   moveRemoteFile,
+  renameRemoteFile,
   uploadFilesToRemote,
   type UploadProgress,
 } from '@/lib/remote-file-transfer'
+import { getParentPath } from '@/lib/file-utils'
+import { joinRemotePath } from '@/lib/terminal-cwd'
 import { matchShortcutAction, isTypingTarget } from '@/lib/layout-shortcuts'
 import type { SettingsTab } from '@/lib/layout-shortcuts'
 import { ResizablePanel } from '@/components/layout/resizable-panel'
 import { WorkbenchLayout, type WorkbenchLayoutHandle } from '@/components/layout/workbench-layout'
+import { listTunnels, stopTunnel, stopSocksForProfile } from '@/lib/tunnel-client'
+import { tabTitleFromUrl } from '@/lib/browser-address'
+import { makeBrowserWebviewLabel } from '@/lib/tauri-child-webview'
 import { FileTree } from '@/components/layout/file-tree'
 import { DeleteRemoteFileDialog } from '@/components/layout/delete-remote-file-dialog'
 import { AiPane } from '@/components/layout/ai-pane'
@@ -103,7 +109,9 @@ import {
   executeShellToolInTab,
   registerShellToolKeepaliveTouch,
   registerShellToolPromptListener,
+  acknowledgeInteractivePrompt,
 } from '@/lib/shell-tool-executor'
+import { submitTerminalInput } from '@/lib/terminal-input-registry'
 import {
   applyClaudeStreamEvent,
   applyToolActivityToMessage,
@@ -173,6 +181,14 @@ interface Shell {
   shellCwd?: string
 }
 
+interface BrowserTab {
+  id: string
+  title: string
+  url: string
+  webviewLabel: string
+  tunnelId?: string
+}
+
 interface ServerConnection {
   id: string
   session: Session
@@ -190,6 +206,8 @@ interface ServerConnection {
   /** SSH 远程目录列表 */
   remoteFiles?: FileItem[]
   remotePath?: string
+  browserTabs?: BrowserTab[]
+  activeBrowserTabId?: string | null
 }
 
 const MAX_HISTORY_LINES = 200
@@ -351,6 +369,12 @@ export default function AITerminal() {
       setInteractivePrompt(prev =>
         prev && prev.sessionId === e.sessionId ? prev : e
       )
+      const connId = activeConnectionIdRef.current
+      if (!connId) return
+      setConnections(prev =>
+        prev.map(c => (c.id === connId ? { ...c, aiThinking: true } : c))
+      )
+      keepalivePendingClaudeRequests(connId, true)
     })
   }, [])
   const claudeCodeRef = useRef<ReturnType<typeof useClaudeCode> | null>(null)
@@ -688,6 +712,65 @@ export default function AITerminal() {
     }
   }, [deleteTarget, activeConnection, loadRemoteFiles, remoteFileOpts])
 
+  const handleRemoteRename = useCallback(
+    async (file: FileItem, newName: string) => {
+      if (!activeConnection || activeConnection.session.type !== 'ssh') return
+      setTransferBusy(true)
+      try {
+        await renameRemoteFile(activeConnection.session, file.path, newName, remoteFileOpts())
+        void loadRemoteFiles(
+          activeConnection.session,
+          remotePathForListApi(
+            activeConnection.remotePath ?? '~',
+            activeConnection.session.user
+          )
+        )
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setTransferBusy(false)
+      }
+    },
+    [activeConnection, loadRemoteFiles, remoteFileOpts]
+  )
+
+  const handleOpenInTerminal = useCallback(
+    (path: string, isDirectory: boolean) => {
+      if (!activeConnectionId) return
+      const conn = connectionsRef.current.find(c => c.id === activeConnectionId)
+      if (!conn) return
+      const shell = conn.shells.find(s => s.id === conn.activeShellId)
+      if (!shell || shell.terminalStatus !== 'connected') return
+      const cdPath = isDirectory ? path : getParentPath(path)
+      const escaped = cdPath.replace(/'/g, "'\\''")
+      void writeTerminal(shell.terminalSessionId, `cd '${escaped}'\n`).catch(() => {})
+    },
+    [activeConnectionId]
+  )
+
+  const handleCreateRemoteFile = useCallback(
+    async (dirPath: string, fileName: string) => {
+      if (!activeConnection || activeConnection.session.type !== 'ssh') return
+      setTransferBusy(true)
+      try {
+        const remotePath = joinRemotePath(dirPath, fileName)
+        await writeRemoteFile(activeConnection.session, remotePath, '', remoteFileOpts())
+        void loadRemoteFiles(
+          activeConnection.session,
+          remotePathForListApi(
+            activeConnection.remotePath ?? '~',
+            activeConnection.session.user
+          )
+        )
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setTransferBusy(false)
+      }
+    },
+    [activeConnection, loadRemoteFiles, remoteFileOpts]
+  )
+
   useEffect(() => {
     if (!isTauriRuntime() || !followTerminalCwd) return
     return subscribeAllTerminalOutput(event => {
@@ -877,23 +960,32 @@ export default function AITerminal() {
       await ensureTerminalOutputListener()
 
       unlistenOutput = subscribeAllTerminalOutput(event => {
-        setConnections(prev =>
-          prev.map(conn => {
-            if (conn.terminalLive) return conn
-            const shell = conn.shells.find(
-              s => s.terminalSessionId === event.sessionId
-            )
-            if (!shell) return conn
+        const prev = connectionsRef.current
+        const targetConn = prev.find(
+          conn =>
+            !conn.terminalLive &&
+            conn.shells.some(s => s.terminalSessionId === event.sessionId)
+        )
+        if (!targetConn) return
+
+        const shell = targetConn.shells.find(s => s.terminalSessionId === event.sessionId)!
+        const nextHistory = appendTerminalOutput(shell.history, event.data)
+        if (nextHistory === shell.history) return
+
+        setConnections(current => {
+          let changed = false
+          const next = current.map(conn => {
+            if (conn.id !== targetConn.id) return conn
+            changed = true
             return {
               ...conn,
               shells: conn.shells.map(s =>
-                s.id === shell.id
-                  ? { ...s, history: appendTerminalOutput(s.history, event.data) }
-                  : s
+                s.id === shell.id ? { ...s, history: nextHistory } : s
               ),
             }
           })
-        )
+          return changed ? next : current
+        })
       })
 
       unlistenStatus = await listenTerminalStatus(event => {
@@ -1019,7 +1111,19 @@ export default function AITerminal() {
               const updated = updateConnectionShellByTerminalId(
                 conn,
                 event.sessionId,
-                shell => ({ ...shell, terminalStatus: 'disconnected' })
+                shell => ({
+                  ...shell,
+                  terminalStatus: 'disconnected',
+                  history: [
+                    ...shell.history,
+                    {
+                      id: `disc-${Date.now()}`,
+                      type: 'system' as const,
+                      content: '连接已断开 — 点击「重新连接」恢复',
+                      timestamp: new Date(),
+                    },
+                  ],
+                })
               )
               if (!updated) return conn
               profileSessionId = updated.session.id
@@ -1372,6 +1476,8 @@ export default function AITerminal() {
       aiMessages: [],
       aiThinking: false,
       terminalLive: useBackend,
+      browserTabs: [],
+      activeBrowserTabId: null,
     }
 
     setConnections(prev => [...prev, newConnection])
@@ -1528,6 +1634,16 @@ export default function AITerminal() {
         void disconnectTerminal(shell.terminalSessionId).catch(() => {})
         clearTerminalOutputBuffer(shell.terminalSessionId)
       }
+    }
+
+    if (conn && isTauriRuntime()) {
+      for (const tab of conn.browserTabs ?? []) {
+        if (tab.tunnelId) void stopTunnel(tab.tunnelId).catch(() => {})
+      }
+      void listTunnels(conn.session.id).then(tunnels => {
+        for (const t of tunnels) void stopTunnel(t.id).catch(() => {})
+      })
+      void stopSocksForProfile(conn.session.id).catch(() => {})
     }
     
     setConnections(prev => prev.filter(c => c.id !== connectionId))
@@ -1840,6 +1956,87 @@ export default function AITerminal() {
     }))
   }, [activeConnectionId, connections])
 
+  const appendBrowserTab = useCallback(
+    (connectionId: string, tab: BrowserTab) => {
+      if (connectionId !== activeConnectionIdRef.current) {
+        setActiveConnectionId(connectionId)
+      }
+      setConnections(prev =>
+        prev.map(c =>
+          c.id !== connectionId
+            ? c
+            : {
+                ...c,
+                browserTabs: [...(c.browserTabs ?? []), tab],
+                activeBrowserTabId: tab.id,
+              }
+        )
+      )
+    },
+    []
+  )
+
+  const handleCloseBrowserTab = useCallback(
+    (tabId: string) => {
+      if (!activeConnectionId) return
+      const conn = connections.find(c => c.id === activeConnectionId)
+      const tab = conn?.browserTabs?.find(t => t.id === tabId)
+      if (tab?.tunnelId && isTauriRuntime()) {
+        void stopTunnel(tab.tunnelId).catch(() => {})
+      }
+      setConnections(prev =>
+        prev.map(c => {
+          if (c.id !== activeConnectionId) return c
+          const browserTabs = (c.browserTabs ?? []).filter(t => t.id !== tabId)
+          const activeBrowserTabId =
+            c.activeBrowserTabId === tabId
+              ? (browserTabs[browserTabs.length - 1]?.id ?? null)
+              : (c.activeBrowserTabId ?? null)
+          return { ...c, browserTabs, activeBrowserTabId }
+        })
+      )
+    },
+    [activeConnectionId, connections]
+  )
+
+  const handleBrowserUrlChange = useCallback(
+    (tabId: string, url: string, tunnelId?: string) => {
+      if (!activeConnectionId) return
+      setConnections(prev =>
+        prev.map(c => {
+          if (c.id !== activeConnectionId) return c
+          return {
+            ...c,
+            browserTabs: (c.browserTabs ?? []).map(t =>
+              t.id === tabId
+                ? {
+                    ...t,
+                    url,
+                    title: tabTitleFromUrl(url),
+                    tunnelId: tunnelId ?? t.tunnelId,
+                  }
+                : t
+            ),
+          }
+        })
+      )
+    },
+    [activeConnectionId]
+  )
+
+  const handleNewBrowser = useCallback(() => {
+    if (!activeConnectionId || !isTauriRuntime()) return
+    const conn = connectionsRef.current.find(c => c.id === activeConnectionIdRef.current)
+    if (!conn) return
+    const tabId = crypto.randomUUID()
+    appendBrowserTab(conn.id, {
+      id: tabId,
+      title: '浏览器',
+      url: '',
+      webviewLabel: makeBrowserWebviewLabel(tabId),
+    })
+  }, [activeConnectionId, appendBrowserTab])
+
   const handleShellChange = useCallback((shellId: string) => {
     if (!activeConnectionId) return
 
@@ -2059,6 +2256,8 @@ export default function AITerminal() {
     },
     [activeConnectionId, connections, remoteFileOpts]
   )
+  const handleFileSaveByIdRef = useRef(handleFileSaveById)
+  handleFileSaveByIdRef.current = handleFileSaveById
 
   const showAiUnavailable = useCallback((assistantId: string) => {
     const hint =
@@ -2177,6 +2376,7 @@ export default function AITerminal() {
               if (silentTimer) clearTimeout(silentTimer)
               silentTimer = null
               clearSettleTimer()
+              flushStreamUi()
               claudeSilentKeepaliveRef.current.delete(requestId)
             }
             const armSilentTimeout = () => {
@@ -2220,6 +2420,56 @@ export default function AITerminal() {
             armSilentTimeout()
             let sawReasoning = false
             let settleTimer: ReturnType<typeof setTimeout> | null = null
+            let streamUiRaf: number | null = null
+            let pendingStreamEvent: ClaudeStreamEvent | null = null
+            let pendingStreamText = ''
+
+            const applyAssistantStreamUi = (
+              event: ClaudeStreamEvent,
+              textChunk?: string
+            ) => {
+              setConnections(prev =>
+                prev.map(conn => {
+                  if (conn.id !== activeConnectionId) return conn
+                  return {
+                    ...conn,
+                    aiMessages: conn.aiMessages.map(m => {
+                      if (m.id !== assistantId) return m
+                      let updated = applyClaudeStreamEvent(m, event)
+                      if (textChunk) {
+                        updated = { ...updated, content: updated.content + textChunk }
+                        updated = appendAssistantTextPart(updated, textChunk)
+                      }
+                      return updated
+                    }),
+                  }
+                })
+              )
+            }
+
+            const flushStreamUi = () => {
+              if (streamUiRaf != null) {
+                cancelAnimationFrame(streamUiRaf)
+                streamUiRaf = null
+              }
+              if (!pendingStreamEvent) return
+              const event = pendingStreamEvent
+              const text = pendingStreamText
+              pendingStreamEvent = null
+              pendingStreamText = ''
+              applyAssistantStreamUi(event, text || undefined)
+            }
+
+            const queueStreamUi = (event: ClaudeStreamEvent, textChunk?: string) => {
+              pendingStreamEvent = event
+              if (textChunk) pendingStreamText += textChunk
+              if (streamUiRaf != null) return
+              streamUiRaf = requestAnimationFrame(() => {
+                streamUiRaf = null
+                flushStreamUi()
+              })
+            }
+
             const clearSettleTimer = () => {
               if (settleTimer) clearTimeout(settleTimer)
               settleTimer = null
@@ -2228,8 +2478,11 @@ export default function AITerminal() {
               clearSettleTimer()
               settleTimer = setTimeout(() => {
                 settleTimer = null
+                if (interactivePromptRef.current) return
                 const pendingSet = claudeRequestsByConnectionRef.current.get(activeConnectionId)
-                if (pendingSet && pendingSet.size > 1) return
+                if (pendingSet && pendingSet.size > 0) {
+                  // 仍有进行中的 Claude 请求，不改变 aiThinking
+                }
                 setConnections(prev =>
                   prev.map(conn => {
                     if (conn.id !== activeConnectionId || !conn.aiThinking) return conn
@@ -2237,24 +2490,14 @@ export default function AITerminal() {
                     if (!msg || !messageHasTextContent(msg) || messageHasRunningTools(msg)) {
                       return conn
                     }
-                    pendingSet?.delete(requestId)
-                    const stillPending = Boolean(
-                      pendingSet && pendingSet.size > 0
-                    )
                     return {
                       ...conn,
                       aiMessages: conn.aiMessages.map(m =>
                         m.id === assistantId ? finalizeAssistantTurn(m) : m
                       ),
-                      aiThinking: stillPending,
                     }
                   })
                 )
-                if (
-                  !claudeRequestsByConnectionRef.current.get(activeConnectionId)?.size
-                ) {
-                  activeAssistantIdRef.current = null
-                }
               }, 3500)
             }
             claudeCode.registerStreamHandler(requestId, event => {
@@ -2313,23 +2556,24 @@ export default function AITerminal() {
                 assistantAccumulated += streamText
               }
 
-              setConnections(prev =>
-                prev.map(conn => {
-                  if (conn.id !== activeConnectionId) return conn
-                  return {
-                    ...conn,
-                    aiMessages: conn.aiMessages.map(m => {
-                      if (m.id !== assistantId) return m
-                      let updated = applyClaudeStreamEvent(m, event)
-                      if (streamText) {
-                        updated = { ...updated, content: updated.content + streamText }
-                        updated = appendAssistantTextPart(updated, streamText)
-                      }
-                      return updated
-                    }),
-                  }
-                })
-              )
+              const needsImmediateUi =
+                event.eventType === 'tool_start' ||
+                event.eventType === 'tool_result' ||
+                event.done ||
+                event.eventType === 'session_error' ||
+                event.eventType === 'process_error' ||
+                event.eventType === 'stderr' ||
+                event.eventType === 'reasoning_delta' ||
+                Boolean(event.reasoning)
+              const isTextStreamDelta =
+                Boolean(streamText) && event.eventType === 'stream_event'
+
+              if (needsImmediateUi || !isTextStreamDelta) {
+                flushStreamUi()
+                applyAssistantStreamUi(event, streamText)
+              } else {
+                queueStreamUi(event, streamText)
+              }
 
               const staleText = [event.text, event.error, assistantAccumulated]
                 .filter(Boolean)
@@ -2358,6 +2602,7 @@ export default function AITerminal() {
               }
 
               if (event.done) {
+                flushStreamUi()
                 // If Claude only emitted a final result (no streaming deltas), append it once here.
                 const resultDup =
                   bufferedResultText &&
@@ -2562,6 +2807,31 @@ export default function AITerminal() {
     ]
   )
 
+  const handleRegenerateMessage = useCallback(
+    (assistantMessageId: string) => {
+      if (!activeConnectionId || !aiSettings.enabled) return
+      const conn = connectionsRef.current.find(c => c.id === activeConnectionId)
+      if (!conn || conn.aiThinking) return
+      const idx = conn.aiMessages.findIndex(m => m.id === assistantMessageId)
+      if (idx <= 0) return
+      let userIdx = idx - 1
+      while (userIdx >= 0 && conn.aiMessages[userIdx].role !== 'user') {
+        userIdx -= 1
+      }
+      if (userIdx < 0) return
+      const userContent = conn.aiMessages[userIdx].content?.trim()
+      if (!userContent) return
+
+      setConnections(prev =>
+        prev.map(c =>
+          c.id !== activeConnectionId ? c : { ...c, aiMessages: c.aiMessages.slice(0, idx) }
+        )
+      )
+      void handleAiMessage(userContent)
+    },
+    [activeConnectionId, aiSettings.enabled, handleAiMessage]
+  )
+
   const handleClearAiChat = useCallback(() => {
     if (!activeConnectionId) return
     void resetConnectionClaudeSession(activeConnectionId, { clearChat: true })
@@ -2592,6 +2862,20 @@ export default function AITerminal() {
     )
   }, [activeConnectionId])
 
+  const handlePromptContinue = useCallback(() => {
+    const prompt = interactivePromptRef.current
+    if (!prompt) return
+    acknowledgeInteractivePrompt(prompt.sessionId, prompt.prompt)
+    keepalivePendingClaudeRequests(activeConnectionIdRef.current, true)
+    setInteractivePrompt(null)
+    workbenchRef.current?.focusTerminal()
+  }, [])
+
+  const handlePromptSendInput = useCallback((sessionId: string, input: string) => {
+    void submitTerminalInput(sessionId, input).catch(() => {})
+    workbenchRef.current?.focusTerminal()
+  }, [])
+
   const handleAiSidebarToggle = useCallback(() => {
     setShowAiPane(v => !v)
   }, [])
@@ -2603,6 +2887,18 @@ export default function AITerminal() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey
+      if (mod && event.key.toLowerCase() === 's' && !event.shiftKey && !event.altKey) {
+        const conn = connectionsRef.current.find(c => c.id === activeConnectionIdRef.current)
+        const fileId = conn?.activeFileId
+        if (fileId) {
+          event.preventDefault()
+          event.stopPropagation()
+          void handleFileSaveByIdRef.current(fileId)
+          return
+        }
+      }
+
       if (isTypingTarget(event.target)) return
       const action = matchShortcutAction(event)
       if (!action) return
@@ -2637,8 +2933,8 @@ export default function AITerminal() {
       }
     }
 
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [openSettings])
 
   const handleCreateSession = useCallback((payload: SessionFormPayload) => {
@@ -2779,7 +3075,9 @@ export default function AITerminal() {
       tool === 'createNewShell' ||
       tool === 'getTerminalContext' ||
       tool === 'listRemoteFiles' ||
-      tool === 'readRemoteFile'
+      tool === 'readRemoteFile' ||
+      tool === 'openRemoteBrowser' ||
+      tool === 'listPortForwards'
     ) {
       mcpShellCommandThisTurnRef.current = true
       keepalivePendingClaudeRequests(activeConnectionIdRef.current, true)
@@ -2896,6 +3194,31 @@ export default function AITerminal() {
         }
       }
     }
+    if (tool === 'openRemoteBrowser') {
+      const profileId = typeof payload.profileId === 'string' ? payload.profileId : undefined
+      let connectionId =
+        typeof payload.connectionId === 'string' ? payload.connectionId : undefined
+      const tabId = typeof payload.tabId === 'string' ? payload.tabId : undefined
+      const localUrl = typeof payload.localUrl === 'string' ? payload.localUrl : undefined
+      const title = typeof payload.title === 'string' ? payload.title : 'Browser'
+      const tunnelId = typeof payload.tunnelId === 'string' ? payload.tunnelId : undefined
+
+      if (!connectionId && profileId) {
+        connectionId = connectionsRef.current.find(c => c.session.id === profileId)?.id
+      }
+      if (!connectionId || !tabId || !localUrl || !tunnelId) {
+        console.error('[MCP] openRemoteBrowser 参数不完整', payload)
+        return
+      }
+
+      appendBrowserTab(connectionId, {
+        id: tabId,
+        title: tabTitleFromUrl(localUrl),
+        url: localUrl,
+        webviewLabel: makeBrowserWebviewLabel(tabId),
+        tunnelId,
+      })
+    }
   }
 
   useEffect(() => {
@@ -2964,31 +3287,47 @@ export default function AITerminal() {
     connections.forEach(c => handleConnectionClose(c.id))
   }, [connections, handleConnectionClose])
 
-  const handleReconnectTab = useCallback((connectionId: string) => {
-    const conn = connections.find(c => c.id === connectionId)
-    if (!conn?.terminalLive) return
+  const handleReconnectTab = useCallback(
+    async (connectionId: string) => {
+      const conn = connections.find(c => c.id === connectionId)
+      if (!conn?.terminalLive) return
 
-    setConnections(prev =>
-      prev.map(c =>
-        c.id === connectionId
-          ? {
-              ...c,
-              session: { ...c.session, status: 'connecting' },
-              shells: c.shells.map(s => ({ ...s, terminalStatus: 'connecting' as const })),
-            }
-          : c
-      )
-    )
+      setActiveConnectionId(connectionId)
 
-    for (const shell of conn.shells) {
-      runBackendConnect(
-        conn.session,
-        connectionId,
-        shell.id,
-        shell.terminalSessionId
+      for (const shell of conn.shells) {
+        await disconnectTerminal(shell.terminalSessionId).catch(() => {})
+      }
+
+      setConnections(prev =>
+        prev.map(c => {
+          if (c.id !== connectionId) return c
+          return {
+            ...c,
+            session: { ...c.session, status: 'connecting' },
+            shells: c.shells.map(s => ({
+              ...s,
+              terminalStatus: 'connecting' as const,
+              history: [
+                ...s.history,
+                {
+                  id: `reconnect-${Date.now()}`,
+                  type: 'system' as const,
+                  content: `正在重新连接 ${c.session.name}...`,
+                  timestamp: new Date(),
+                },
+              ],
+            })),
+          }
+        })
       )
-    }
-  }, [connections, runBackendConnect])
+      setFolders(prev => setSessionStatusInFolders(prev, conn.session.id, 'connecting'))
+
+      for (const shell of conn.shells) {
+        runBackendConnect(conn.session, connectionId, shell.id, shell.terminalSessionId)
+      }
+    },
+    [connections, runBackendConnect]
+  )
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-background">
@@ -3075,6 +3414,9 @@ export default function AITerminal() {
                 onMove={handleRemoteMove}
                 onDownload={handleRemoteDownload}
                 onDelete={handleRemoteDelete}
+                onRename={handleRemoteRename}
+                onOpenInTerminal={handleOpenInTerminal}
+                onCreateRemoteFile={handleCreateRemoteFile}
                 onFileOpen={handleFileOpen}
                 onFileSelect={handleFileSelect}
                 onNavigate={handleRemoteNavigate}
@@ -3103,9 +3445,25 @@ export default function AITerminal() {
                     terminalClearSignals[s.terminalSessionId] ?? 0,
                   ])
                 )}
+                browserTabs={activeConnection.browserTabs ?? []}
+                activeBrowserTabId={activeConnection.activeBrowserTabId ?? undefined}
                   onShellChange={handleShellChange}
                   onNewShell={handleNewShell}
                   onCloseShell={handleCloseShell}
+                  onCloseBrowser={handleCloseBrowserTab}
+                  onBrowserUrlChange={handleBrowserUrlChange}
+                  onNewBrowser={
+                    isTauriRuntime() &&
+                    activeConnection.shells.some(s => s.terminalStatus === 'connected')
+                      ? handleNewBrowser
+                      : undefined
+                  }
+                  onReconnect={
+                    activeConnection.terminalLive &&
+                    !activeConnection.shells.some(s => s.terminalStatus === 'connected')
+                      ? () => handleReconnectTab(activeConnection.id)
+                      : undefined
+                  }
                   onCommand={handleCommand}
                 onFileChange={handleFileChange}
                 onFileSave={handleFileSaveById}
@@ -3117,6 +3475,9 @@ export default function AITerminal() {
             <AiPane
               messages={activeConnection.aiMessages}
               isThinking={activeConnection.aiThinking}
+              isTaskActive={
+                activeConnection.aiThinking || Boolean(interactivePrompt)
+              }
               aiEnabled={aiSettings.enabled}
               modelLabel={
                 aiSettings.enabled
@@ -3147,9 +3508,12 @@ export default function AITerminal() {
               onStopMessage={handleStopAiMessage}
               onExecuteCommand={handleAiExecuteCommand}
               onClearChat={handleClearAiChat}
+              onRegenerateMessage={handleRegenerateMessage}
               claudePath={aiSettings.claudePath || undefined}
               interactivePrompt={interactivePrompt}
-              onPromptDismiss={() => setInteractivePrompt(null)}
+              onPromptDismiss={handlePromptContinue}
+              onFocusTerminal={() => workbenchRef.current?.focusTerminal()}
+              onPromptSendInput={handlePromptSendInput}
               onPromptCancel={sid => {
                 cancelShellToolForSession(sid)
                 setInteractivePrompt(null)

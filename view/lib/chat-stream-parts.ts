@@ -29,6 +29,12 @@ function toolTaskTitle(name: string, input?: unknown): string {
   if (name === 'getTerminalContext' || name === 'mcp__aiterm__getTerminalContext') {
     return '读取终端上下文'
   }
+  if (name === 'openRemoteBrowser' || name === 'mcp__aiterm__openRemoteBrowser') {
+    return '打开远程浏览器'
+  }
+  if (name === 'listPortForwards' || name === 'mcp__aiterm__listPortForwards') {
+    return '列出端口转发'
+  }
   return name.replace(/^mcp__aiterm__/, '')
 }
 

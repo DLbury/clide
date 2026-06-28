@@ -21,11 +21,17 @@ import {
   IDockviewHeaderActionsProps,
 } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
-import { Terminal, FileCode, X, Plus } from 'lucide-react'
+import { Terminal, FileCode, Globe, X, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppTheme } from '@/hooks/use-app-theme'
 import { EditorContent } from '@/components/layout/editor-content'
 import { ShellPane } from '@/components/layout/shell-pane'
+import { BrowserPanel } from '@/components/layout/browser-panel'
+import {
+  hideAllEmbeddedWebviews,
+  showAllEmbeddedWebviews,
+  syncAllEmbeddedWebviews,
+} from '@/lib/webview-layout-bridge'
 import { editorModelToOpenFile } from '@/lib/editor-service'
 import type { TerminalLine, Session } from '@/lib/types'
 import type { EditorModel } from '@/lib/editor-service'
@@ -39,10 +45,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 
 interface WorkbenchContextValue {
   onNewShell: (referencePanelId?: string) => void
+  onNewBrowser?: () => void
+  onReconnect?: () => void
   requestEditorClose: (fileId: string, panelApi: { close: () => void }) => void
+  tryClosePanel: (panelId: string) => void
+  closeOtherPanelsInGroup: (panelId: string) => void
+  closeAllPanelsInGroup: (panelId: string) => void
   onShellChange: (id: string) => void
   onCloseShell: (id: string) => void
   onCommand: (shellId: string, command: string) => void
@@ -57,6 +75,9 @@ interface WorkbenchRuntimeContextValue {
 const WorkbenchContext = createContext<WorkbenchContextValue>({
   onNewShell: () => {},
   requestEditorClose: () => {},
+  tryClosePanel: () => {},
+  closeOtherPanelsInGroup: () => {},
+  closeAllPanelsInGroup: () => {},
   onShellChange: () => {},
   onCloseShell: () => {},
   onCommand: () => {},
@@ -94,11 +115,30 @@ interface EditorPanelParams {
   onSave: () => void
 }
 
-type PanelParams = TerminalPanelParams | EditorPanelParams
+interface BrowserPanelParams {
+  type: 'browser'
+  tabId: string
+  title: string
+  url: string
+  webviewLabel: string
+  profileId?: string
+  onUrlChange: (url: string, tunnelId?: string) => void
+}
+
+export interface WorkbenchBrowserTab {
+  id: string
+  title: string
+  url: string
+  webviewLabel: string
+  tunnelId?: string
+}
+
+type PanelParams = TerminalPanelParams | EditorPanelParams | BrowserPanelParams
 
 function TerminalPanel({ params }: IDockviewPanelProps<TerminalPanelParams>) {
   const { activeShellId, shells, clearSignals } = useContext(WorkbenchRuntimeContext)
-  const { onShellChange, onNewShell, onCloseShell, onCommand } = useContext(WorkbenchContext)
+  const { onShellChange, onNewShell, onCloseShell, onCommand, onReconnect } =
+    useContext(WorkbenchContext)
   const shell = shells.find(s => s.id === params.shellId)
   if (!shell) {
     return <div className="p-4 text-muted-foreground text-sm">Shell 不存在</div>
@@ -121,6 +161,11 @@ function TerminalPanel({ params }: IDockviewPanelProps<TerminalPanelParams>) {
       clearSignal={clearSignals[shell.terminalSessionId] ?? 0}
       inputEnabled={activeShellId === params.shellId}
       hideTabBar
+      onReconnect={
+        shell.terminalStatus === 'disconnected' || shell.terminalStatus === 'error'
+          ? onReconnect
+          : undefined
+      }
     />
   )
 }
@@ -135,12 +180,36 @@ function EditorPanel({ params }: IDockviewPanelProps<EditorPanelParams>) {
   )
 }
 
+function BrowserPanelWrapper({ params, api }: IDockviewPanelProps<BrowserPanelParams>) {
+  const [panelVisible, setPanelVisible] = useState(api.isVisible)
+
+  useEffect(() => {
+    setPanelVisible(api.isVisible)
+    const disposable = api.onDidVisibilityChange(event => {
+      setPanelVisible(event.isVisible)
+    })
+    return () => disposable.dispose()
+  }, [api])
+
+  return (
+    <BrowserPanel
+      webviewLabel={params.webviewLabel}
+      url={params.url}
+      profileId={params.profileId}
+      visible={panelVisible}
+      onUrlChange={params.onUrlChange}
+    />
+  )
+}
+
 const WorkbenchTab = memo(function WorkbenchTab({
   params,
   api,
 }: IDockviewPanelHeaderProps<PanelParams>) {
-  const { requestEditorClose } = useContext(WorkbenchContext)
+  const { requestEditorClose, tryClosePanel, closeOtherPanelsInGroup, closeAllPanelsInGroup } =
+    useContext(WorkbenchContext)
   const data = params
+  const panelId = api.id
 
   const icon = (() => {
     switch (data.type) {
@@ -148,49 +217,96 @@ const WorkbenchTab = memo(function WorkbenchTab({
         return <Terminal className="w-3.5 h-3.5" />
       case 'editor':
         return <FileCode className="w-3.5 h-3.5" />
+      case 'browser':
+        return <Globe className="w-3.5 h-3.5" />
     }
   })()
 
   const title =
-    data.type === 'terminal' ? api.title : (data as EditorPanelParams).file.name
+    data.type === 'terminal'
+      ? api.title
+      : data.type === 'browser'
+        ? (data as BrowserPanelParams).title
+        : (data as EditorPanelParams).file.name
 
   const isModified = data.type === 'editor' && (data as EditorPanelParams).file.isModified
   const canClose =
     data.type === 'editor' ||
+    data.type === 'browser' ||
     (data.type === 'terminal' && (data as TerminalPanelParams).canCloseTab)
 
+  const handleClose = (e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    if (data.type === 'editor') {
+      const fileId = (data as EditorPanelParams).fileId
+      const modified = (data as EditorPanelParams).file.isModified
+      if (modified) {
+        requestEditorClose(fileId, api)
+        return
+      }
+    }
+    api.close()
+  }
+
+  const groupPanelCount = api.group?.panels.length ?? 1
+  const showGroupActions = groupPanelCount > 1
+
   return (
-    <div className="flex items-center gap-1.5 px-2 py-1 h-full min-w-0 max-w-[180px] select-none">
-      <span className="text-muted-foreground shrink-0">{icon}</span>
-      <span className="truncate text-xs flex-1 min-w-0">{title}</span>
-      {isModified && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
-      {canClose && (
-        <button
-          type="button"
-          onPointerDown={e => e.stopPropagation()}
-          onClick={e => {
-            e.stopPropagation()
-            if (data.type === 'editor') {
-              const fileId = (data as EditorPanelParams).fileId
-              const isModified = (data as EditorPanelParams).file.isModified
-              if (isModified) {
-                requestEditorClose(fileId, api)
-                return
-              }
-            }
-            api.close()
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="flex items-center gap-1.5 px-2 py-1 h-full min-w-0 max-w-[180px] select-none">
+          <span className="text-muted-foreground shrink-0">{icon}</span>
+          <span className="truncate text-xs flex-1 min-w-0">{title}</span>
+          {isModified && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
+          {canClose && (
+            <button
+              type="button"
+              onPointerDown={e => e.stopPropagation()}
+              onClick={handleClose}
+              className="ml-auto p-0.5 rounded hover:bg-muted/80 opacity-60 hover:opacity-100 transition-opacity shrink-0"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-44">
+        {canClose && (
+          <>
+            <ContextMenuItem onClick={() => tryClosePanel(panelId)}>关闭</ContextMenuItem>
+            {showGroupActions && (
+              <>
+                <ContextMenuItem onClick={() => closeOtherPanelsInGroup(panelId)}>
+                  关闭其他
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => closeAllPanelsInGroup(panelId)}>
+                  关闭全部
+                </ContextMenuItem>
+              </>
+            )}
+            <ContextMenuSeparator />
+          </>
+        )}
+        <ContextMenuItem
+          onClick={() => {
+            const text =
+              data.type === 'browser'
+                ? (data as BrowserPanelParams).url
+                : data.type === 'editor'
+                  ? (data as EditorPanelParams).file.path
+                  : title
+            navigator.clipboard.writeText(text ?? '').catch(() => {})
           }}
-          className="ml-auto p-0.5 rounded hover:bg-muted/80 opacity-60 hover:opacity-100 transition-opacity shrink-0"
         >
-          <X className="w-3 h-3" />
-        </button>
-      )}
-    </div>
+          复制路径
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 })
 
 function RightHeaderActions({ panels, activePanel }: IDockviewHeaderActionsProps) {
-  const { onNewShell } = useContext(WorkbenchContext)
+  const { onNewShell, onNewBrowser } = useContext(WorkbenchContext)
   const hasTerminal = panels.some(p => p.id.startsWith('terminal-'))
 
   if (!hasTerminal) return null
@@ -200,23 +316,39 @@ function RightHeaderActions({ panels, activePanel }: IDockviewHeaderActionsProps
     panels.find(p => p.id.startsWith('terminal-'))?.id
 
   return (
-    <button
-      onClick={() => onNewShell(referencePanelId)}
-      className={cn(
-        'flex items-center justify-center h-full px-2',
-        'hover:bg-muted/50 transition-colors border-l border-border',
-        'text-muted-foreground hover:text-foreground'
+    <div className="flex h-full items-stretch">
+      {onNewBrowser && (
+        <button
+          onClick={() => onNewBrowser()}
+          className={cn(
+            'flex items-center justify-center h-full px-2',
+            'hover:bg-muted/50 transition-colors border-l border-border',
+            'text-muted-foreground hover:text-foreground'
+          )}
+          title="新增浏览器"
+        >
+          <Globe className="w-4 h-4" />
+        </button>
       )}
-      title="新建 Shell"
-    >
-      <Plus className="w-4 h-4" />
-    </button>
+      <button
+        onClick={() => onNewShell(referencePanelId)}
+        className={cn(
+          'flex items-center justify-center h-full px-2',
+          'hover:bg-muted/50 transition-colors border-l border-border',
+          'text-muted-foreground hover:text-foreground'
+        )}
+        title="新建 Shell"
+      >
+        <Plus className="w-4 h-4" />
+      </button>
+    </div>
   )
 }
 
 const components = {
   terminal: TerminalPanel,
   editor: EditorPanel,
+  browser: BrowserPanelWrapper,
 }
 
 const tabComponents = {
@@ -232,9 +364,15 @@ export interface WorkbenchLayoutProps {
   activeFileId: string | null
   terminalLive?: boolean
   clearSignals?: Record<string, number>
+  browserTabs?: WorkbenchBrowserTab[]
+  activeBrowserTabId?: string
   onShellChange: (shellId: string) => void
   onNewShell: () => void
   onCloseShell: (shellId: string) => void
+  onCloseBrowser?: (tabId: string) => void
+  onBrowserUrlChange?: (tabId: string, url: string, tunnelId?: string) => void
+  onNewBrowser?: () => void
+  onReconnect?: () => void
   onCommand: (shellId: string, command: string) => void
   onFileChange: (fileId: string, content: string) => void
   onFileSave: (fileId: string) => void
@@ -259,9 +397,15 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
   activeFileId,
   terminalLive,
   clearSignals = {},
+  browserTabs = [],
+  activeBrowserTabId,
   onShellChange,
   onNewShell,
   onCloseShell,
+  onCloseBrowser,
+  onBrowserUrlChange,
+  onNewBrowser,
+  onReconnect,
   onCommand,
   onFileChange,
   onFileSave,
@@ -296,6 +440,28 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
   onFileSaveRef.current = onFileSave
   onFileCloseRef.current = onFileClose
   onActiveFileChangeRef.current = onActiveFileChange
+  const onCloseBrowserRef = useRef(onCloseBrowser)
+  onCloseBrowserRef.current = onCloseBrowser
+  const onBrowserUrlChangeRef = useRef(onBrowserUrlChange)
+  onBrowserUrlChangeRef.current = onBrowserUrlChange
+  const onNewBrowserRef = useRef(onNewBrowser)
+  onNewBrowserRef.current = onNewBrowser
+  const onReconnectRef = useRef(onReconnect)
+  onReconnectRef.current = onReconnect
+
+  const buildBrowserParams = useCallback(
+    (tab: WorkbenchBrowserTab): BrowserPanelParams => ({
+      type: 'browser',
+      tabId: tab.id,
+      title: tab.title,
+      url: tab.url,
+      webviewLabel: tab.webviewLabel,
+      profileId: session.type === 'ssh' ? session.id : undefined,
+      onUrlChange: (url, tunnelId) =>
+        onBrowserUrlChangeRef.current?.(tab.id, url, tunnelId),
+    }),
+    [session.type, session.id]
+  )
 
   const buildEditorParams = useCallback(
     (file: EditorModel): EditorPanelParams => {
@@ -386,8 +552,44 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
 
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {
-      apiRef.current = event.api
-      ensureInitialTerminal(event.api)
+      const api = event.api
+      apiRef.current = api
+
+      const syncWebviews = () => syncAllEmbeddedWebviews()
+
+      const onActivePanelChange = () => {
+        syncWebviews()
+        const active = api.activePanel
+        if (!active?.id.startsWith('browser-')) {
+          hideAllEmbeddedWebviews()
+        }
+      }
+
+      let dragReleaseHandler: (() => void) | null = null
+      const releaseAfterDrag = () => {
+        if (dragReleaseHandler) {
+          window.removeEventListener('pointerup', dragReleaseHandler)
+          window.removeEventListener('pointercancel', dragReleaseHandler)
+          dragReleaseHandler = null
+        }
+        showAllEmbeddedWebviews()
+      }
+
+      const hideForDrag = () => {
+        hideAllEmbeddedWebviews()
+        if (dragReleaseHandler) return
+        dragReleaseHandler = releaseAfterDrag
+        window.addEventListener('pointerup', dragReleaseHandler)
+        window.addEventListener('pointercancel', dragReleaseHandler)
+      }
+
+      api.onDidLayoutChange(syncWebviews)
+      api.onDidActivePanelChange(onActivePanelChange)
+      api.onWillDragPanel(hideForDrag)
+      api.onWillDragGroup(hideForDrag)
+      api.onDidDrop(releaseAfterDrag)
+
+      ensureInitialTerminal(api)
     },
     [ensureInitialTerminal]
   )
@@ -410,6 +612,8 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
             } else if (panel.id.startsWith('editor-')) {
               const fileId = panel.id.replace('editor-', '')
               editorSnapshotRef.current.delete(fileId)
+            } else if (panel.id.startsWith('browser-')) {
+              // browser webview closed in BrowserPanel unmount
             }
           } catch {
             // 忽略清理过程中的错误
@@ -472,6 +676,63 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
     })
   }, [shellsLayoutKey, connectionId, buildTerminalParams, terminalParamsKey, resolveTerminalReferencePanel])
 
+  const browserTabsKey = browserTabs.map(t => `${t.id}:${t.title}:${t.url}:${t.webviewLabel}`).join('|')
+
+  // Sync browser panels
+  useEffect(() => {
+    const api = apiRef.current
+    if (!api) return
+
+    const existingBrowserIds = new Set(
+      api.panels.filter(p => p.id.startsWith('browser-')).map(p => p.id.replace('browser-', ''))
+    )
+    const tabIds = new Set(browserTabs.map(t => t.id))
+
+    browserTabs.forEach(tab => {
+      const panelId = `browser-${tab.id}`
+      const panel = api.getPanel(panelId)
+      const params = buildBrowserParams(tab)
+
+      if (panel) {
+        if (panel.api.title !== tab.title) {
+          panel.api.setTitle(tab.title)
+        }
+        panel.api.updateParameters(params)
+      } else {
+        const terminalRef = findTerminalRef(api)
+        const existingBrowser = api.panels.find(p => p.id.startsWith('browser-'))
+        const refPanel = existingBrowser?.id ?? terminalRef
+        if (!refPanel) return
+
+        api.addPanel({
+          id: panelId,
+          component: 'browser',
+          tabComponent: 'tab',
+          title: tab.title,
+          params,
+          position: { referencePanel: refPanel, direction: 'within' as const },
+        })
+      }
+    })
+
+    existingBrowserIds.forEach(id => {
+      if (!tabIds.has(id)) {
+        syncingRef.current = true
+        api.getPanel(`browser-${id}`)?.api.close()
+        syncingRef.current = false
+      }
+    })
+  }, [browserTabsKey, connectionId, findTerminalRef, buildBrowserParams])
+
+  // Activate browser tab when activeBrowserTabId changes
+  useEffect(() => {
+    const api = apiRef.current
+    if (!api || !activeBrowserTabId) return
+    const panel = api.getPanel(`browser-${activeBrowserTabId}`)
+    if (!panel || panel.api.isActive) return
+    panel.api.setActive()
+  }, [activeBrowserTabId])
+
   const handleNewShellInGroup = useCallback(
     (referencePanelId?: string) => {
       newShellPlacementRef.current = referencePanelId
@@ -512,10 +773,16 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
           onFileCloseRef.current(fileId)
         }
       }
+      if (panel.id.startsWith('browser-')) {
+        const tabId = panel.id.replace('browser-', '')
+        if (browserTabs.some(t => t.id === tabId)) {
+          onCloseBrowserRef.current?.(tabId)
+        }
+      }
     })
 
     return () => disposable.dispose()
-  }, [shells, openFiles])
+  }, [shells, openFiles, browserTabs])
 
   const openFileIdsKey = openFiles.map(f => f.id).join('\0')
 
@@ -610,7 +877,12 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
 
     const disposable = api.onDidActivePanelChange(panel => {
       if (panel?.id.startsWith('editor-')) {
-        onActiveFileChangeRef.current(panel.id.replace('editor-', ''))
+        const params = panel.params as EditorPanelParams | undefined
+        if (params?.type === 'editor' && params.fileId) {
+          onActiveFileChangeRef.current(params.fileId)
+        } else if (!panel.id.startsWith('editor-split-')) {
+          onActiveFileChangeRef.current(panel.id.replace('editor-', ''))
+        }
       }
       if (panel?.id.startsWith('terminal-')) {
         onShellChangeRef.current(panel.id.replace('terminal-', ''))
@@ -625,6 +897,45 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
       setPendingClose({ fileId, closePanel: () => panelApi.close() })
     },
     []
+  )
+
+  const tryClosePanel = useCallback(
+    (panelId: string) => {
+      const dockApi = apiRef.current
+      const panel = dockApi?.getPanel(panelId)
+      if (!panel) return
+      const params = panel.params as PanelParams | undefined
+      if (params?.type === 'editor' && params.file.isModified) {
+        requestEditorClose(params.fileId, panel.api)
+        return
+      }
+      panel.api.close()
+    },
+    [requestEditorClose]
+  )
+
+  const closeOtherPanelsInGroup = useCallback(
+    (panelId: string) => {
+      const dockApi = apiRef.current
+      const panel = dockApi?.getPanel(panelId)
+      const group = panel?.api.group
+      if (!group) return
+      group.panels
+        .filter(p => p.id !== panelId)
+        .forEach(p => tryClosePanel(p.id))
+    },
+    [tryClosePanel]
+  )
+
+  const closeAllPanelsInGroup = useCallback(
+    (panelId: string) => {
+      const dockApi = apiRef.current
+      const panel = dockApi?.getPanel(panelId)
+      const group = panel?.api.group
+      if (!group) return
+      ;[...group.panels].forEach(p => tryClosePanel(p.id))
+    },
+    [tryClosePanel]
   )
 
   const handleSaveAndClose = useCallback(() => {
@@ -690,12 +1001,25 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
   const workbenchContextValue = useMemo(
     () => ({
       onNewShell: handleNewShellInGroup,
+      onNewBrowser: onNewBrowserRef.current ? () => onNewBrowserRef.current?.() : undefined,
+      onReconnect: onReconnectRef.current ? () => onReconnectRef.current?.() : undefined,
       requestEditorClose,
+      tryClosePanel,
+      closeOtherPanelsInGroup,
+      closeAllPanelsInGroup,
       onShellChange: (id: string) => onShellChangeRef.current(id),
       onCloseShell: (id: string) => onCloseShellRef.current(id),
       onCommand: (sid: string, cmd: string) => onCommandRef.current(sid, cmd),
     }),
-    [handleNewShellInGroup, requestEditorClose]
+    [
+      handleNewShellInGroup,
+      requestEditorClose,
+      tryClosePanel,
+      closeOtherPanelsInGroup,
+      closeAllPanelsInGroup,
+      onNewBrowser,
+      onReconnect,
+    ]
   )
 
   const runtimeContextValue = useMemo(

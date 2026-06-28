@@ -15,6 +15,7 @@ export const LAYOUT_SHORTCUTS: LayoutShortcut[] = [
   { id: 'split-editor-below', label: '向下拆分编辑器', keys: ['Ctrl', 'Shift', '\\'], category: '窗口排列' },
   { id: 'focus-terminal', label: '聚焦终端', keys: ['Ctrl', '`'], category: '焦点切换' },
   { id: 'focus-editor', label: '聚焦编辑器', keys: ['Ctrl', '1'], category: '焦点切换' },
+  { id: 'save-file', label: '保存当前文件', keys: ['Ctrl', 'S'], category: '全局' },
   { id: 'open-settings', label: '打开设置', keys: ['Ctrl', ','], category: '全局' },
 ]
 

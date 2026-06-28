@@ -14,6 +14,13 @@ import {
   injectTerminalOutput,
 } from '@/lib/terminal-stream'
 import { useAppTheme } from '@/hooks/use-app-theme'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 
 const TERMINAL_GREEN = '#23d18b'
 const TERMINAL_GREEN_LIGHT = '#15803d'
@@ -79,6 +86,30 @@ export function LiveTerminal({
     })
   }, [fit])
 
+  const copySelection = useCallback(() => {
+    const term = termRef.current
+    if (!term) return
+    const text = term.getSelection()
+    if (text) {
+      navigator.clipboard.writeText(text).catch(() => {})
+    }
+  }, [])
+
+  const selectAll = useCallback(() => {
+    termRef.current?.selectAll()
+  }, [])
+
+  const pasteFromClipboard = useCallback(() => {
+    if (!connectedRef.current || !inputEnabledRef.current) return
+    void navigator.clipboard
+      .readText()
+      .then(text => {
+        if (!text) return
+        void writeTerminal(sessionIdRef.current, text).catch(() => {})
+      })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -130,10 +161,7 @@ export function LiveTerminal({
     fitRef.current = fitAddon
     setTermReady(true)
 
-    // 立即同步 PTY 尺寸（PTY 初始为 120x32，需尽快与 xterm 实际尺寸对齐，
-    // 否则 PowerShell PSReadLine 按错误列数计算换行，长命令字符会"消失"）
     syncPtySize()
-    // 重试几次，防止后端 session 尚未就绪时 resize 被丢弃
     const syncTimers = [50, 200, 500].map(ms =>
       setTimeout(() => syncPtySize(), ms)
     )
@@ -157,7 +185,6 @@ export function LiveTerminal({
     }
   }, [isDark, fit, scheduleFit, syncPtySize])
 
-  /** 追赶缓冲增量；仅当环形截断导致偏移回退时才 clear 全量重绘 */
   const catchUpTerminalBuffer = useCallback(() => {
     const term = termRef.current
     if (!term) return
@@ -176,7 +203,6 @@ export function LiveTerminal({
     bufferSyncedRef.current = buffered.length
   }, [sessionId])
 
-  /** 切换标签等场景：在空白 xterm 上写入完整缓冲 */
   const replayBufferToTerm = useCallback(() => {
     const term = termRef.current
     if (!term) return
@@ -231,7 +257,6 @@ export function LiveTerminal({
 
     const unsubInput = registerTerminalInputHandler(sessionId, async data => {
       await writeTerminal(sessionId, data)
-      // PTY 输出经 subscribeTerminalOutput 增量写入，无需 resync（否则会整屏重复渲染）
     })
 
     return () => {
@@ -245,7 +270,7 @@ export function LiveTerminal({
   useEffect(() => {
     if (connected && inputEnabled) {
       termRef.current?.focus()
-      syncPtySize() // 立即同步，不等待 rAF
+      syncPtySize()
       scheduleFit()
     } else if (connected) {
       syncPtySize()
@@ -253,7 +278,6 @@ export function LiveTerminal({
     }
   }, [connected, inputEnabled, scheduleFit, syncPtySize])
 
-  // 连接成功后从 Rust 缓冲补拉首屏输出（防止 IPC 批量延迟导致仅见光标）
   useEffect(() => {
     if (!termReady || !connected) return
     let cancelled = false
@@ -276,7 +300,7 @@ export function LiveTerminal({
       cancelled = true
       clearTimeout(timer)
     }
-  }, [sessionId, termReady, connected])
+  }, [sessionId, termReady, connected, catchUpTerminalBuffer])
 
   useEffect(() => {
     if (clearSignal > 0) {
@@ -286,10 +310,30 @@ export function LiveTerminal({
   }, [clearSignal])
 
   return (
-    <div
-      ref={containerRef}
-      className={cn('select-text-region overflow-hidden', className ?? 'h-full w-full min-h-0')}
-      onClick={() => termRef.current?.focus()}
-    />
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={containerRef}
+          className={cn('select-text-region overflow-hidden', className ?? 'h-full w-full min-h-0')}
+          onClick={() => termRef.current?.focus()}
+        />
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-40">
+        <ContextMenuItem onClick={copySelection}>复制</ContextMenuItem>
+        <ContextMenuItem onClick={pasteFromClipboard} disabled={!connected || !inputEnabled}>
+          粘贴
+        </ContextMenuItem>
+        <ContextMenuItem onClick={selectAll}>全选</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onClick={() => {
+            termRef.current?.clear()
+            bufferSyncedRef.current = 0
+          }}
+        >
+          清屏
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }

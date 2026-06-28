@@ -225,4 +225,5 @@ fn run_pty_reader(
             }
         }
     }
+    super::unregister_terminal_session(&app, &session_id);
 }

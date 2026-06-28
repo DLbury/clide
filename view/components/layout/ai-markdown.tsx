@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import { Streamdown } from 'streamdown'
 import { code } from '@streamdown/code'
 import { cn } from '@/lib/utils'
@@ -11,7 +12,11 @@ interface AiMarkdownProps {
   className?: string
 }
 
-export function AiMarkdown({ content, isStreaming = false, className }: AiMarkdownProps) {
+export const AiMarkdown = memo(function AiMarkdown({
+  content,
+  isStreaming = false,
+  className,
+}: AiMarkdownProps) {
   if (!content && !isStreaming) return null
 
   if (!content && isStreaming) {
@@ -29,4 +34,8 @@ export function AiMarkdown({ content, isStreaming = false, className }: AiMarkdo
       </Streamdown>
     </div>
   )
-}
+}, (prev, next) => {
+  if (prev.isStreaming !== next.isStreaming) return false
+  if (prev.className !== next.className) return false
+  return prev.content === next.content
+})

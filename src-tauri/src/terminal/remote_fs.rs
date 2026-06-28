@@ -313,6 +313,53 @@ pub async fn write_file_base64(
     write_bytes(&request, &resolved, &bytes, elevated).await
 }
 
+pub async fn rename_path(
+    request: ConnectRequest,
+    source: String,
+    new_name: String,
+    elevated: bool,
+) -> Result<(), String> {
+    ensure_ssh(&request)?;
+
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() || trimmed.contains('/') {
+        return Err("新名称不能为空或包含 /".to_string());
+    }
+
+    let src = resolve_remote_path(&request, &source);
+    let parent = src.rfind('/').map(|i| &src[..i]).unwrap_or("");
+    let dest = if parent.is_empty() {
+        format!("/{trimmed}")
+    } else {
+        format!("{parent}/{trimmed}")
+    };
+
+    if src == dest {
+        return Ok(());
+    }
+
+    let src_safe = escape_single_quotes(&src);
+    let dest_safe = escape_single_quotes(&dest);
+
+    let cmd = format!(
+        "src='{src_safe}'; dest='{dest_safe}'; \
+         if [ ! -e \"$src\" ]; then echo __NOT_FOUND__; exit 1; fi; \
+         if [ -e \"$dest\" ]; then echo __DEST_EXISTS__; exit 2; fi; \
+         mv -- \"$src\" \"$dest\""
+    );
+
+    exec_capture(&request, &cmd, elevated).await.map_err(|e| {
+        if e.contains("__NOT_FOUND__") {
+            "源路径不存在".to_string()
+        } else if e.contains("__DEST_EXISTS__") {
+            "目标名称已存在".to_string()
+        } else {
+            e
+        }
+    })?;
+    Ok(())
+}
+
 pub async fn move_path(
     request: ConnectRequest,
     source: String,

@@ -324,6 +324,20 @@ export async function moveRemotePath(
   })
 }
 
+export async function renameRemotePath(
+  session: Session,
+  source: string,
+  newName: string,
+  options?: RemoteFileOptions
+): Promise<void> {
+  return invoke<void>('terminal_rename_path', {
+    request: sessionToInvokeRequest(session),
+    source,
+    newName,
+    useRoot: options?.useRoot ?? false,
+  })
+}
+
 export async function deleteRemotePath(
   session: Session,
   path: string,

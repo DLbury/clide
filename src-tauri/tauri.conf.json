@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Clide",
-  "version": "0.1.58",
+  "version": "0.1.59",
   "identifier": "com.dlbury.clide",
   "build": {
     "beforeDevCommand": "node scripts/start-next-dev.mjs 13800",
@@ -11,6 +11,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Clide",
         "width": 1440,
         "height": 900,
@@ -31,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "deb", "rpm", "appimage", "dmg", "app"],
     "resources": {
       "../scripts/run-aiterm-mcp.mjs": "scripts/run-aiterm-mcp.mjs",
       "../scripts/aiterm-mcp-stdio.mjs": "scripts/aiterm-mcp-stdio.mjs"
@@ -54,6 +55,7 @@
     ],
     "windows": {
       "nsis": {
+        "installMode": "currentUser",
         "installerIcon": "icons/icon.ico",
         "sidebarImage": "icons/nsis/installer-sidebar.bmp",
         "headerImage": "icons/nsis/installer-header.bmp",

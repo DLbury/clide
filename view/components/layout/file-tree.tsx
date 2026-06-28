@@ -40,6 +40,7 @@ import {
   cloneFileTree,
   findFileItem,
   findFileItemById,
+  renameFileItem,
 } from '@/lib/file-system'
 import {
   ContextMenu,
@@ -78,6 +79,9 @@ interface FileTreeProps {
   onMove?: (sourcePath: string, destDir: string) => void
   onDownload?: (file: FileItem) => void
   onDelete?: (file: FileItem) => void
+  onRename?: (item: FileItem, newName: string) => void | Promise<void>
+  onOpenInTerminal?: (path: string, isDirectory: boolean) => void
+  onCreateRemoteFile?: (dirPath: string, fileName: string) => void | Promise<void>
   transferBusy?: boolean
   uploadProgress?: UploadProgress | null
   fileRootMode?: boolean
@@ -87,6 +91,11 @@ interface FileTreeProps {
 interface PendingFolder {
   parentId: string
   parentPath: string
+  name: string
+}
+
+interface PendingRename {
+  itemId: string
   name: string
 }
 
@@ -225,12 +234,14 @@ function NewFolderInput({
   onChange,
   onConfirm,
   onCancel,
+  icon: IconComponent = Folder,
 }: {
   depth: number
   name: string
   onChange: (name: string) => void
   onConfirm: () => void
   onCancel: () => void
+  icon?: typeof Folder
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const confirmingRef = useRef(false)
@@ -253,7 +264,7 @@ function NewFolderInput({
       onMouseDown={e => e.stopPropagation()}
     >
       <span className="w-3.5" />
-      <Folder className="w-4 h-4 flex-shrink-0 text-primary/80" />
+      <IconComponent className="w-4 h-4 flex-shrink-0 text-primary/80" />
       <input
         ref={inputRef}
         value={name}
@@ -283,6 +294,7 @@ function FileTreeItem({
   depth,
   selectedPath,
   pendingFolder,
+  pendingRename,
   remoteMode,
   onFileOpen,
   onFileSelect,
@@ -297,6 +309,12 @@ function FileTreeItem({
   onDownload,
   onDelete,
   onMove,
+  onRename,
+  onOpenInTerminal,
+  onStartRename,
+  onRenameChange,
+  onConfirmRename,
+  onCancelRename,
   transferBusy,
   onRemoteDragEnd,
 }: {
@@ -304,6 +322,7 @@ function FileTreeItem({
   depth: number
   selectedPath?: string | null
   pendingFolder: PendingFolder | null
+  pendingRename: PendingRename | null
   remoteMode?: boolean
   onFileOpen: (file: FileItem) => void
   onFileSelect?: (file: FileItem) => void
@@ -318,6 +337,12 @@ function FileTreeItem({
   onDownload?: (file: FileItem) => void
   onDelete?: (file: FileItem) => void
   onMove?: (sourcePath: string, destDir: string) => void
+  onRename?: (item: FileItem, newName: string) => void | Promise<void>
+  onOpenInTerminal?: (path: string, isDirectory: boolean) => void
+  onStartRename: (item: FileItem) => void
+  onRenameChange: (name: string) => void
+  onConfirmRename: () => void
+  onCancelRename: () => void
   transferBusy?: boolean
   onRemoteDragEnd?: () => void
 }) {
@@ -325,6 +350,7 @@ function FileTreeItem({
   const isDirectory = item.type === 'directory'
   const isSelected = selectedPath === item.path
   const showNewFolderInput = pendingFolder?.parentId === item.id
+  const showRenameInput = pendingRename?.itemId === item.id
   const childCount = item.children?.length ?? 0
   const [isDropTarget, setIsDropTarget] = useState(false)
   const canDragRemote = remoteMode && !!onMove && !transferBusy
@@ -394,6 +420,16 @@ function FileTreeItem({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div>
+          {showRenameInput && pendingRename ? (
+            <NewFolderInput
+              depth={depth}
+              name={pendingRename.name}
+              icon={Icon}
+              onChange={onRenameChange}
+              onConfirm={onConfirmRename}
+              onCancel={onCancelRename}
+            />
+          ) : (
           <div
             draggable={canDragRemote}
             onDragStart={handleDragStart}
@@ -428,8 +464,9 @@ function FileTreeItem({
             />
             <span className="truncate">{item.name}</span>
           </div>
+          )}
 
-          {isDirectory && item.isExpanded && (
+          {!showRenameInput && isDirectory && item.isExpanded && (
             <div>
               {childCount === 0 && remoteMode ? (
                 <div
@@ -446,6 +483,7 @@ function FileTreeItem({
                     depth={depth + 1}
                     selectedPath={selectedPath}
                     pendingFolder={pendingFolder}
+                    pendingRename={pendingRename}
                     remoteMode={remoteMode}
                     onFileOpen={onFileOpen}
                     onFileSelect={onFileSelect}
@@ -460,6 +498,12 @@ function FileTreeItem({
                     onDownload={onDownload}
                     onDelete={onDelete}
                     onMove={onMove}
+                    onRename={onRename}
+                    onOpenInTerminal={onOpenInTerminal}
+                    onStartRename={onStartRename}
+                    onRenameChange={onRenameChange}
+                    onConfirmRename={onConfirmRename}
+                    onCancelRename={onCancelRename}
                     transferBusy={transferBusy}
                     onRemoteDragEnd={onRemoteDragEnd}
                   />
@@ -483,6 +527,16 @@ function FileTreeItem({
           <>
             <ContextMenuItem onClick={() => onFileOpen(item)}>打开</ContextMenuItem>
             <ContextMenuItem onClick={() => onCopyPath(item.path)}>复制路径</ContextMenuItem>
+            {(!remoteMode || onRename) && (
+              <ContextMenuItem disabled={transferBusy} onClick={() => onStartRename(item)}>
+                重命名
+              </ContextMenuItem>
+            )}
+            {remoteMode && onOpenInTerminal && (
+              <ContextMenuItem onClick={() => onOpenInTerminal(item.path, false)}>
+                在终端打开此处
+              </ContextMenuItem>
+            )}
             {remoteMode && onDownload && (
               <ContextMenuItem onClick={() => onDownload(item)}>下载</ContextMenuItem>
             )}
@@ -508,6 +562,16 @@ function FileTreeItem({
                 <ContextMenuItem onClick={() => onStartNewFile(item)}>新建文件</ContextMenuItem>
                 <ContextMenuItem onClick={() => onStartNewFolder(item)}>新建文件夹</ContextMenuItem>
               </>
+            )}
+            {(!remoteMode || onRename) && (
+              <ContextMenuItem disabled={transferBusy} onClick={() => onStartRename(item)}>
+                重命名
+              </ContextMenuItem>
+            )}
+            {remoteMode && onOpenInTerminal && (
+              <ContextMenuItem onClick={() => onOpenInTerminal(item.path, true)}>
+                在终端打开此处
+              </ContextMenuItem>
             )}
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => onCopyPath(item.path)}>复制路径</ContextMenuItem>
@@ -553,6 +617,9 @@ export function FileTree({
   onMove,
   onDownload,
   onDelete,
+  onRename,
+  onOpenInTerminal,
+  onCreateRemoteFile,
   transferBusy = false,
   uploadProgress = null,
   fileRootMode = false,
@@ -578,12 +645,15 @@ export function FileTree({
     externalFiles ? cloneFileTree(externalFiles) : cloneFileTree(EMPTY_FILE_TREE)
   )
   const [pendingFolder, setPendingFolder] = useState<PendingFolder | null>(null)
+  const [pendingRename, setPendingRename] = useState<PendingRename | null>(null)
+  const renameTargetRef = useRef<FileItem | null>(null)
   const filesFingerprint = externalFiles?.map(f => `${f.path}:${f.isExpanded}:${f.children?.length ?? 0}`).join('|')
 
   useEffect(() => {
     if (remoteMode || externalFiles !== undefined) {
       setFiles(cloneFileTree(externalFiles ?? []))
       setPendingFolder(null)
+      setPendingRename(null)
     }
   }, [externalFiles, filesFingerprint, remoteMode])
 
@@ -607,9 +677,54 @@ export function FileTree({
 
   const handleRefresh = useCallback(() => {
     setPendingFolder(null)
+    setPendingRename(null)
     setFiles(cloneFileTree(externalFiles ?? EMPTY_FILE_TREE))
     onRefresh?.()
   }, [externalFiles, onRefresh])
+
+  const startRename = useCallback((item: FileItem) => {
+    renameTargetRef.current = item
+    setPendingRename({ itemId: item.id, name: item.name })
+  }, [])
+
+  const confirmRename = useCallback(() => {
+    const target = renameTargetRef.current
+    if (!target || !pendingRename) return
+    const newName = pendingRename.name.trim()
+    if (!newName || newName === target.name) {
+      setPendingRename(null)
+      renameTargetRef.current = null
+      return
+    }
+    if (remoteMode && onRename) {
+      void Promise.resolve(onRename(target, newName)).finally(() => {
+        setPendingRename(null)
+        renameTargetRef.current = null
+      })
+      return
+    }
+    if (!remoteMode) {
+      setFiles(prev => renameFileItem(prev, target.path, newName))
+    }
+    setPendingRename(null)
+    renameTargetRef.current = null
+  }, [pendingRename, remoteMode, onRename])
+
+  const cancelRename = useCallback(() => {
+    setPendingRename(null)
+    renameTargetRef.current = null
+  }, [])
+
+  const handleCreateRemoteFile = useCallback(() => {
+    if (!remoteMode || !onCreateRemoteFile) return
+    const dir = currentPath || '/'
+    void onCreateRemoteFile(dir, '新建文件.txt')
+  }, [remoteMode, onCreateRemoteFile, currentPath])
+
+  const copyCurrentPath = useCallback(() => {
+    if (!currentPath) return
+    navigator.clipboard.writeText(currentPath).catch(() => {})
+  }, [currentPath])
 
   const handleCollapseAll = useCallback(() => {
     setFiles(prev => setAllExpanded(prev, false))
@@ -920,6 +1035,7 @@ export function FileTree({
                   depth={0}
                   selectedPath={selectedPath}
                   pendingFolder={pendingFolder}
+                  pendingRename={pendingRename}
                   remoteMode={remoteMode}
                   onFileOpen={onFileOpen}
                   onFileSelect={onFileSelect}
@@ -936,6 +1052,14 @@ export function FileTree({
                   onDownload={onDownload}
                   onDelete={onDelete}
                   onMove={onMove}
+                  onRename={onRename}
+                  onOpenInTerminal={onOpenInTerminal}
+                  onStartRename={startRename}
+                  onRenameChange={name =>
+                    setPendingRename(prev => (prev ? { ...prev, name } : null))
+                  }
+                  onConfirmRename={confirmRename}
+                  onCancelRename={cancelRename}
                   transferBusy={transferBusy}
                   onRemoteDragEnd={resetDropMode}
                 />
@@ -952,8 +1076,16 @@ export function FileTree({
               上传到当前目录
             </ContextMenuItem>
           )}
+          {remoteMode && onCreateRemoteFile && (
+            <ContextMenuItem disabled={transferBusy} onClick={handleCreateRemoteFile}>
+              新建文件
+            </ContextMenuItem>
+          )}
           {!remoteMode && (
             <ContextMenuItem onClick={handleNewFolderClick}>新建文件夹</ContextMenuItem>
+          )}
+          {remoteMode && currentPath && (
+            <ContextMenuItem onClick={copyCurrentPath}>复制当前路径</ContextMenuItem>
           )}
           <ContextMenuItem onClick={handleCollapseAll}>全部折叠</ContextMenuItem>
           <ContextMenuSeparator />

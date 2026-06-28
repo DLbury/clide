@@ -1,4 +1,4 @@
-﻿use super::ide_connector;
+use super::ide_connector;
 use super::tools::{self, ToolContext};
 use crate::AppState;
 use crate::state::IdeContext;
@@ -646,6 +646,7 @@ async fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
                         ide_context: &state.ide_context,
                         runtime: &state.runtime,
                         terminals: &state.terminals,
+                        tunnels: &state.tunnels,
                         shell_tools: &state.shell_tools,
                         connect_tools: &state.connect_tools,
                     };

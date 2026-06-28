@@ -28,7 +28,10 @@ pub async fn connect_and_auth(request: &ConnectRequest) -> Result<client::Handle
         .ok_or_else(|| "SSH 需要用户名".to_string())?;
 
     let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(3600)),
+        // 定期发 keepalive，避免 NAT/防火墙长时间空闲后静默断线
+        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_max: 5,
+        inactivity_timeout: None,
         ..Default::default()
     });
 

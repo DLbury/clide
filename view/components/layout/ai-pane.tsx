@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
-import { Send, Sparkles, Play, Loader2, Trash2, PlugZap, Square } from 'lucide-react'
+import { Send, Sparkles, Play, Loader2, Trash2, PlugZap, Square, Terminal, CornerDownLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/lib/types'
 import { AiAssistantParts } from '@/components/layout/ai-assistant-parts'
 import { ThinkingIndicator } from '@/components/layout/thinking-indicator'
 import type { McpRegisterStatus } from '@/lib/claude-client'
+import { classifyInteractivePrompt } from '@/lib/shell-tool-executor'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -48,11 +49,16 @@ interface AiPaneProps {
   onStopMessage?: () => void
   onExecuteCommand: (command: string) => void
   onClearChat: () => void
+  onRegenerateMessage?: (messageId: string) => void
   claudePath?: string
   /** 终端等待密码/交互输入时显示的提示信息 */
   interactivePrompt?: { sessionId: string; command: string; prompt: string } | null
+  /** Claude 请求或 Shell 工具等待用户输入时为 true，控制发送/停止按钮 */
+  isTaskActive?: boolean
   onPromptDismiss?: () => void
   onPromptCancel?: (sessionId: string) => void
+  onFocusTerminal?: () => void
+  onPromptSendInput?: (sessionId: string, input: string) => void
 }
 
 function serializeAssistantMessage(msg: ChatMessage): string {
@@ -89,10 +95,14 @@ export function AiPane({
   onStopMessage,
   onExecuteCommand,
   onClearChat,
+  onRegenerateMessage,
   claudePath,
   interactivePrompt,
+  isTaskActive,
   onPromptDismiss,
   onPromptCancel,
+  onFocusTerminal,
+  onPromptSendInput,
 }: AiPaneProps) {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -109,19 +119,24 @@ export function AiPane({
     onRetryMcpRegister?.()
   }, [onRetryMcpRegister])
 
+  const taskActive = isTaskActive ?? isThinking
+  const promptKind = interactivePrompt
+    ? classifyInteractivePrompt(interactivePrompt.prompt)
+    : null
+
   const handleSend = useCallback(() => {
-    if (!input.trim() || isThinking || !aiEnabled) return
+    if (!input.trim() || taskActive || !aiEnabled) return
     onSendMessage(input.trim())
     setInput('')
-  }, [input, isThinking, aiEnabled, onSendMessage])
+  }, [input, taskActive, aiEnabled, onSendMessage])
 
   const handlePrimaryAction = useCallback(() => {
-    if (isThinking) {
+    if (taskActive) {
       onStopMessage?.()
       return
     }
     handleSend()
-  }, [isThinking, onStopMessage, handleSend])
+  }, [taskActive, onStopMessage, handleSend])
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -163,6 +178,27 @@ export function AiPane({
     if (text.trim()) copyText(text)
   }
 
+  const exportChat = () => {
+    if (messages.length === 0) return
+    const markdown = messages
+      .map(m => {
+        const heading = m.role === 'assistant' ? '## Assistant' : '## User'
+        const body =
+          m.role === 'assistant'
+            ? serializeAssistantMessage(m) || m.content || ''
+            : m.content || ''
+        return `${heading}\n\n${body}`
+      })
+      .join('\n\n---\n\n')
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `clide-chat-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.md`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
   const lastMessage = messages[messages.length - 1]
   const lastMessageId = lastMessage?.id
   const showThinkingPlaceholder =
@@ -200,6 +236,9 @@ export function AiPane({
           </ContextMenuItem>
           <ContextMenuItem onClick={copyAllMessages} disabled={messages.length === 0}>
             全部复制
+          </ContextMenuItem>
+          <ContextMenuItem onClick={exportChat} disabled={messages.length === 0}>
+            导出对话
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -270,28 +309,75 @@ export function AiPane({
       )}
 
       {interactivePrompt && (
-        <div className="mx-4 mt-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs space-y-2">
-          <div className="font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1">
-            <span>🔒 终端正在等待密码或交互输入</span>
+        <div className="mx-4 mt-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-3 text-xs space-y-2.5">
+          <div className="font-medium text-amber-800 dark:text-amber-300">
+            {promptKind === 'password'
+              ? '请在左侧终端输入密码'
+              : promptKind === 'confirm'
+                ? '请在左侧终端确认，或使用下方快捷按钮'
+                : '终端正在等待您的输入'}
           </div>
-          <div className="font-mono text-muted-foreground truncate">
+          <div className="font-mono text-[11px] text-muted-foreground break-all">
+            提示: {interactivePrompt.prompt}
+          </div>
+          <div className="font-mono text-[11px] text-muted-foreground truncate">
             命令: {interactivePrompt.command}
           </div>
-          <div className="text-muted-foreground">
-            请在左侧 Shell 标签中手动输入。命令完成后会自动继续。
-          </div>
-          <div className="flex gap-2 pt-1">
+          <p className="text-muted-foreground leading-relaxed">
+            密码不会经过 AI，请直接在左侧 Shell 中输入（输入时不会显示字符）。输入完成后点击右侧「继续」。
+          </p>
+          <div className="flex flex-wrap gap-2 pt-0.5">
             <button
-              className="px-2 py-1 rounded bg-amber-600 text-white text-xs hover:bg-amber-700"
-              onClick={() => onPromptCancel?.(interactivePrompt.sessionId)}
+              type="button"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-muted/60"
+              onClick={() => onFocusTerminal?.()}
             >
-              取消命令 (Ctrl+C)
+              <Terminal className="w-3 h-3" />
+              聚焦终端
             </button>
+            {promptKind === 'confirm' && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-muted/60"
+                onClick={() =>
+                  onPromptSendInput?.(interactivePrompt.sessionId, 'yes\n')
+                }
+              >
+                发送 yes
+              </button>
+            )}
             <button
-              className="px-2 py-1 rounded border border-amber-500/40 text-xs hover:bg-amber-500/10"
+              type="button"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-muted/60"
+              onClick={() =>
+                onPromptSendInput?.(interactivePrompt.sessionId, '\n')
+              }
+            >
+              <CornerDownLeft className="w-3 h-3" />
+              发送 Enter
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2 pt-1 border-t border-amber-500/20">
+            <button
+              type="button"
+              className="px-2.5 py-1 rounded bg-primary text-primary-foreground text-xs hover:bg-primary/90"
               onClick={onPromptDismiss}
             >
-              密码已输入，继续
+              继续
+            </button>
+            <button
+              type="button"
+              className="px-2.5 py-1 rounded border border-amber-500/40 text-xs hover:bg-amber-500/10"
+              onClick={onPromptDismiss}
+            >
+              密码已输入
+            </button>
+            <button
+              type="button"
+              className="px-2.5 py-1 rounded border border-destructive/40 text-destructive text-xs hover:bg-destructive/10"
+              onClick={() => onPromptCancel?.(interactivePrompt.sessionId)}
+            >
+              取消 (Ctrl+C)
             </button>
           </div>
         </div>
@@ -359,6 +445,14 @@ export function AiPane({
                 <ContextMenuItem onClick={copyAllMessages} disabled={messages.length === 0}>
                   全部复制
                 </ContextMenuItem>
+                {msg.role === 'assistant' && onRegenerateMessage && (
+                  <ContextMenuItem
+                    disabled={isThinking}
+                    onClick={() => onRegenerateMessage(msg.id)}
+                  >
+                    重新生成
+                  </ContextMenuItem>
+                )}
                 {msg.command && (
                   <>
                     <ContextMenuSeparator />
@@ -407,19 +501,19 @@ export function AiPane({
           <button
             type="button"
             onClick={handlePrimaryAction}
-            disabled={isThinking ? !aiEnabled : !input.trim() || !aiEnabled}
+            disabled={taskActive ? !aiEnabled : !input.trim() || !aiEnabled}
             className={cn(
               'absolute bottom-2.5 right-2.5 h-9 w-9',
               'flex items-center justify-center rounded-md transition-colors',
-              isThinking
+              taskActive
                 ? 'bg-amber-500 text-white hover:bg-amber-600'
                 : input.trim() && aiEnabled
                   ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                   : 'bg-muted text-muted-foreground'
             )}
-            title={isThinking ? '停止回复' : '发送'}
+            title={taskActive ? '停止回复' : '发送'}
           >
-            {isThinking ? (
+            {taskActive ? (
               <Square className="w-4 h-4" />
             ) : (
               <Send className="w-4 h-4" />

@@ -7,20 +7,25 @@ pub mod output_buffer;
 mod output_emit;
 pub mod remote_fs;
 mod remote_stats;
+mod socks;
 mod ssh;
 mod ssh_auth;
 mod telnet;
 mod serial;
+mod tunnel;
 mod utf8_chunk;
 
 pub use output_emit::TerminalOutputEvent;
 pub use manager::{push_terminal_display, TerminalManager};
+pub use socks::{SocksInfo, SocksManager};
+pub use tunnel::{TunnelInfo, TunnelManager};
 pub use output_buffer::{buffer_len, read_since, tail_snippet};
 pub use remote_fs::{
     delete_path as delete_remote_path,
     get_cwd as get_remote_cwd,
     list_directory as list_remote_directory,
     move_path as move_remote_path,
+    rename_path as rename_remote_path,
     read_file as read_remote_file,
     read_file_base64 as read_remote_file_base64,
     write_file as write_remote_file,
@@ -30,6 +35,7 @@ pub use remote_fs::{
 pub use remote_stats::{get_host_stats as get_remote_host_stats, RemoteHostStats};
 
 use serde::Deserialize;
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectRequest {
@@ -85,4 +91,11 @@ pub fn expand_home(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+/// SSH/PTY 后台任务结束时从 TerminalManager 移除，否则重连会误判为已连接。
+pub(crate) fn unregister_terminal_session(app: &AppHandle, session_id: &str) {
+    if let Some(state) = app.try_state::<crate::AppState>() {
+        state.terminals.remove_session(session_id);
+    }
 }

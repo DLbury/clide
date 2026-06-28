@@ -30,6 +30,7 @@ interface ShellPaneProps {
   clearSignal?: number
   inputEnabled?: boolean
   hideTabBar?: boolean
+  onReconnect?: () => void
 }
 
 interface TerminalPromptProps {
@@ -64,6 +65,7 @@ export function ShellPane({
   clearSignal = 0,
   inputEnabled = true,
   hideTabBar = false,
+  onReconnect,
 }: ShellPaneProps) {
   const [inputValue, setInputValue] = useState('')
   const [commandHistory, setCommandHistory] = useState<string[]>([])
@@ -201,10 +203,21 @@ export function ShellPane({
             className="flex-1 min-h-0 overflow-hidden"
           />
           {!terminalConnected && (
-            <div className="shrink-0 border-t border-border px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10">
-              {terminalStatus === 'connecting'
-                ? '正在连接终端…'
-                : '终端未连接 — 请在侧边栏点击「连接」'}
+            <div className="shrink-0 border-t border-border px-3 py-2 text-xs flex items-center justify-between gap-2 bg-amber-500/10 text-amber-800 dark:text-amber-300">
+              <span>
+                {terminalStatus === 'connecting'
+                  ? '正在连接终端…'
+                  : '终端连接已断开'}
+              </span>
+              {terminalStatus !== 'connecting' && onReconnect && (
+                <button
+                  type="button"
+                  onClick={onReconnect}
+                  className="shrink-0 rounded px-2 py-1 text-[11px] font-medium bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                >
+                  重新连接
+                </button>
+              )}
             </div>
           )}
         </div>

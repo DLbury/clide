@@ -21,8 +21,26 @@ fn fix_unix_gui_environment() {
             std::env::set_var("HOME", home.as_os_str());
         }
     }
-    let current = std::env::var("PATH").unwrap_or_default();
-    let merged = augment_unix_path(&current);
+
+    let mut path = std::env::var("PATH").unwrap_or_default();
+    if let Ok(content) = std::fs::read_to_string("/etc/environment") {
+        for line in content.lines() {
+            let Some(rest) = line.strip_prefix("PATH=") else {
+                continue;
+            };
+            let from_etc = rest.trim().trim_matches('"');
+            if !from_etc.is_empty() {
+                path = if path.is_empty() {
+                    from_etc.to_string()
+                } else {
+                    format!("{from_etc}:{path}")
+                };
+                break;
+            }
+        }
+    }
+
+    let merged = augment_unix_path(&path);
     if !merged.is_empty() {
         std::env::set_var("PATH", &merged);
     }
@@ -178,6 +196,48 @@ pub fn async_command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::
     let mut cmd = tokio::process::Command::new(program);
     apply_subprocess_environment_tokio(&mut cmd);
     cmd
+}
+
+/// 为 Claude Code CLI（Node）子进程抑制 DEP0169 等弃用警告，避免 stderr 刷屏。
+pub fn configure_claude_cli_command(cmd: &mut std::process::Command) {
+    append_node_options(cmd, "--no-deprecation");
+}
+
+pub fn configure_claude_cli_async_command(cmd: &mut tokio::process::Command) {
+    append_node_options_tokio(cmd, "--no-deprecation");
+}
+
+/// Node stderr 中的弃用噪音（Claude CLI 依赖链触发 DEP0169 url.parse）。
+pub fn is_node_deprecation_noise(line: &str) -> bool {
+    line.contains("DeprecationWarning")
+        || line.contains("[DEP0169]")
+        || line.contains("url.parse()")
+}
+
+fn append_node_options(cmd: &mut std::process::Command, flag: &str) {
+    const KEY: &str = "NODE_OPTIONS";
+    match std::env::var(KEY) {
+        Ok(existing) if existing.split_whitespace().any(|p| p == flag) => {}
+        Ok(existing) => {
+            cmd.env(KEY, format!("{existing} {flag}"));
+        }
+        Err(_) => {
+            cmd.env(KEY, flag);
+        }
+    }
+}
+
+fn append_node_options_tokio(cmd: &mut tokio::process::Command, flag: &str) {
+    const KEY: &str = "NODE_OPTIONS";
+    match std::env::var(KEY) {
+        Ok(existing) if existing.split_whitespace().any(|p| p == flag) => {}
+        Ok(existing) => {
+            cmd.env(KEY, format!("{existing} {flag}"));
+        }
+        Err(_) => {
+            cmd.env(KEY, flag);
+        }
+    }
 }
 
 /// 为子进程补齐 GUI 启动时缺失的用户环境（PATH、HOME 等）。
@@ -344,8 +404,9 @@ fn augment_unix_path(path: &str) -> String {
     if let Some(home) = dirs::home_dir() {
         let h = home.display().to_string();
         extra.push(format!("{h}/.local/bin"));
-        extra.push(format!("{h}/.nvm/current/bin"));
+        extra.push(format!("{h}/.local/share/fnm/current/bin"));
         extra.push(format!("{h}/.fnm/current/bin"));
+        extra.push(format!("{h}/.nvm/current/bin"));
         extra.push(format!("{h}/.volta/bin"));
         let nvm_versions = home.join(".nvm/versions/node");
         if nvm_versions.is_dir() {

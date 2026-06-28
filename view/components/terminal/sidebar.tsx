@@ -151,12 +151,17 @@ function SessionMenuItems({
   onEditSession,
   onDeleteSession,
   onDisconnectSession,
+  openConfirm,
 }: {
   session: Session
   onSessionConnect: (session: Session) => void
   onEditSession: (session: Session) => void
   onDeleteSession: (sessionId: string) => void
   onDisconnectSession: (sessionId: string) => void
+  openConfirm: (
+    next: Omit<AppConfirmDialogState, 'open'> & { open?: boolean },
+    action: () => void
+  ) => void
 }) {
   const isConnected = session.status === 'connected'
 
@@ -266,6 +271,10 @@ export function Sidebar({
         folder.name.toLowerCase().includes(searchQuery.toLowerCase())
     )
 
+  const collapseAllFolders = useCallback(() => {
+    setExpandedFolders(new Set())
+  }, [])
+
   const startNewFolder = useCallback(() => {
     setPendingFolderName('新建文件夹')
   }, [])
@@ -339,6 +348,8 @@ export function Sidebar({
         </button>
       </div>
 
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
       <div className="flex-1 overflow-y-auto terminal-scrollbar p-2">
         {filteredFolders.map(folder => (
           <ContextMenu key={folder.id}>
@@ -486,6 +497,7 @@ export function Sidebar({
                               onEditSession={onEditSession}
                               onDeleteSession={onDeleteSession}
                               onDisconnectSession={onDisconnectSession}
+                              openConfirm={openConfirm}
                             />
                           </ContextMenuContent>
                         </ContextMenu>
@@ -561,6 +573,20 @@ export function Sidebar({
           </div>
         )}
       </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-44">
+          <ContextMenuItem onClick={onNewSession}>
+            <Plus className="w-3.5 h-3.5 mr-2" />
+            新建会话
+          </ContextMenuItem>
+          <ContextMenuItem onClick={startNewFolder}>
+            <FolderPlus className="w-3.5 h-3.5 mr-2" />
+            新建文件夹
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={collapseAllFolders}>全部折叠</ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       <div className="p-3 border-t border-sidebar-border">
         <Button

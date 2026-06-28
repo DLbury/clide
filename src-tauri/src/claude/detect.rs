@@ -1,6 +1,6 @@
 use crate::process_util::{
-    command_no_window, normalize_claude_executable, normalize_path, prefer_claude_executable,
-    prepare_cli_discovery_environment,
+    command_no_window, configure_claude_cli_command, normalize_claude_executable, normalize_path,
+    prefer_claude_executable, prepare_cli_discovery_environment,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -319,10 +319,9 @@ fn scan_windows_claude_installs(candidates: &mut Vec<String>) {
 /// 读取 Claude Code 版本
 fn read_claude_version(path: &str) -> Option<String> {
     // 尝试使用 --version 参数
-    let output = command_no_window(path)
-        .arg("--version")
-        .output()
-        .ok()?;
+    let mut cmd = command_no_window(path);
+    configure_claude_cli_command(&mut cmd);
+    let output = cmd.arg("--version").output().ok()?;
 
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -332,10 +331,9 @@ fn read_claude_version(path: &str) -> Option<String> {
     }
 
     // 如果 --version 失败，尝试 -v
-    let output = command_no_window(path)
-        .arg("-v")
-        .output()
-        .ok()?;
+    let mut cmd = command_no_window(path);
+    configure_claude_cli_command(&mut cmd);
+    let output = cmd.arg("-v").output().ok()?;
 
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -345,10 +343,9 @@ fn read_claude_version(path: &str) -> Option<String> {
     }
 
     // 尝试 --help 并从帮助文本中提取版本信息
-    let output = command_no_window(path)
-        .arg("--help")
-        .output()
-        .ok()?;
+    let mut cmd = command_no_window(path);
+    configure_claude_cli_command(&mut cmd);
+    let output = cmd.arg("--help").output().ok()?;
 
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout);

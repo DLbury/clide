@@ -4,7 +4,7 @@
  */
 
 import type { FileItem } from './types'
-import { joinPath } from './file-utils'
+import { joinPath, getParentPath } from './file-utils'
 
 /** 空树：连接真实服务器后由 SFTP 列表填充 */
 export const EMPTY_FILE_TREE: FileItem[] = []
@@ -193,6 +193,43 @@ export function setAllExpanded(items: FileItem[], expanded: boolean): FileItem[]
       isExpanded: item.type === 'directory' ? expanded : item.isExpanded,
       children: item.children ? walk(item.children) : undefined,
     }))
+  return walk(items)
+}
+
+function remapPathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
+  if (path === oldPrefix) return newPrefix
+  if (path.startsWith(`${oldPrefix}/`)) {
+    return `${newPrefix}${path.slice(oldPrefix.length)}`
+  }
+  return path
+}
+
+export function renameFileItem(
+  items: FileItem[],
+  itemPath: string,
+  newName: string
+): FileItem[] {
+  const trimmed = newName.trim()
+  if (!trimmed || trimmed.includes('/')) return items
+
+  const newPath = joinPath(getParentPath(itemPath), trimmed)
+
+  const walk = (nodes: FileItem[]): FileItem[] =>
+    nodes.map(item => {
+      const remappedPath = remapPathPrefix(item.path, itemPath, newPath)
+      const next: FileItem = {
+        ...item,
+        path: remappedPath,
+        name: item.path === itemPath ? trimmed : item.name,
+        children: item.children ? walk(item.children) : undefined,
+      }
+      if (item.type === 'file' && item.path in localFileContents && item.path !== remappedPath) {
+        localFileContents[remappedPath] = localFileContents[item.path]
+        delete localFileContents[item.path]
+      }
+      return next
+    })
+
   return walk(items)
 }
 

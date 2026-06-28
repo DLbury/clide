@@ -40,6 +40,10 @@ impl TerminalManager {
         }
     }
 
+    pub fn remove_session(&self, session_id: &str) {
+        self.sessions.lock().remove(session_id);
+    }
+
     pub fn connect(&self, app: AppHandle, request: ConnectRequest) -> Result<(), String> {
         let request = super::enrich_connect_request(request);
         let session_id = request.sessionId.clone();
@@ -58,16 +62,10 @@ impl TerminalManager {
             },
         );
 
-        if self.sessions.lock().contains_key(&session_id) {
-            let _ = app.emit(
-                "terminal:status",
-                TerminalStatusEvent {
-                    session_id: session_id.clone(),
-                    status: "connected".to_string(),
-                    error: None,
-                },
-            );
-            return Ok(());
+        // 旧会话若仍留在 map（SSH 自然断开时常见），先终止再重连，避免误报 connected。
+        if let Some(stale) = self.sessions.lock().remove(&session_id) {
+            tracing::warn!("Replacing stale terminal session: {session_id}");
+            stale.abort.store(true, Ordering::Relaxed);
         }
 
         let abort = Arc::new(AtomicBool::new(false));
