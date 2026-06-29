@@ -66,6 +66,7 @@ import {
   extractCwdFromTerminalChunk,
   parseCdTargetFromCommand,
   remotePathForListApi,
+  consumeTerminalInputLine,
 } from '@/lib/terminal-cwd'
 import {
   deleteRemoteFile,
@@ -81,6 +82,12 @@ import { matchShortcutAction, isTypingTarget } from '@/lib/layout-shortcuts'
 import type { SettingsTab } from '@/lib/layout-shortcuts'
 import { ResizablePanel } from '@/components/layout/resizable-panel'
 import { WorkbenchLayout, type WorkbenchLayoutHandle } from '@/components/layout/workbench-layout'
+import {
+  listLayoutSnapshots,
+  saveLayoutSnapshot,
+  deleteLayoutSnapshot,
+  type ServerLayoutSnapshot,
+} from '@/lib/layout-snapshots'
 import { listTunnels, stopTunnel, stopSocksForProfile } from '@/lib/tunnel-client'
 import { tabTitleFromUrl } from '@/lib/browser-address'
 import { makeBrowserWebviewLabel } from '@/lib/tauri-child-webview'
@@ -95,6 +102,7 @@ import {
   saveEditorModel,
   closeEditorModel,
   setEditorLoadedContent,
+  createEditorModel,
   type EditorModel,
 } from '@/lib/editor-service'
 import { sanitizeTerminalOutput } from '@/lib/terminal-sanitize'
@@ -320,6 +328,13 @@ export default function AITerminal() {
   followTerminalCwdRef.current = followTerminalCwd
   const fileRootModeRef = useRef(fileRootMode)
   fileRootModeRef.current = fileRootMode
+  const terminalInputLineBuffersRef = useRef(new Map<string, string>())
+  const cwdPollTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const [layoutSnapshotsVersion, setLayoutSnapshotsVersion] = useState(0)
+  const [pendingLayoutRestore, setPendingLayoutRestore] = useState<{
+    token: number
+    dockview: unknown
+  } | null>(null)
 
   const remoteFileOpts = useCallback(
     () => ({ useRoot: fileRootModeRef.current }),
@@ -563,6 +578,28 @@ export default function AITerminal() {
     [loadRemoteFiles]
   )
 
+  const scheduleCwdPoll = useCallback(
+    (connectionId: string, terminalSessionId: string) => {
+      const existing = cwdPollTimersRef.current.get(terminalSessionId)
+      if (existing) clearTimeout(existing)
+      const timer = setTimeout(() => {
+        cwdPollTimersRef.current.delete(terminalSessionId)
+        const conn = connectionsRef.current.find(c => c.id === connectionId)
+        if (!conn || conn.id !== activeConnectionIdRef.current || conn.session.type !== 'ssh') {
+          return
+        }
+        const shell = conn.shells.find(s => s.terminalSessionId === terminalSessionId)
+        if (!shell || shell.id !== conn.activeShellId) return
+        if (!followTerminalCwdRef.current) return
+        void getRemoteCwd(resolveSessionForConnect(conn.session), remoteFileOpts())
+          .then(cwd => applyShellCwd(connectionId, terminalSessionId, cwd))
+          .catch(() => {})
+      }, 400)
+      cwdPollTimersRef.current.set(terminalSessionId, timer)
+    },
+    [applyShellCwd, remoteFileOpts]
+  )
+
   const handleFollowTerminalCwdChange = useCallback((enabled: boolean) => {
     setFollowTerminalCwd(enabled)
     saveFollowTerminalCwd(enabled)
@@ -787,7 +824,6 @@ export default function AITerminal() {
   useEffect(() => {
     if (!isTauriRuntime() || !followTerminalCwd) return
     return onTerminalWrite((terminalSessionId, data) => {
-      if (data === '\x03') return
       const conn = connectionsRef.current.find(c =>
         c.shells.some(s => s.terminalSessionId === terminalSessionId)
       )
@@ -798,10 +834,25 @@ export default function AITerminal() {
       if (!shell) return
       const home = defaultRemoteHome(conn.session.user)
       const current = shell.shellCwd ?? home
-      const next = parseCdTargetFromCommand(data, current, home)
-      if (next) applyShellCwd(conn.id, terminalSessionId, next)
+
+      const completedLine = consumeTerminalInputLine(
+        terminalInputLineBuffersRef.current,
+        terminalSessionId,
+        data
+      )
+      if (completedLine === null) return
+
+      const trimmed = completedLine.trim()
+      if (!trimmed || trimmed === 'clear') return
+
+      const next = parseCdTargetFromCommand(trimmed, current, home)
+      if (next) {
+        applyShellCwd(conn.id, terminalSessionId, next)
+      } else if (shell.id === conn.activeShellId) {
+        scheduleCwdPoll(conn.id, terminalSessionId)
+      }
     })
-  }, [followTerminalCwd, applyShellCwd])
+  }, [followTerminalCwd, applyShellCwd, scheduleCwdPoll])
 
   const handleRemoteDirectoryExpand = useCallback(
     (item: FileItem) => {
@@ -1277,6 +1328,144 @@ export default function AITerminal() {
     },
     [setFolders, offerPasswordRetryAfterAuthFailure]
   )
+
+  const handleSaveLayoutSnapshot = useCallback((sessionId: string, name: string) => {
+    const conn = connectionsRef.current.find(
+      c => c.session.id === sessionId && c.id === activeConnectionIdRef.current
+    )
+    if (!conn) return
+    const dockview = workbenchRef.current?.captureLayout()
+    if (!dockview) return
+    const snapshot: ServerLayoutSnapshot = {
+      id: `layout-${Date.now()}`,
+      name,
+      profileId: sessionId,
+      savedAt: new Date().toISOString(),
+      remotePath: conn.remotePath,
+      activeShellId: conn.activeShellId,
+      activeFileId: conn.activeFileId,
+      activeBrowserTabId: conn.activeBrowserTabId ?? null,
+      shells: conn.shells.map(s => ({ id: s.id, name: s.name })),
+      openFiles: conn.openFiles.map(f => ({ id: f.id, path: f.path })),
+      browserTabs: (conn.browserTabs ?? []).map(t => ({
+        id: t.id,
+        title: t.title,
+        url: t.url,
+        webviewLabel: t.webviewLabel,
+      })),
+      dockview,
+    }
+    saveLayoutSnapshot(snapshot)
+    setLayoutSnapshotsVersion(v => v + 1)
+  }, [])
+
+  const applyLayoutSnapshotToConnection = useCallback(
+    (conn: ServerConnection, snapshot: ServerLayoutSnapshot) => {
+      for (const oldShell of conn.shells) {
+        if (!snapshot.shells.some(s => s.id === oldShell.id) && conn.terminalLive) {
+          void disconnectTerminal(oldShell.terminalSessionId).catch(() => {})
+        }
+      }
+
+      const restoredShells: Shell[] = snapshot.shells.map(s => ({
+        id: s.id,
+        name: s.name,
+        history: [],
+        terminalSessionId: makeTerminalSessionId(conn.session.id, s.id),
+        terminalStatus: conn.terminalLive ? 'connecting' : undefined,
+      }))
+
+      const restoredFiles = snapshot.openFiles.map(f =>
+        createEditorModel(f.path, '正在加载…', { id: f.id })
+      )
+
+      const restoredBrowserTabs: BrowserTab[] = snapshot.browserTabs.map(b => ({
+        id: b.id,
+        title: b.title,
+        url: b.url,
+        webviewLabel: b.webviewLabel,
+      }))
+
+      setConnections(prev =>
+        prev.map(c =>
+          c.id !== conn.id
+            ? c
+            : {
+                ...c,
+                shells: restoredShells,
+                activeShellId: snapshot.activeShellId ?? restoredShells[0]?.id ?? c.activeShellId,
+                openFiles: restoredFiles,
+                activeFileId: snapshot.activeFileId ?? null,
+                browserTabs: restoredBrowserTabs,
+                activeBrowserTabId: snapshot.activeBrowserTabId ?? null,
+                remotePath: snapshot.remotePath ?? c.remotePath,
+              }
+        )
+      )
+
+      setPendingLayoutRestore({ token: Date.now(), dockview: snapshot.dockview })
+
+      if (conn.terminalLive) {
+        for (const s of restoredShells) {
+          runBackendConnect(conn.session, conn.id, s.id, s.terminalSessionId)
+        }
+      }
+
+      if (conn.session.type === 'ssh' && snapshot.remotePath) {
+        void loadRemoteFiles(conn.session, snapshot.remotePath)
+      }
+
+      for (const f of snapshot.openFiles) {
+        void readRemoteFile(conn.session, f.path, remoteFileOpts())
+          .then(content => {
+            setConnections(prev =>
+              prev.map(c =>
+                c.id !== conn.id
+                  ? c
+                  : { ...c, openFiles: setEditorLoadedContent(c.openFiles, f.path, content) }
+              )
+            )
+          })
+          .catch(() => {})
+      }
+    },
+    [loadRemoteFiles, remoteFileOpts, runBackendConnect]
+  )
+
+  const handleLoadLayoutSnapshot = useCallback(
+    (sessionId: string, snapshot: ServerLayoutSnapshot) => {
+      if (snapshot.profileId !== sessionId) return
+      const conn = connectionsRef.current.find(c => c.session.id === sessionId)
+      if (!conn) return
+
+      const run = () => {
+        const current = connectionsRef.current.find(
+          c => c.session.id === sessionId && c.id === activeConnectionIdRef.current
+        )
+        if (!current) return
+        applyLayoutSnapshotToConnection(current, snapshot)
+      }
+
+      if (conn.id !== activeConnectionIdRef.current) {
+        setActiveConnectionId(conn.id)
+        requestAnimationFrame(() => requestAnimationFrame(run))
+      } else {
+        run()
+      }
+    },
+    [applyLayoutSnapshotToConnection]
+  )
+
+  const handleDeleteLayoutSnapshot = useCallback((sessionId: string, snapshotId: string) => {
+    deleteLayoutSnapshot(sessionId, snapshotId)
+    setLayoutSnapshotsVersion(v => v + 1)
+  }, [])
+
+  const canSaveLayoutSnapshot = useCallback((sessionId: string) => {
+    return connectionsRef.current.some(
+      c => c.session.id === sessionId && c.id === activeConnectionIdRef.current
+    )
+  }, [])
 
   const cancelPendingConnect = useCallback(
     (pending: PendingPasswordConnect) => {
@@ -3373,6 +3562,11 @@ export default function AITerminal() {
             onDeleteSession={handleDeleteSession}
             onDisconnectSession={handleDisconnectSession}
           activeSessionId={activeSession?.id}
+          onSaveLayoutSnapshot={handleSaveLayoutSnapshot}
+          onLoadLayoutSnapshot={handleLoadLayoutSnapshot}
+          onDeleteLayoutSnapshot={handleDeleteLayoutSnapshot}
+          canSaveLayoutSnapshot={canSaveLayoutSnapshot}
+          layoutSnapshotsVersion={layoutSnapshotsVersion}
         />
         </div>
 
@@ -3469,6 +3663,8 @@ export default function AITerminal() {
                 onFileSave={handleFileSaveById}
                 onFileClose={handleFileClose}
                 onActiveFileChange={handleActiveFileChange}
+                layoutRestore={pendingLayoutRestore}
+                onLayoutRestoreDone={() => setPendingLayoutRestore(null)}
               />
             </ResizablePanel>
 

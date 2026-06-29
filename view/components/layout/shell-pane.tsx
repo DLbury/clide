@@ -29,6 +29,8 @@ interface ShellPaneProps {
   terminalStatus?: 'connecting' | 'connected' | 'disconnected' | 'error'
   clearSignal?: number
   inputEnabled?: boolean
+  /** xterm 获得焦点时（用于同步 activeShellId） */
+  onInputFocus?: () => void
   hideTabBar?: boolean
   onReconnect?: () => void
 }
@@ -64,6 +66,7 @@ export function ShellPane({
   terminalStatus,
   clearSignal = 0,
   inputEnabled = true,
+  onInputFocus,
   hideTabBar = false,
   onReconnect,
 }: ShellPaneProps) {
@@ -199,6 +202,7 @@ export function ShellPane({
             sessionId={sessionId!}
             connected={terminalConnected}
             inputEnabled={inputEnabled}
+            onInputFocus={onInputFocus}
             clearSignal={clearSignal}
             className="flex-1 min-h-0 overflow-hidden"
           />

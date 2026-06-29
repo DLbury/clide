@@ -136,7 +136,7 @@ export interface WorkbenchBrowserTab {
 type PanelParams = TerminalPanelParams | EditorPanelParams | BrowserPanelParams
 
 function TerminalPanel({ params }: IDockviewPanelProps<TerminalPanelParams>) {
-  const { activeShellId, shells, clearSignals } = useContext(WorkbenchRuntimeContext)
+  const { shells, clearSignals } = useContext(WorkbenchRuntimeContext)
   const { onShellChange, onNewShell, onCloseShell, onCommand, onReconnect } =
     useContext(WorkbenchContext)
   const shell = shells.find(s => s.id === params.shellId)
@@ -159,7 +159,7 @@ function TerminalPanel({ params }: IDockviewPanelProps<TerminalPanelParams>) {
       terminalConnected={shell.terminalStatus === 'connected'}
       terminalStatus={shell.terminalStatus}
       clearSignal={clearSignals[shell.terminalSessionId] ?? 0}
-      inputEnabled={activeShellId === params.shellId}
+      onInputFocus={() => onShellChange(params.shellId)}
       hideTabBar
       onReconnect={
         shell.terminalStatus === 'disconnected' || shell.terminalStatus === 'error'
@@ -377,6 +377,8 @@ export interface WorkbenchLayoutProps {
   onFileSave: (fileId: string) => void
   onFileClose: (fileId: string) => void
   onActiveFileChange: (fileId: string) => void
+  layoutRestore?: { token: number; dockview: unknown } | null
+  onLayoutRestoreDone?: () => void
 }
 
 export interface WorkbenchLayoutHandle {
@@ -384,6 +386,7 @@ export interface WorkbenchLayoutHandle {
   activateShellById: (shellId: string) => void
   focusEditor: () => void
   splitEditor: (direction: 'right' | 'below') => void
+  captureLayout: () => unknown | null
 }
 
 export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayoutProps>(
@@ -410,6 +413,8 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
   onFileSave,
   onFileClose,
   onActiveFileChange,
+  layoutRestore,
+  onLayoutRestoreDone,
 }, ref) {
   const { dockviewTheme } = useAppTheme()
   const [pendingClose, setPendingClose] = useState<{
@@ -722,6 +727,64 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
     })
   }, [browserTabsKey, connectionId, findTerminalRef, buildBrowserParams])
 
+  const openFilesKey = openFiles.map(f => `${f.id}:${f.path}`).join('|')
+
+  // 加载布局快照：等面板创建完成后再 fromJSON
+  useEffect(() => {
+    if (!layoutRestore) return
+    const api = apiRef.current
+    if (!api) return
+
+    let cancelled = false
+    let attempts = 0
+
+    const tryApply = () => {
+      if (cancelled) return
+      attempts += 1
+
+      const shellsReady = shells.every(s => api.getPanel(`terminal-${s.id}`))
+      const filesReady = openFiles.every(f => api.getPanel(`editor-${f.id}`))
+      const browsersReady = browserTabs.every(t => api.getPanel(`browser-${t.id}`))
+
+      if (!shellsReady || !filesReady || !browsersReady) {
+        if (attempts < 30) {
+          setTimeout(tryApply, 50)
+        } else {
+          onLayoutRestoreDone?.()
+        }
+        return
+      }
+
+      try {
+        syncingRef.current = true
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        api.fromJSON(layoutRestore.dockview as any)
+        syncingRef.current = false
+        const active = api.activePanel
+        if (active?.id.startsWith('terminal-')) {
+          onShellChangeRef.current(active.id.replace('terminal-', ''))
+        }
+        requestAnimationFrame(() => syncAllEmbeddedWebviews())
+      } catch (err) {
+        console.error('layout restore failed', err)
+        syncingRef.current = false
+      }
+      onLayoutRestoreDone?.()
+    }
+
+    const timer = setTimeout(tryApply, 0)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [
+    layoutRestore?.token,
+    shellsLayoutKey,
+    openFilesKey,
+    browserTabsKey,
+    onLayoutRestoreDone,
+  ])
+
   // Activate browser tab when activeBrowserTabId changes
   useEffect(() => {
     const api = apiRef.current
@@ -992,6 +1055,7 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
           },
         })
       },
+      captureLayout: () => apiRef.current?.toJSON() ?? null,
     }),
     [activeShellId, activeFileId, openFiles, buildEditorParams]
   )

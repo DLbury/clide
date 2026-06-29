@@ -375,7 +375,13 @@ export function onTerminalWrite(listener: TerminalWriteListener): () => void {
 }
 
 function notifyTerminalWrite(sessionId: string, data: string) {
-  terminalWriteListeners.forEach(fn => fn(sessionId, data))
+  terminalWriteListeners.forEach(fn => {
+    try {
+      fn(sessionId, data)
+    } catch (err) {
+      console.error('terminal write listener failed', err)
+    }
+  })
 }
 
 export async function listenTerminalOutput(

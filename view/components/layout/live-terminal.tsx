@@ -29,6 +29,7 @@ interface LiveTerminalProps {
   sessionId: string
   connected: boolean
   inputEnabled?: boolean
+  onInputFocus?: () => void
   clearSignal?: number
   className?: string
 }
@@ -37,6 +38,7 @@ export function LiveTerminal({
   sessionId,
   connected,
   inputEnabled = true,
+  onInputFocus,
   clearSignal = 0,
   className,
 }: LiveTerminalProps) {
@@ -46,6 +48,7 @@ export function LiveTerminal({
   const sessionIdRef = useRef(sessionId)
   const connectedRef = useRef(connected)
   const inputEnabledRef = useRef(inputEnabled)
+  const onInputFocusRef = useRef(onInputFocus)
   const dataDisposableRef = useRef<{ dispose: () => void } | null>(null)
   const resizeDisposableRef = useRef<{ dispose: () => void } | null>(null)
   const bufferSyncedRef = useRef(0)
@@ -58,6 +61,7 @@ export function LiveTerminal({
   sessionIdRef.current = sessionId
   connectedRef.current = connected
   inputEnabledRef.current = inputEnabled
+  onInputFocusRef.current = onInputFocus
 
   useEffect(() => {
     bufferSyncedRef.current = 0
@@ -148,7 +152,7 @@ export function LiveTerminal({
     fitAddon.fit()
 
     dataDisposableRef.current = term.onData(data => {
-      if (!connectedRef.current || !inputEnabledRef.current) return
+      if (!connectedRef.current) return
       void writeTerminal(sessionIdRef.current, data).catch(() => {})
     })
 
@@ -315,7 +319,10 @@ export function LiveTerminal({
         <div
           ref={containerRef}
           className={cn('select-text-region overflow-hidden', className ?? 'h-full w-full min-h-0')}
-          onClick={() => termRef.current?.focus()}
+          onPointerDown={() => {
+            termRef.current?.focus()
+            onInputFocusRef.current?.()
+          }}
         />
       </ContextMenuTrigger>
       <ContextMenuContent className="w-40">

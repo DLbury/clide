@@ -44,6 +44,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { AppConfirmDialog, type AppConfirmDialogState } from '@/components/ui/app-confirm-dialog'
+import {
+  LayoutSnapshotDropdownItems,
+  LayoutSnapshotSaveDialog,
+} from '@/components/layout/layout-snapshot-menu'
+import { listLayoutSnapshots, type ServerLayoutSnapshot } from '@/lib/layout-snapshots'
 
 interface SidebarProps {
   folders: SessionFolder[]
@@ -58,6 +63,11 @@ interface SidebarProps {
   onDeleteSession: (sessionId: string) => void
   onDisconnectSession: (sessionId: string) => void
   activeSessionId?: string
+  onSaveLayoutSnapshot?: (sessionId: string, name: string) => void
+  onLoadLayoutSnapshot?: (sessionId: string, snapshot: ServerLayoutSnapshot) => void
+  onDeleteLayoutSnapshot?: (sessionId: string, snapshotId: string) => void
+  canSaveLayoutSnapshot?: (sessionId: string) => boolean
+  layoutSnapshotsVersion?: number
 }
 
 const getSessionIcon = (type: Session['type']) => {
@@ -217,6 +227,11 @@ export function Sidebar({
   onDeleteSession,
   onDisconnectSession,
   activeSessionId,
+  onSaveLayoutSnapshot,
+  onLoadLayoutSnapshot,
+  onDeleteLayoutSnapshot,
+  canSaveLayoutSnapshot,
+  layoutSnapshotsVersion = 0,
 }: SidebarProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(folders.map(f => f.id))
@@ -231,6 +246,9 @@ export function Sidebar({
     title: '',
   })
   const confirmActionRef = useRef<(() => void) | null>(null)
+  const [saveLayoutOpen, setSaveLayoutOpen] = useState(false)
+  const [saveLayoutSessionId, setSaveLayoutSessionId] = useState<string | null>(null)
+  const [saveLayoutName, setSaveLayoutName] = useState('')
 
   useEffect(() => {
     const prev = prevFolderIdsRef.current
@@ -309,12 +327,40 @@ export function Sidebar({
     })
   }, [])
 
+  const openSaveLayoutDialog = useCallback(
+    (sessionId: string) => {
+      const count = listLayoutSnapshots(sessionId).length
+      setSaveLayoutSessionId(sessionId)
+      setSaveLayoutName(`布局 ${count + 1}`)
+      setSaveLayoutOpen(true)
+    },
+    [layoutSnapshotsVersion]
+  )
+
+  const confirmSaveLayout = useCallback(() => {
+    const trimmed = saveLayoutName.trim()
+    if (!trimmed || !saveLayoutSessionId || !onSaveLayoutSnapshot) return
+    onSaveLayoutSnapshot(saveLayoutSessionId, trimmed)
+    setSaveLayoutOpen(false)
+    setSaveLayoutSessionId(null)
+  }, [saveLayoutName, saveLayoutSessionId, onSaveLayoutSnapshot])
+
   return (
     <div className="w-64 h-full bg-sidebar border-r border-sidebar-border flex flex-col">
       <AppConfirmDialog
         state={confirmState}
         onOpenChange={open => setConfirmState(prev => ({ ...prev, open }))}
         onConfirm={() => confirmActionRef.current?.()}
+      />
+      <LayoutSnapshotSaveDialog
+        open={saveLayoutOpen}
+        onOpenChange={open => {
+          setSaveLayoutOpen(open)
+          if (!open) setSaveLayoutSessionId(null)
+        }}
+        name={saveLayoutName}
+        onNameChange={setSaveLayoutName}
+        onConfirm={confirmSaveLayout}
       />
       <div className="p-4 border-b border-sidebar-border">
         <div className="flex items-center gap-2 mb-4">
@@ -469,6 +515,21 @@ export function Sidebar({
                                   <DropdownMenuItem onClick={() => onEditSession(session)}>
                                     编辑
                                   </DropdownMenuItem>
+                                  {onSaveLayoutSnapshot &&
+                                    onLoadLayoutSnapshot &&
+                                    onDeleteLayoutSnapshot && (
+                                      <LayoutSnapshotDropdownItems
+                                        snapshots={listLayoutSnapshots(session.id)}
+                                        canSave={canSaveLayoutSnapshot?.(session.id) ?? false}
+                                        onSaveClick={() => openSaveLayoutDialog(session.id)}
+                                        onLoad={snapshot =>
+                                          onLoadLayoutSnapshot(session.id, snapshot)
+                                        }
+                                        onDelete={snapshotId =>
+                                          onDeleteLayoutSnapshot(session.id, snapshotId)
+                                        }
+                                      />
+                                    )}
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
                                     className="text-destructive"

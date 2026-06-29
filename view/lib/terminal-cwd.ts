@@ -100,6 +100,41 @@ function resolveCdOperand(
   return joinRemotePath(currentCwd || homeDir, target)
 }
 
+/** 累积 PTY 用户输入，在换行时返回完整一行（用于解析 cd） */
+export function consumeTerminalInputLine(
+  buffers: Map<string, string>,
+  sessionId: string,
+  data: string
+): string | null {
+  if (data === '\x03') {
+    buffers.set(sessionId, '')
+    return null
+  }
+
+  let line = buffers.get(sessionId) ?? ''
+
+  for (const ch of data) {
+    if (ch === '\r' || ch === '\n') {
+      buffers.set(sessionId, '')
+      return line
+    }
+    if (ch === '\x7f' || ch === '\b') {
+      line = line.slice(0, -1)
+      continue
+    }
+    if (ch === '\x1b') {
+      line = ''
+      continue
+    }
+    if (ch >= ' ' || ch === '\t') {
+      line += ch
+    }
+  }
+
+  buffers.set(sessionId, line)
+  return null
+}
+
 /** 将远程绝对路径转为 loadRemoteFiles 可用的 path 参数 */
 export function remotePathForListApi(absPath: string, user?: string): string {
   const home = defaultRemoteHome(user)

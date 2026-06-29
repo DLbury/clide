@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
+import { useState, useRef, useEffect, useCallback, KeyboardEvent, useMemo } from 'react'
 import { Send, Sparkles, Play, Loader2, Trash2, PlugZap, Square, Terminal, CornerDownLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/lib/types'
@@ -105,8 +105,17 @@ export function AiPane({
   onPromptSendInput,
 }: AiPaneProps) {
   const [input, setInput] = useState('')
+  const [historyIndex, setHistoryIndex] = useState(-1)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const userMessageHistory = useMemo(
+    () =>
+      messages
+        .filter(m => m.role === 'user' && m.content.trim())
+        .map(m => m.content.trim()),
+    [messages]
+  )
 
   const showManualMcp =
     Boolean(mcpRegisterError) || (mcpStatus != null && !mcpStatus.ready)
@@ -128,6 +137,7 @@ export function AiPane({
     if (!input.trim() || taskActive || !aiEnabled) return
     onSendMessage(input.trim())
     setInput('')
+    setHistoryIndex(-1)
   }, [input, taskActive, aiEnabled, onSendMessage])
 
   const handlePrimaryAction = useCallback(() => {
@@ -143,9 +153,34 @@ export function AiPane({
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         handleSend()
+        return
+      }
+      if (e.key === 'ArrowUp' && !e.shiftKey && userMessageHistory.length > 0) {
+        e.preventDefault()
+        const atOldest =
+          historyIndex >= userMessageHistory.length - 1
+        const newIndex = atOldest
+          ? historyIndex
+          : historyIndex < userMessageHistory.length - 1
+            ? historyIndex + 1
+            : 0
+        setHistoryIndex(newIndex)
+        setInput(userMessageHistory[userMessageHistory.length - 1 - newIndex] ?? '')
+        return
+      }
+      if (e.key === 'ArrowDown' && !e.shiftKey && historyIndex >= 0) {
+        e.preventDefault()
+        if (historyIndex > 0) {
+          const newIndex = historyIndex - 1
+          setHistoryIndex(newIndex)
+          setInput(userMessageHistory[userMessageHistory.length - 1 - newIndex] ?? '')
+        } else {
+          setHistoryIndex(-1)
+          setInput('')
+        }
       }
     },
-    [handleSend]
+    [handleSend, userMessageHistory, historyIndex]
   )
 
   const copyText = (text: string) => {

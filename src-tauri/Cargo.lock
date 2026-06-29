@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "aiterm"
-version = "0.1.63"
+version = "0.1.65"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
