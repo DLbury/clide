@@ -30,6 +30,7 @@ jobs:
             rust_target: ''
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,9 +63,7 @@ jobs:
             libssl-dev
 
       - name: Install frontend dependencies
-        run: |
-          npm ci
-          npm ci --prefix view
+        run: node scripts/ci-npm-install.mjs
 
       - name: Build frontend (static export)
         run: npm run build:static --prefix view

@@ -1,6 +1,6 @@
 [package]
 name = "aiterm"
-version = "0.1.60"
+version = "0.1.61"
 description = "AI Terminal — non-invasive shell with Claude Code integration"
 authors = ["AITERM"]
 edition = "2021"
