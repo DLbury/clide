@@ -88,7 +88,7 @@ export function BrowserPanel({
   const syncBounds = useCallback(async () => {
     const el = hostRef.current
     const wv = webviewRef.current
-    if (!el || !wv || !visible || !webviewReady || authPopup) return
+    if (!el || !wv || !visibleRef.current || !webviewReady || authPopup) return
     const rect = el.getBoundingClientRect()
     if (rect.width < 1 || rect.height < 1) return
     try {
@@ -100,7 +100,24 @@ export function BrowserPanel({
     } catch {
       /* webview closed */
     }
-  }, [visible, webviewReady, authPopup])
+  }, [webviewReady, authPopup])
+
+  const revealWebview = useCallback(async () => {
+    const el = hostRef.current
+    const wv = webviewRef.current
+    if (!el || !wv || !webviewReady || authPopup) return
+    try {
+      await wv.show()
+      const rect = await waitForHostBounds(el, 8, 2000)
+      const { LogicalPosition, LogicalSize } = await import('@tauri-apps/api/dpi')
+      await wv.setPosition(new LogicalPosition(Math.round(rect.left), Math.round(rect.top)))
+      await wv.setSize(
+        new LogicalSize(Math.max(1, Math.round(rect.width)), Math.max(1, Math.round(rect.height)))
+      )
+    } catch {
+      /* webview closed */
+    }
+  }, [webviewReady, authPopup])
 
   const syncAuthBounds = useCallback(async () => {
     const el = authHostRef.current
@@ -215,13 +232,12 @@ export function BrowserPanel({
     const wv = webviewRef.current
     if (wv && visibleRef.current) {
       try {
-        await wv.show()
-        await syncBounds()
+        await revealWebview()
       } catch {
         /* ignore */
       }
     }
-  }, [authPopup?.label, syncBounds])
+  }, [authPopup?.label, revealWebview])
 
   const mountAuthWebview = useCallback(
     async (popup: AuthPopupState) => {
@@ -427,8 +443,7 @@ export function BrowserPanel({
     void (async () => {
       try {
         if (visible) {
-          await wv.show()
-          await syncBounds()
+          await revealWebview()
         } else {
           await wv.hide()
         }
@@ -436,7 +451,7 @@ export function BrowserPanel({
         /* ignore */
       }
     })()
-  }, [visible, webviewReady, syncBounds, authPopup])
+  }, [visible, webviewReady, revealWebview, authPopup])
 
   // 注册到 Dockview 布局桥：拖拽时隐藏，布局变化后同步位置
   useEffect(() => {
@@ -449,12 +464,12 @@ export function BrowserPanel({
         if (hidden) {
           void wv.hide()
         } else if (visibleRef.current) {
-          void wv.show().then(() => syncBounds())
+          void revealWebview()
         }
       },
     })
     return () => unregisterEmbeddedWebview(safeLabel)
-  }, [safeLabel, webviewReady, syncBounds, authPopup])
+  }, [safeLabel, webviewReady, syncBounds, revealWebview, authPopup])
 
   useEffect(() => {
     return () => {

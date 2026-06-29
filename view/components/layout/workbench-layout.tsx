@@ -184,10 +184,9 @@ function BrowserPanelWrapper({ params, api }: IDockviewPanelProps<BrowserPanelPa
   const [panelVisible, setPanelVisible] = useState(api.isVisible)
 
   useEffect(() => {
-    setPanelVisible(api.isVisible)
-    const disposable = api.onDidVisibilityChange(event => {
-      setPanelVisible(event.isVisible)
-    })
+    const apply = () => setPanelVisible(api.isVisible)
+    apply()
+    const disposable = api.onDidVisibilityChange(apply)
     return () => disposable.dispose()
   }, [api])
 
@@ -558,11 +557,10 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
       const syncWebviews = () => syncAllEmbeddedWebviews()
 
       const onActivePanelChange = () => {
-        syncWebviews()
-        const active = api.activePanel
-        if (!active?.id.startsWith('browser-')) {
-          hideAllEmbeddedWebviews()
-        }
+        // 分屏时浏览器与 Shell 同时可见，仅同步位置，不按 active 面板 hide
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => syncAllEmbeddedWebviews())
+        })
       }
 
       let dragReleaseHandler: (() => void) | null = null
