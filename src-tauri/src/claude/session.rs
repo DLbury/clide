@@ -103,9 +103,7 @@ fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
 
 #[cfg(not(windows))]
 fn locate_unix_claude_cli_js(entry: &Path) -> Option<PathBuf> {
-    let resolved = std::fs::canonicalize(entry)
-        .ok()
-        .unwrap_or_else(|_| entry.to_path_buf());
+    let resolved = std::fs::canonicalize(entry).unwrap_or_else(|_| entry.to_path_buf());
 
     if resolved
         .file_name()
@@ -117,10 +115,12 @@ fn locate_unix_claude_cli_js(entry: &Path) -> Option<PathBuf> {
 
     let base_dir = resolved.parent()?;
 
-    for relative in [
-        ["node_modules", "@anthropic-ai", "claude-code", "cli.js"],
-        ["..", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"],
-    ] {
+    const RELATIVE_CLI_PATHS: &[&[&str]] = &[
+        &["node_modules", "@anthropic-ai", "claude-code", "cli.js"],
+        &["..", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"],
+    ];
+
+    for relative in RELATIVE_CLI_PATHS {
         let candidate = relative.iter().fold(base_dir.to_path_buf(), |acc, seg| acc.join(seg));
         if candidate.is_file() {
             return Some(candidate);
