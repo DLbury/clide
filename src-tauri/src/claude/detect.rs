@@ -1,6 +1,6 @@
 use crate::process_util::{
     command_no_window, configure_claude_cli_command, normalize_claude_executable, normalize_path,
-    prefer_claude_executable, prepare_cli_discovery_environment,
+    prefer_claude_executable, prepare_cli_discovery_environment, propagate_claude_auth_env,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -321,6 +321,7 @@ fn read_claude_version(path: &str) -> Option<String> {
     // 尝试使用 --version 参数
     let mut cmd = command_no_window(path);
     configure_claude_cli_command(&mut cmd);
+    propagate_claude_auth_env(&mut cmd);
     let output = cmd.arg("--version").output().ok()?;
 
     if output.status.success() {
@@ -333,6 +334,7 @@ fn read_claude_version(path: &str) -> Option<String> {
     // 如果 --version 失败，尝试 -v
     let mut cmd = command_no_window(path);
     configure_claude_cli_command(&mut cmd);
+    propagate_claude_auth_env(&mut cmd);
     let output = cmd.arg("-v").output().ok()?;
 
     if output.status.success() {
@@ -345,6 +347,7 @@ fn read_claude_version(path: &str) -> Option<String> {
     // 尝试 --help 并从帮助文本中提取版本信息
     let mut cmd = command_no_window(path);
     configure_claude_cli_command(&mut cmd);
+    propagate_claude_auth_env(&mut cmd);
     let output = cmd.arg("--help").output().ok()?;
 
     if output.status.success() {

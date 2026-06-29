@@ -1,7 +1,7 @@
 use crate::claude::detect::resolve_claude_path;
 use crate::process_util::{
     command_no_window, configure_claude_cli_command, is_node_deprecation_noise,
-    prepare_cli_discovery_environment, resolve_node_executable,
+    prepare_cli_discovery_environment, propagate_claude_auth_env, resolve_node_executable,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -720,6 +720,7 @@ impl ClaudeSessionManager {
         }
 
         configure_claude_cli_command(&mut command);
+        propagate_claude_auth_env(&mut command);
 
         let mut child = command.spawn().map_err(|e| {
             if let Some(path) = &prompt_path {
@@ -856,7 +857,7 @@ impl ClaudeSessionManager {
             for line in reader.lines() {
                 let Ok(line) = line else { break };
                 let trimmed = line.trim();
-                if trimmed.is_empty() {
+                if trimmed.is_empty() || is_node_deprecation_noise(trimmed) {
                     continue;
                 }
                 request_output_seen.store(true, Ordering::SeqCst);
@@ -985,45 +986,50 @@ impl ClaudeSessionManager {
                 stderr_collector.lock().push(line.clone());
                 let req = current_err.lock().clone();
                 let Some(req_id) = req else { continue };
-                let lower = line.to_lowercase();
-                let stale = lower.contains("no conversation found")
-                    || lower.contains("conversation not found");
-                let fatal = !stale
-                    && (lower.contains("not recognized")
-                        || lower.contains("enoent")
-                        || lower.contains("cannot find")
-                        || lower.contains("command not found")
-                        || lower.contains("not logged in")
-                        || lower.contains("/login")
-                        || lower.contains("authentication required")
-                        || lower.contains("error:")
-                        || lower.contains("failed"));
-                let stream_error = if stale || fatal {
-                    Some(line.clone())
-                } else {
-                    None
-                };
-                let _ = app_stderr.emit(
-                    "claude:stream",
-                    ClaudeStreamEvent {
-                        request_id: req_id,
-                        event_type: if stale {
-                            "session_error".into()
-                        } else {
-                            "stderr".into()
+
+                if is_stale_session_stderr(&line) {
+                    let _ = app_stderr.emit(
+                        "claude:stream",
+                        ClaudeStreamEvent {
+                            request_id: req_id,
+                            event_type: "session_error".into(),
+                            text: Some(line.clone()),
+                            session_id: None,
+                            done: true,
+                            error: Some(line.clone()),
+                            reasoning: None,
+                            tool_id: None,
+                            tool_name: None,
+                            tool_input: None,
+                            tool_output: None,
+                            tool_error: None,
                         },
-                        text: Some(line),
-                        session_id: None,
-                        done: stale || fatal,
-                        error: stream_error,
-                        reasoning: None,
-                        tool_id: None,
-                        tool_name: None,
-                        tool_input: None,
-                        tool_output: None,
-                        tool_error: None,
-                    },
-                );
+                    );
+                    continue;
+                }
+
+                if is_claude_fatal_stderr(&line) {
+                    let _ = app_stderr.emit(
+                        "claude:stream",
+                        ClaudeStreamEvent {
+                            request_id: req_id,
+                            event_type: "process_error".into(),
+                            text: Some(line.clone()),
+                            session_id: None,
+                            done: true,
+                            error: Some(line.clone()),
+                            reasoning: None,
+                            tool_id: None,
+                            tool_name: None,
+                            tool_input: None,
+                            tool_output: None,
+                            tool_error: None,
+                        },
+                    );
+                    continue;
+                }
+
+                tracing::debug!("Claude stderr (ignored): {line}");
             }
         });
     }
@@ -1322,6 +1328,26 @@ fn parse_stream_line(
     vec![]
 }
 
+fn is_stale_session_stderr(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("no conversation found") || lower.contains("conversation not found")
+}
+
+fn is_claude_fatal_stderr(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("not recognized")
+        || lower.contains("enoent")
+        || lower.contains("cannot find")
+        || lower.contains("command not found")
+        || lower.contains("not logged in")
+        || lower.contains("authentication required")
+        || lower.contains("please log in")
+        || lower.contains("claude /login")
+        || lower.contains("claude login")
+        || lower.starts_with("error:")
+        || (lower.contains("failed") && !lower.contains("deprecation"))
+}
+
 /// CLI 在 stream-json 标志被截断时回退为纯文本；将其当作 assistant 回复。
 fn parse_plaintext_fallback(
     line: &str,
@@ -1329,7 +1355,7 @@ fn parse_plaintext_fallback(
     session_id: &Option<String>,
 ) -> Vec<ClaudeStreamEvent> {
     let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('{') {
+    if trimmed.is_empty() || trimmed.starts_with('{') || is_node_deprecation_noise(trimmed) {
         return vec![];
     }
     let lower = trimmed.to_ascii_lowercase();

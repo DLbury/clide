@@ -2,7 +2,7 @@ use crate::app_paths::McpBundlePaths;
 use crate::claude::bridge;
 use crate::claude::detect::resolve_claude_path;
 use crate::mcp_stdio_proxy::{mcp_stdio_launcher_command, mcp_stdio_proxy_flag};
-use crate::process_util::{async_command_no_window, command_no_window, configure_claude_cli_command};
+use crate::process_util::{async_command_no_window, command_no_window, configure_claude_cli_command, propagate_claude_auth_env};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fmt::Write as _;
@@ -143,6 +143,7 @@ fn try_claude_mcp_add(claude_path: Option<String>) {
     for args in attempts {
         let mut cmd = command_no_window(&claude);
         configure_claude_cli_command(&mut cmd);
+        propagate_claude_auth_env(&mut cmd);
         let output = cmd.args(&args).output();
         match output {
             Ok(o) if o.status.success() => {

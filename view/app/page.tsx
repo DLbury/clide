@@ -103,7 +103,7 @@ import {
   extractShellCommands,
   isRemoteConnectionRefusal,
 } from '@/lib/extract-shell-command'
-import { isStaleClaudeSessionError } from '@/lib/claude-session'
+import { isClaudeCliNoise, isStaleClaudeSessionError } from '@/lib/claude-session'
 import {
   cancelShellToolForSession,
   executeShellToolInTab,
@@ -2534,7 +2534,7 @@ export default function AITerminal() {
               if (event.eventType === 'reasoning_delta' || event.reasoning) {
                 sawReasoning = true
               }
-              if (event.text) {
+              if (event.text && !isClaudeCliNoise(event.text)) {
                 if (
                   event.eventType === 'stream_event' ||
                   event.eventType === 'stderr' ||

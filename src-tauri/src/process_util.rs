@@ -201,17 +201,80 @@ pub fn async_command_no_window<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::
 /// 为 Claude Code CLI（Node）子进程抑制 DEP0169 等弃用警告，避免 stderr 刷屏。
 pub fn configure_claude_cli_command(cmd: &mut std::process::Command) {
     append_node_options(cmd, "--no-deprecation");
+    append_node_options(cmd, "--no-warnings");
 }
 
 pub fn configure_claude_cli_async_command(cmd: &mut tokio::process::Command) {
     append_node_options_tokio(cmd, "--no-deprecation");
+    append_node_options_tokio(cmd, "--no-warnings");
 }
 
-/// Node stderr 中的弃用噪音（Claude CLI 依赖链触发 DEP0169 url.parse）。
+/// Node stderr/stdout 中的弃用噪音（Claude CLI 依赖链触发 DEP0169 url.parse）。
 pub fn is_node_deprecation_noise(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
     line.contains("DeprecationWarning")
         || line.contains("[DEP0169]")
         || line.contains("url.parse()")
+        || lower.contains("trace-deprecation")
+        || lower.contains("(use `node --trace-deprecation")
+        || lower.contains("(use `claude --trace-deprecation")
+        || (lower.contains("deprecation") && lower.contains("warning"))
+}
+
+/// 将 Claude 认证相关环境变量传给子进程（GUI 启动时常未继承用户 shell 中的变量）。
+pub fn propagate_claude_auth_env(cmd: &mut std::process::Command) {
+    const KEYS: &[&str] = &[
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_API_URL",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ];
+    for key in KEYS {
+        let value = std::env::var(key)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                #[cfg(windows)]
+                {
+                    read_registry_env_var("HKCU\\Environment", key)
+                }
+                #[cfg(not(windows))]
+                {
+                    None
+                }
+            });
+        if let Some(value) = value {
+            cmd.env(key, value);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn read_registry_env_var(key: &str, name: &str) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = std::process::Command::new("reg")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["query", key, "/v", name])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        if tokens.len() < 3 {
+            continue;
+        }
+        if !tokens[0].eq_ignore_ascii_case(name) {
+            continue;
+        }
+        let value = tokens[2..].join(" ");
+        return Some(expand_registry_value(&value));
+    }
+    None
 }
 
 fn append_node_options(cmd: &mut std::process::Command, flag: &str) {
