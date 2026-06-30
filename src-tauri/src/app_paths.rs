@@ -185,15 +185,18 @@ pub fn node_script_argv(path: &Path) -> Result<String, String> {
     }
     let abs = std::fs::canonicalize(path)
         .map_err(|e| format!("无法解析 MCP 脚本路径 {}: {e}", path.display()))?;
-    let mut js_path = path_to_js_string(&abs);
-    #[cfg(windows)]
-    {
-        // canonicalize 在 Windows 上常返回 \\?\D:\...；Node 入口不稳定，需去掉扩展前缀
-        if let Some(rest) = js_path.strip_prefix("//?/UNC/") {
-            js_path = format!("//{rest}");
-        } else if let Some(rest) = js_path.strip_prefix("//?/") {
-            js_path = rest.to_string();
+    let js_path = {
+        let mut js_path = path_to_js_string(&abs);
+        #[cfg(windows)]
+        {
+            // canonicalize 在 Windows 上常返回 \\?\D:\...；Node 入口不稳定，需去掉扩展前缀
+            if let Some(rest) = js_path.strip_prefix("//?/UNC/") {
+                js_path = format!("//{rest}");
+            } else if let Some(rest) = js_path.strip_prefix("//?/") {
+                js_path = rest.to_string();
+            }
         }
-    }
+        js_path
+    };
     Ok(js_path)
 }

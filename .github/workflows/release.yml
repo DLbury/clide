@@ -68,14 +68,20 @@ jobs:
       - name: Build frontend (static export)
         run: npm run build:static --prefix view
 
+      # minisign 私钥须为完整多行文本（首行 untrusted comment: minisign private key: ...）
+      # 生成：CI=true npx tauri signer generate -w clide-updater.key
+      # 将 clide-updater.key 全文粘贴到 Secrets → TAURI_SIGNING_PRIVATE_KEY
+      # 无密码时不要配置 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+      - name: Prepare updater signing key
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/prepare-tauri-signing-ci.mjs
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 在仓库 Settings → Secrets 配置 TAURI_SIGNING_PRIVATE_KEY（私钥全文或路径）
-          # 可选 TAURI_SIGNING_PRIVATE_KEY_PASSWORD（私钥有密码时）
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}

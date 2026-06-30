@@ -623,7 +623,6 @@ async fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
             let app_owned = app.clone();
             let name_owned = name.to_string();
             let id_for_task = id.clone();
-            let id_for_log = id.clone();
             // 工具执行绝对上界：防止 hang 住的任务永久占用 WebSocket 处理协程
             const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(660);
             let task_result = tokio::time::timeout(
@@ -712,7 +711,7 @@ async fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
 }
 
 #[derive(Debug, Deserialize)]
-struct SelectionChangedParams {
+pub(crate) struct SelectionChangedParams {
     #[serde(default)]
     text: String,
     #[serde(default)]

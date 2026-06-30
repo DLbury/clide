@@ -748,7 +748,7 @@ impl ClaudeSessionManager {
 
         let stdout = child.stdout.take().ok_or("无法读取 Claude Code 输出")?;
         let stderr = child.stderr.take().ok_or("无法读取 Claude Code 错误输出")?;
-        let mut stdin = child.stdin.take().ok_or("无法写入 Claude Code 输入")?;
+        let stdin = child.stdin.take().ok_or("无法写入 Claude Code 输入")?;
 
         let with_ide_mcp = bridge_port.is_some();
         let stderr_collector: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1208,7 +1208,7 @@ fn parse_stream_line(
                     Some("text") => {
                         // 新文本块开始时重置标志，确保后续 assistant 快照能正确补发正文
                         saw_text_stream.store(false, Ordering::SeqCst);
-                        let mut ev = mk("text_block_start");
+                        let ev = mk("text_block_start");
                         events_out.push(ev);
                     }
                     _ => {}
