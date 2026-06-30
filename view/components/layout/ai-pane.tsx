@@ -8,6 +8,7 @@ import { AiAssistantParts } from '@/components/layout/ai-assistant-parts'
 import { ThinkingIndicator } from '@/components/layout/thinking-indicator'
 import type { McpRegisterStatus } from '@/lib/claude-client'
 import { classifyInteractivePrompt } from '@/lib/shell-tool-executor'
+import { claudePathLabel, uniqueClaudeCandidates } from '@/lib/claude-client'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -51,6 +52,8 @@ interface AiPaneProps {
   onClearChat: () => void
   onRegenerateMessage?: (messageId: string) => void
   claudePath?: string
+  claudeCandidates?: string[]
+  onClaudePathChange?: (path: string) => void
   /** 终端等待密码/交互输入时显示的提示信息 */
   interactivePrompt?: { sessionId: string; command: string; prompt: string } | null
   /** Claude 请求或 Shell 工具等待用户输入时为 true，控制发送/停止按钮 */
@@ -97,6 +100,8 @@ export function AiPane({
   onClearChat,
   onRegenerateMessage,
   claudePath,
+  claudeCandidates = [],
+  onClaudePathChange,
   interactivePrompt,
   isTaskActive,
   onPromptDismiss,
@@ -241,6 +246,12 @@ export function AiPane({
     lastMessage?.role === 'assistant' &&
     !assistantHasVisibleContent(lastMessage)
 
+  const installOptions = useMemo(
+    () => uniqueClaudeCandidates(claudeCandidates),
+    [claudeCandidates]
+  )
+  const showClaudeSwitch = installOptions.length > 1 && Boolean(onClaudePathChange)
+
   return (
     <div className="h-full flex flex-col bg-card border-l border-border">
       <ContextMenu>
@@ -281,6 +292,27 @@ export function AiPane({
       {!aiEnabled && (
         <div className="px-4 py-2 text-xs bg-muted/50 text-muted-foreground border-b border-border">
           AI 已关闭，请在全局设置（Ctrl+,）中启用，或点击状态栏切换
+        </div>
+      )}
+
+      {aiEnabled && showClaudeSwitch && (
+        <div className="px-4 py-2 text-[11px] border-b border-border bg-muted/20">
+          <label className="flex items-center gap-2 min-w-0">
+            <span className="shrink-0 text-muted-foreground">Claude</span>
+            <select
+              value={claudePath ?? ''}
+              onChange={e => onClaudePathChange?.(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-primary"
+              title={claudePath || '自动选择'}
+            >
+              <option value="">自动选择</option>
+              {installOptions.map(path => (
+                <option key={path} value={path}>
+                  {claudePathLabel(path)}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       )}
 

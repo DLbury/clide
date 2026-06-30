@@ -131,7 +131,13 @@ impl TunnelManager {
         let tunnel_id = uuid::Uuid::new_v4().to_string();
         let path_suffix = path
             .filter(|p| !p.is_empty())
-            .map(|p| if p.starts_with('/') { p.to_string() } else { format!("/{p}") })
+            .map(|p| {
+                if p.starts_with('/') {
+                    p.to_string()
+                } else {
+                    format!("/{p}")
+                }
+            })
             .unwrap_or_default();
         let local_url = format!("http://127.0.0.1:{actual_port}{path_suffix}");
 
@@ -191,11 +197,9 @@ impl TunnelManager {
                 if abort_bg.load(Ordering::Relaxed) {
                     break;
                 }
-                let accept = tokio::time::timeout(
-                    std::time::Duration::from_millis(500),
-                    listener.accept(),
-                )
-                .await;
+                let accept =
+                    tokio::time::timeout(std::time::Duration::from_millis(500), listener.accept())
+                        .await;
                 match accept {
                     Ok(Ok((stream, addr))) => {
                         let _ = conn_tx.send((stream, addr));

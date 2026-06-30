@@ -1,6 +1,6 @@
+use crate::connect_tool::ConnectToolCoordinator;
 use crate::runtime::{self, RuntimeStore};
 use crate::secrets::{self, redact_for_display, substitute_command_placeholders};
-use crate::connect_tool::ConnectToolCoordinator;
 use crate::shell_tool::ShellToolCoordinator;
 use crate::state::IdeContext;
 use crate::terminal::{self, tail_snippet, TerminalManager, TunnelManager};
@@ -135,7 +135,11 @@ fn tool_def_with_meta(
 ) -> Value {
     let schema = if input_schema.get("type").and_then(|v| v.as_str()) == Some("object") {
         input_schema
-    } else if input_schema.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+    } else if input_schema
+        .as_object()
+        .map(|o| o.is_empty())
+        .unwrap_or(true)
+    {
         json!({ "type": "object", "properties": {} })
     } else {
         input_schema
@@ -319,7 +323,10 @@ fn tool_terminal_context(ctx: &ToolContext<'_>) -> Value {
         "terminalSessionId": focused.get("terminalSessionId"),
         "focused": focused,
     });
-    tracing::info!("tool_terminal_context: done, result_len={}", result.to_string().len());
+    tracing::info!(
+        "tool_terminal_context: done, result_len={}",
+        result.to_string().len()
+    );
     result
 }
 
@@ -398,6 +405,10 @@ async fn tool_open_remote_browser(ctx: &ToolContext<'_>, args: &Value) -> Value 
         });
     }
 
+    if let Err(err) = crate::browser_policy::validate_browser_host(remote_host) {
+        return json!({ "success": false, "error": err });
+    }
+
     match ctx
         .tunnels
         .start(
@@ -441,9 +452,7 @@ async fn tool_open_remote_browser(ctx: &ToolContext<'_>, args: &Value) -> Value 
 }
 
 fn tool_create_new_shell(ctx: &ToolContext<'_>, args: &Value) -> Value {
-    let profile_id = args
-        .get("profileId")
-        .and_then(|v| v.as_str());
+    let profile_id = args.get("profileId").and_then(|v| v.as_str());
     let name = args
         .get("name")
         .and_then(|v| v.as_str())
@@ -621,10 +630,7 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
         .and_then(|v| v.as_str());
     let command = args.get("command").and_then(|v| v.as_str());
     let shell_id = args.get("shellId").and_then(|v| v.as_str());
-    let wait_ms = args
-        .get("waitMs")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(30000);
+    let wait_ms = args.get("waitMs").and_then(|v| v.as_u64()).unwrap_or(30000);
 
     let (Some(pid), Some(cmd)) = (profile_id, command) else {
         tracing::warn!("runShellCommand: missing profileId or command");
@@ -636,14 +642,20 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let Some((terminal_session_id, resolved_profile, _shell)) =
         ctx.runtime.find_terminal_session(pid, shell_id)
     else {
-        tracing::warn!("runShellCommand: terminal session not found for profile={}", pid);
+        tracing::warn!(
+            "runShellCommand: terminal session not found for profile={}",
+            pid
+        );
         return json!({
             "success": false,
             "error": format!("未找到已连接终端 profile={pid}，请先 connectServer")
         });
     };
 
-    tracing::info!("runShellCommand: terminal_session_id={}", terminal_session_id);
+    tracing::info!(
+        "runShellCommand: terminal_session_id={}",
+        terminal_session_id
+    );
 
     let session_type = ctx
         .runtime
@@ -655,7 +667,10 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
         .unwrap_or_else(|| "local".to_string());
 
     if !ctx.terminals.is_connected(&terminal_session_id) {
-        tracing::warn!("runShellCommand: terminal not connected: {}", terminal_session_id);
+        tracing::warn!(
+            "runShellCommand: terminal not connected: {}",
+            terminal_session_id
+        );
         return json!({
             "success": false,
             "error": "终端未连接",
@@ -667,7 +682,10 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     let real_cmd = substitute_command_placeholders(cmd, Some(&resolved_profile));
     let real_cmd = crate::terminal::prepare_command_for_pty(&real_cmd, &session_type);
 
-    tracing::info!("runShellCommand: executing command, display={}", display_cmd);
+    tracing::info!(
+        "runShellCommand: executing command, display={}",
+        display_cmd
+    );
 
     let request_id = uuid::Uuid::new_v4().to_string();
     ctx.shell_tools.begin(request_id.clone());
@@ -767,7 +785,10 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     }
 }
 
-fn build_connect_request(profile: &crate::runtime::ProfileSnapshot, terminal_session_id: &str) -> terminal::ConnectRequest {
+fn build_connect_request(
+    profile: &crate::runtime::ProfileSnapshot,
+    terminal_session_id: &str,
+) -> terminal::ConnectRequest {
     let (auth_method, password, private_key_path) = secrets::to_connect_auth(&profile.id);
     terminal::ConnectRequest {
         sessionId: terminal_session_id.to_string(),
@@ -802,11 +823,7 @@ async fn tool_list_files(ctx: &ToolContext<'_>, args: &Value) -> Value {
         return json!({ "success": false, "error": "仅 SSH 支持远程文件列表" });
     }
     let request = build_connect_request(&profile, &format!("{pid}::fs"));
-    match terminal::list_remote_directory(
-        request,
-        path.to_string(),
-        false,
-    ).await {
+    match terminal::list_remote_directory(request, path.to_string(), false).await {
         Ok(entries) => json!({ "success": true, "path": path, "entries": entries }),
         Err(e) => json!({ "success": false, "error": e }),
     }
@@ -825,8 +842,7 @@ async fn tool_read_file(ctx: &ToolContext<'_>, args: &Value) -> Value {
         return json!({ "success": false, "error": "未知 profileId" });
     };
     let request = build_connect_request(&profile, &format!("{pid}::fs"));
-    match terminal::read_remote_file(request, p.to_string(), false).await
-    {
+    match terminal::read_remote_file(request, p.to_string(), false).await {
         Ok(content) => {
             let preview: String = content.chars().take(8000).collect();
             json!({ "success": true, "path": p, "content": preview })

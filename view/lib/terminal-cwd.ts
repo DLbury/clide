@@ -2,7 +2,11 @@
 const OSC7_RE =
   /\x1b\]7;(?:file:\/\/[^/\x07\x1b]*)?([^\x07\x1b]+)(?:\x07|\x1b\\)/g
 
-const PWD_PROMPT_RE = /(?:^|\n)(?:PWD|pwd)[:=]\s*(\/[^\s\r\n]+)/g
+const PWD_PROMPT_RE = /(?:^|\n)(?:PWD|pwd)[:=]\s*(\S+)/g
+
+export function isWindowsShellPath(path: string): boolean {
+  return /^[A-Za-z]:\//.test(path.replace(/\\/g, '/'))
+}
 
 export function joinRemotePath(base: string, segment: string): string {
   const cleanBase = base.replace(/\/+$/, '') || '/'
@@ -97,6 +101,15 @@ function resolveCdOperand(
   if (target.startsWith('/')) {
     return normalizeRemoteCwd(target)
   }
+  if (isWindowsShellPath(target)) {
+    return target.replace(/\\/g, '/')
+  }
+  if (isWindowsShellPath(currentCwd) || isWindowsShellPath(homeDir)) {
+    const base = (currentCwd || homeDir).replace(/\\/g, '/')
+    const seg = target.replace(/\\/g, '/')
+    if (seg.includes(':')) return seg
+    return joinRemotePath(base, seg)
+  }
   return joinRemotePath(currentCwd || homeDir, target)
 }
 
@@ -136,8 +149,13 @@ export function consumeTerminalInputLine(
 }
 
 /** 生成写入 PTY 的 cd 命令 */
-export function formatShellCdCommand(cwd: string): string {
-  const escaped = cwd.replace(/'/g, "'\\''")
+export function formatShellCdCommand(cwd: string, sessionType?: string): string {
+  const normalized = cwd.replace(/\\/g, '/')
+  if (sessionType === 'local' && isWindowsShellPath(normalized)) {
+    const escaped = normalized.replace(/'/g, "''")
+    return `Set-Location '${escaped}'\n`
+  }
+  const escaped = normalized.replace(/'/g, "'\\''")
   return `cd '${escaped}'\n`
 }
 

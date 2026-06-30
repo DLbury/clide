@@ -3,9 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_tungstenite::{
-    connect_async,
-    tungstenite::client::IntoClientRequest,
-    tungstenite::http::HeaderValue,
+    connect_async, tungstenite::client::IntoClientRequest, tungstenite::http::HeaderValue,
     tungstenite::Message,
 };
 
@@ -44,8 +42,7 @@ async fn run_keepalive_session(
 
     request.headers_mut().insert(
         "x-claude-code-ide-authorization",
-        HeaderValue::from_str(auth_token)
-            .map_err(|e| format!("无效 auth token: {e}"))?,
+        HeaderValue::from_str(auth_token).map_err(|e| format!("无效 auth token: {e}"))?,
     );
 
     let (ws, _) = connect_async(request)

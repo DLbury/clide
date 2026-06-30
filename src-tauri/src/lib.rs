@@ -1,7 +1,8 @@
 pub mod app_logging;
 pub mod app_paths;
-pub mod connect_tool;
+pub mod browser_policy;
 pub mod claude;
+pub mod connect_tool;
 pub mod mcp_stdio_proxy;
 pub mod mcp_stdio_server;
 pub mod process_util;
@@ -13,16 +14,20 @@ pub mod terminal;
 
 use app_paths::McpBundlePaths;
 use claude::bridge::ClaudeBridge;
-use claude::detect::{detect_claude_binary_with_custom, ClaudeAutoDetectManager, ClaudeDetectResult};
+use claude::detect::{
+    detect_claude_binary_with_custom, ClaudeAutoDetectManager, ClaudeDetectResult,
+};
 use claude::session::ClaudeSessionManager;
+use connect_tool::ConnectToolCoordinator;
 use parking_lot::Mutex;
 use runtime::RuntimeStore;
-use connect_tool::ConnectToolCoordinator;
 use shell_tool::ShellToolCoordinator;
 use state::IdeContext;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
-use terminal::{ConnectRequest, SocksInfo, SocksManager, TerminalManager, TunnelInfo, TunnelManager};
+use terminal::{
+    ConnectRequest, SocksInfo, SocksManager, TerminalManager, TunnelInfo, TunnelManager,
+};
 
 pub struct AppState {
     pub bridge: Mutex<Option<ClaudeBridge>>,
@@ -44,25 +49,19 @@ fn claude_detect(claude_path: Option<String>) -> Result<ClaudeDetectResult, Stri
 }
 
 #[tauri::command]
-async fn claude_detect_async(
-    state: State<'_, AppState>,
-) -> Result<ClaudeDetectResult, String> {
+async fn claude_detect_async(state: State<'_, AppState>) -> Result<ClaudeDetectResult, String> {
     let result = state.claude_auto_detect.detect_now().await;
     Ok(result)
 }
 
 #[tauri::command]
-async fn claude_start_auto_detect(
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+async fn claude_start_auto_detect(state: State<'_, AppState>) -> Result<(), String> {
     state.claude_auto_detect.start_auto_detect().await;
     Ok(())
 }
 
 #[tauri::command]
-fn claude_stop_auto_detect(
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+fn claude_stop_auto_detect(state: State<'_, AppState>) -> Result<(), String> {
     state.claude_auto_detect.stop_auto_detect();
     Ok(())
 }
@@ -108,7 +107,9 @@ async fn claude_stop_bridge(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn claude_bridge_status(state: State<'_, AppState>) -> Result<Option<claude::bridge::BridgeStatus>, String> {
+fn claude_bridge_status(
+    state: State<'_, AppState>,
+) -> Result<Option<claude::bridge::BridgeStatus>, String> {
     let bridge_guard = state.bridge.lock();
     Ok(bridge_guard.as_ref().map(|b| b.status()))
 }
@@ -147,9 +148,7 @@ fn claude_register_mcp(
             .filter(|b| b.is_running())
             .map(|b| (b.port(), b.auth_token().to_string()))
     };
-    let bridge_ref = bridge_env
-        .as_ref()
-        .map(|(p, t)| (*p, t.as_str()));
+    let bridge_ref = bridge_env.as_ref().map(|(p, t)| (*p, t.as_str()));
     claude::register_mcp(
         &mcp_paths,
         claude_path,
@@ -172,7 +171,8 @@ async fn claude_wait_mcp_tools(
             .ok_or("IDE 桥接未运行，请先开启 AI 侧栏桥接")?;
         (b.port(), b.auth_token().to_string())
     };
-    let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(10_000).clamp(2000, 30_000));
+    let timeout =
+        std::time::Duration::from_millis(timeout_ms.unwrap_or(10_000).clamp(2000, 30_000));
     claude::wait_for_mcp_ready(
         &mcp_paths,
         port,
@@ -195,7 +195,10 @@ fn claude_update_context(state: State<'_, AppState>, context: IdeContext) -> Res
 }
 
 #[tauri::command]
-fn sync_app_runtime(state: State<'_, AppState>, snapshot: runtime::RuntimeSnapshot) -> Result<(), String> {
+fn sync_app_runtime(
+    state: State<'_, AppState>,
+    snapshot: runtime::RuntimeSnapshot,
+) -> Result<(), String> {
     state.runtime.update(snapshot.clone());
     {
         let mut ide = state.ide_context.lock();
@@ -226,9 +229,11 @@ fn complete_shell_tool_command(
     let result = if let Some(err) = error.filter(|e| !e.is_empty()) {
         state.shell_tools.fail(&request_id, err)
     } else {
-        state
-            .shell_tools
-            .complete(&request_id, output.unwrap_or_default(), timed_out.unwrap_or(false))
+        state.shell_tools.complete(
+            &request_id,
+            output.unwrap_or_default(),
+            timed_out.unwrap_or(false),
+        )
     };
     match result {
         Ok(()) => Ok(()),
@@ -251,10 +256,9 @@ fn complete_connect_tool(
     if success {
         state.connect_tools.complete_success(&request_id)
     } else {
-        state.connect_tools.complete_error(
-            &request_id,
-            error.unwrap_or_else(|| "连接失败".to_string()),
-        )
+        state
+            .connect_tools
+            .complete_error(&request_id, error.unwrap_or_else(|| "连接失败".to_string()))
     }
 }
 
@@ -275,8 +279,7 @@ async fn claude_send_message(
         session_id,
         continue_session
     );
-    let workspace_hint =
-        claude::bridge::resolve_workspace_folders(&[]);
+    let workspace_hint = claude::bridge::resolve_workspace_folders(&[]);
 
     let _ = claude::bridge::ClaudeBridge::ensure_running(
         &app,
@@ -292,9 +295,7 @@ async fn claude_send_message(
             (
                 b.port(),
                 b.auth_token().to_string(),
-                b.workspace_folders()
-                    .first()
-                    .map(std::path::PathBuf::from),
+                b.workspace_folders().first().map(std::path::PathBuf::from),
             )
         })
     };
@@ -326,54 +327,57 @@ async fn claude_send_message(
         {
             tracing::info!("Claude 启动前 MCP 复用最近预检结果: {n} 个工具，跳过重复预检");
         } else {
-        match claude::wait_for_mcp_ready(
-            &mcp_paths,
-            *port,
-            token,
-            std::time::Duration::from_secs(15),
-            Some(state.mcp_runtime.as_ref()),
-        )
-        .await
-        {
-            Ok(tool_count) => {
-                tracing::info!("Claude 启动前 MCP 已就绪: {tool_count} 个工具");
+            match claude::wait_for_mcp_ready(
+                &mcp_paths,
+                *port,
+                token,
+                std::time::Duration::from_secs(15),
+                Some(state.mcp_runtime.as_ref()),
+            )
+            .await
+            {
+                Ok(tool_count) => {
+                    tracing::info!("Claude 启动前 MCP 已就绪: {tool_count} 个工具");
+                }
+                Err(e) => {
+                    app_logging::log_diag("mcp_preflight", &e);
+                    let _ = app.emit(
+                        "claude:diag",
+                        serde_json::json!({
+                            "kind": "mcp_preflight",
+                            "message": e,
+                        }),
+                    );
+                    // 不阻断 Claude 启动：打包版 GUI 环境常导致 MCP 预检失败，但仍可尝试对话
+                    tracing::warn!(
+                        "MCP 预检未通过，仍将启动 Claude（远程 Shell 工具可能不可用）: {e}"
+                    );
+                }
             }
-            Err(e) => {
-                app_logging::log_diag("mcp_preflight", &e);
-                let _ = app.emit(
-                    "claude:diag",
-                    serde_json::json!({
-                        "kind": "mcp_preflight",
-                        "message": e,
-                    }),
-                );
-                // 不阻断 Claude 启动：打包版 GUI 环境常导致 MCP 预检失败，但仍可尝试对话
-                tracing::warn!(
-                    "MCP 预检未通过，仍将启动 Claude（远程 Shell 工具可能不可用）: {e}"
-                );
-            }
-        }
             tokio::time::sleep(std::time::Duration::from_millis(450)).await;
         }
     } else {
         let _ = claude::ensure_project_mcp_json(&mcp_paths, None);
     }
 
-    state.sessions.spawn(
-        app,
-        request_id.clone(),
-        prompt,
-        claude_path,
-        session_id,
-        continue_session,
-        bridge_port,
-        bridge_auth_token,
-        workspace_dir,
-        Some(mcp_paths.mcp_config_file.clone()),
-    ).map_err(|e| {
-        tracing::error!("claude_send_message: spawn failed: {e}");
-        e
-    })?;
+    state
+        .sessions
+        .spawn(
+            app,
+            request_id.clone(),
+            prompt,
+            claude_path,
+            session_id,
+            continue_session,
+            bridge_port,
+            bridge_auth_token,
+            workspace_dir,
+            Some(mcp_paths.mcp_config_file.clone()),
+        )
+        .map_err(|e| {
+            tracing::error!("claude_send_message: spawn failed: {e}");
+            e
+        })?;
     tracing::info!("claude_send_message: spawn succeeded, request_id={request_id}");
     Ok(request_id)
 }
@@ -466,7 +470,10 @@ fn tunnel_stop(state: State<'_, AppState>, tunnel_id: String) -> Result<bool, St
 }
 
 #[tauri::command]
-fn tunnel_list(state: State<'_, AppState>, profile_id: Option<String>) -> Result<Vec<TunnelInfo>, String> {
+fn tunnel_list(
+    state: State<'_, AppState>,
+    profile_id: Option<String>,
+) -> Result<Vec<TunnelInfo>, String> {
     Ok(match profile_id {
         Some(id) => state.tunnels.list_for_profile(&id),
         None => state.tunnels.list(),
@@ -474,10 +481,7 @@ fn tunnel_list(state: State<'_, AppState>, profile_id: Option<String>) -> Result
 }
 
 #[tauri::command]
-async fn socks_start(
-    state: State<'_, AppState>,
-    profile_id: String,
-) -> Result<SocksInfo, String> {
+async fn socks_start(state: State<'_, AppState>, profile_id: String) -> Result<SocksInfo, String> {
     state.socks.start(state.runtime.as_ref(), &profile_id).await
 }
 
@@ -529,6 +533,8 @@ async fn browser_webview_open(
         .get_window(&window_label)
         .ok_or_else(|| format!("窗口不存在: {window_label}"))?;
 
+    browser_policy::validate_browser_url(&url)?;
+
     let target = Url::parse(&url).map_err(|e| format!("URL 无效: {e}"))?;
 
     let dir_key = data_dir_key.as_deref().unwrap_or(&label);
@@ -547,6 +553,9 @@ async fn browser_webview_open(
 
     let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(target)).on_new_window(
         move |popup_url, _features| {
+            if browser_policy::validate_browser_url(popup_url.as_str()).is_err() {
+                return NewWindowResponse::Deny;
+            }
             let payload = BrowserNewWindowPayload {
                 parent_label: parent_label.clone(),
                 url: popup_url.to_string(),
@@ -581,7 +590,13 @@ async fn browser_webview_open(
 fn sanitize_dir(label: &str) -> String {
     label
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -731,6 +746,8 @@ fn claude_log_file_path(app: AppHandle) -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let _log = app_logging::init(&app.handle());
             // 不在 setup 阶段调用 fix_gui_environment：会同步启动 reg.exe，
@@ -759,14 +776,12 @@ pub fn run() {
             // setup 阶段尚无 Tokio runtime，用 std::thread（gc_stale 为同步调用）
             let shell_tools_gc = app.state::<AppState>().shell_tools.clone();
             let connect_tools_gc = app.state::<AppState>().connect_tools.clone();
-            std::thread::spawn(move || {
-                loop {
-                    std::thread::sleep(std::time::Duration::from_secs(300));
-                    let r1 = shell_tools_gc.gc_stale();
-                    let r2 = connect_tools_gc.gc_stale();
-                    if r1 + r2 > 0 {
-                        tracing::info!("Tool GC: removed {r1} shell + {r2} connect stale entries");
-                    }
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(300));
+                let r1 = shell_tools_gc.gc_stale();
+                let r2 = connect_tools_gc.gc_stale();
+                if r1 + r2 > 0 {
+                    tracing::info!("Tool GC: removed {r1} shell + {r2} connect stale entries");
                 }
             });
 

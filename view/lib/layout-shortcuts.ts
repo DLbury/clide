@@ -1,4 +1,4 @@
-export type SettingsTab = 'ai' | 'shortcuts'
+export type SettingsTab = 'ai' | 'shortcuts' | 'update'
 
 export interface LayoutShortcut {
   id: string

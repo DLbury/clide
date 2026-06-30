@@ -1,7 +1,7 @@
 use super::ide_connector;
 use super::tools::{self, ToolContext};
-use crate::AppState;
 use crate::state::IdeContext;
+use crate::AppState;
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -9,9 +9,9 @@ use serde_json::{json, Value};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
@@ -30,7 +30,6 @@ pub struct BridgeStatus {
     pub has_client: bool,
     pub workspace_folders: Vec<String>,
 }
-
 
 pub struct ClaudeBridge {
     port: u16,
@@ -82,11 +81,8 @@ impl ClaudeBridge {
             }
         });
 
-        let connector_task = ide_connector::start_keepalive_loop(
-            port,
-            auth_token.clone(),
-            shutdown.clone(),
-        );
+        let connector_task =
+            ide_connector::start_keepalive_loop(port, auth_token.clone(), shutdown.clone());
 
         Ok(Self {
             port,
@@ -158,12 +154,7 @@ impl ClaudeBridge {
         }
         drop(guard);
 
-        let bridge = Self::start(
-            app.clone(),
-            ide_context,
-            workspace_folders,
-            claude_path,
-        )?;
+        let bridge = Self::start(app.clone(), ide_context, workspace_folders, claude_path)?;
         let port = bridge.port();
         let token = bridge.auth_token().to_string();
         *slot.lock() = Some(bridge);
@@ -242,7 +233,8 @@ async fn probe_bridge_tools_once(port: u16, auth_token: &str) -> Result<usize, S
         let Message::Text(text) = msg else {
             continue;
         };
-        let value: Value = serde_json::from_str(&text).map_err(|e| format!("解析 JSON 失败: {e}"))?;
+        let value: Value =
+            serde_json::from_str(&text).map_err(|e| format!("解析 JSON 失败: {e}"))?;
 
         if value.get("id") == Some(&json!(1)) && value.get("result").is_some() && !initialized {
             initialized = true;
@@ -346,16 +338,11 @@ fn write_lock_file(
         }
     });
     let json = serde_json::to_string_pretty(&lock_data).map_err(|e| e.to_string())?;
-    fs::write(&lock_path, json)
-        .map_err(|e| e.to_string())?;
+    fs::write(&lock_path, json).map_err(|e| e.to_string())?;
     Ok(lock_path)
 }
 
-fn register_client(
-    client_count: &AtomicUsize,
-    connected: &AtomicBool,
-    app: &AppHandle,
-) {
+fn register_client(client_count: &AtomicUsize, connected: &AtomicBool, app: &AppHandle) {
     if client_count.fetch_add(1, Ordering::SeqCst) == 0 {
         connected.store(true, Ordering::SeqCst);
         let _ = app.emit("claude:bridge-connected", ());
@@ -453,7 +440,9 @@ async fn handle_connection(
                     tokio_tungstenite::tungstenite::http::Response::builder()
                         .status(500)
                         .body(None)
-                        .unwrap_or_else(|_| tokio_tungstenite::tungstenite::http::Response::new(None))
+                        .unwrap_or_else(|_| {
+                            tokio_tungstenite::tungstenite::http::Response::new(None)
+                        })
                 })?;
             return Err(reject);
         }
@@ -651,7 +640,10 @@ async fn handle_mcp_message(message: &Value, app: &AppHandle) -> McpOutbound {
                         connect_tools: &state.connect_tools,
                     };
                     let r = tools::execute_tool(&tool_ctx, &name_owned, &args).await;
-                    tracing::info!("IDE MCP: tools/call {name_owned} executed, result_len={}", r.len());
+                    tracing::info!(
+                        "IDE MCP: tools/call {name_owned} executed, result_len={}",
+                        r.len()
+                    );
                     r
                 }),
             )

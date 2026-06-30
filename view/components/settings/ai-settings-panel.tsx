@@ -4,9 +4,18 @@ import { useEffect, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/button'
 import type { AiSettings } from '@/lib/ai-settings'
-import { detectClaude, getClaudeMcpStatus, registerClaudeMcp, type McpRegisterStatus } from '@/lib/claude-client'
+import {
+  detectClaude,
+  getClaudeMcpStatus,
+  registerClaudeMcp,
+  uniqueClaudeCandidates,
+  claudePathLabel,
+  type McpRegisterStatus,
+} from '@/lib/claude-client'
 import { isTauriRuntime } from '@/lib/tauri-env'
+import { cn } from '@/lib/utils'
 
 interface AiSettingsPanelProps {
   draft: AiSettings
@@ -16,6 +25,7 @@ interface AiSettingsPanelProps {
 export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
   const isDesktop = isTauriRuntime()
   const [claudeDetect, setClaudeDetect] = useState<string>('')
+  const [candidates, setCandidates] = useState<string[]>([])
   const [mcpStatus, setMcpStatus] = useState<McpRegisterStatus | null>(null)
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpError, setMcpError] = useState<string | null>(null)
@@ -34,6 +44,7 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
     if (!isDesktop) return
     detectClaude(draft.claudePath || undefined)
       .then(result => {
+        setCandidates(uniqueClaudeCandidates(result.candidates ?? []))
         if (result.found) {
           setClaudeDetect(
             [result.path, result.version].filter(Boolean).join(' · ') || '已检测到'
@@ -45,6 +56,8 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
       .catch(() => setClaudeDetect('检测失败'))
     refreshMcpStatus()
   }, [isDesktop, draft.claudePath])
+
+  const activePath = draft.claudePath.trim()
 
   return (
     <div className="space-y-5">
@@ -79,6 +92,63 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
           <p className="text-xs text-muted-foreground">检测结果：{claudeDetect}</p>
         )}
       </div>
+
+      {candidates.length > 0 && (
+        <div className="space-y-2">
+          <Label>已检测到的 Claude Code 安装</Label>
+          <p className="text-xs text-muted-foreground">
+            本机存在多个安装时，可点击下方条目快速切换。
+          </p>
+          <div className="max-h-40 overflow-y-auto rounded-md border border-border divide-y divide-border">
+            <button
+              type="button"
+              onClick={() => onChange({ ...draft, claudePath: '', backend: 'claude-code' })}
+              className={cn(
+                'w-full text-left px-3 py-2 text-xs hover:bg-muted/60 transition-colors',
+                !activePath && 'bg-primary/10 text-primary'
+              )}
+            >
+              自动选择（PATH / 默认路径）
+            </button>
+            {candidates.map(path => (
+              <button
+                key={path}
+                type="button"
+                onClick={() => onChange({ ...draft, claudePath: path, backend: 'claude-code' })}
+                className={cn(
+                  'w-full text-left px-3 py-2 text-xs hover:bg-muted/60 transition-colors break-all',
+                  activePath.replace(/\\/g, '/').toLowerCase() ===
+                    path.replace(/\\/g, '/').toLowerCase() && 'bg-primary/10 text-primary'
+                )}
+              >
+                <span className="font-medium">{claudePathLabel(path)}</span>
+                <span className="block text-muted-foreground mt-0.5">{path}</span>
+              </button>
+            ))}
+          </div>
+          {candidates.length > 1 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const currentIdx = candidates.findIndex(
+                  p =>
+                    p.replace(/\\/g, '/').toLowerCase() ===
+                    activePath.replace(/\\/g, '/').toLowerCase()
+                )
+                const next =
+                  currentIdx >= 0
+                    ? candidates[(currentIdx + 1) % candidates.length]
+                    : candidates[0]
+                onChange({ ...draft, claudePath: next, backend: 'claude-code' })
+              }}
+            >
+              切换到下一个安装
+            </Button>
+          )}
+        </div>
+      )}
 
       {mcpStatus && (
         <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2 text-xs">

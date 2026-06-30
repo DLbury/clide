@@ -114,10 +114,7 @@ fn detect_all_claude_candidates() -> Vec<String> {
     #[cfg(windows)]
     {
         if let Ok(home) = std::env::var("USERPROFILE") {
-            for rel in [
-                r".local\bin\claude.exe",
-                r".claude\local\claude.exe",
-            ] {
+            for rel in [r".local\bin\claude.exe", r".claude\local\claude.exe"] {
                 let p = PathBuf::from(&home).join(rel);
                 if p.is_file() {
                     candidates.push(p.display().to_string());
@@ -209,8 +206,15 @@ fn detect_all_claude_candidates() -> Vec<String> {
                 home.join(".local").join("bin").join("claude"),
                 home.join("bin").join("claude"),
                 home.join(".npm-global").join("bin").join("claude"),
-                home.join(".nvm").join("versions").join("node").join("*/bin/claude"),
-                home.join(".config").join("npm").join("global").join("bin").join("claude"),
+                home.join(".nvm")
+                    .join("versions")
+                    .join("node")
+                    .join("*/bin/claude"),
+                home.join(".config")
+                    .join("npm")
+                    .join("global")
+                    .join("bin")
+                    .join("claude"),
             ];
 
             for path in &user_paths {
@@ -393,10 +397,22 @@ fn expand_env_vars(path: &str) -> String {
 
     // 替换 %VAR% 格式的环境变量
     for (key, value) in [
-        ("%USERPROFILE%", std::env::var("USERPROFILE").unwrap_or_default()),
-        ("%LOCALAPPDATA%", std::env::var("LOCALAPPDATA").unwrap_or_default()),
-        ("%PROGRAMFILES%", std::env::var("PROGRAMFILES").unwrap_or_default()),
-        ("%PROGRAMFILES(x86)%", std::env::var("PROGRAMFILES(x86)").unwrap_or_default()),
+        (
+            "%USERPROFILE%",
+            std::env::var("USERPROFILE").unwrap_or_default(),
+        ),
+        (
+            "%LOCALAPPDATA%",
+            std::env::var("LOCALAPPDATA").unwrap_or_default(),
+        ),
+        (
+            "%PROGRAMFILES%",
+            std::env::var("PROGRAMFILES").unwrap_or_default(),
+        ),
+        (
+            "%PROGRAMFILES(x86)%",
+            std::env::var("PROGRAMFILES(x86)").unwrap_or_default(),
+        ),
         ("%APPDATA%", std::env::var("APPDATA").unwrap_or_default()),
     ] {
         result = result.replace(key, &value);

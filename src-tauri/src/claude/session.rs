@@ -93,9 +93,7 @@ fn resolve_claude_invocation(claude_path: &str) -> (String, Vec<String>) {
             );
             return (node, vec![cli_js.to_string_lossy().into_owned()]);
         }
-        tracing::warn!(
-            "Found cli.js for {claude_path} but node not in PATH; falling back to shim"
-        );
+        tracing::warn!("Found cli.js for {claude_path} but node not in PATH; falling back to shim");
     }
 
     (claude_path.to_string(), vec![])
@@ -117,11 +115,20 @@ fn locate_unix_claude_cli_js(entry: &Path) -> Option<PathBuf> {
 
     const RELATIVE_CLI_PATHS: &[&[&str]] = &[
         &["node_modules", "@anthropic-ai", "claude-code", "cli.js"],
-        &["..", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"],
+        &[
+            "..",
+            "lib",
+            "node_modules",
+            "@anthropic-ai",
+            "claude-code",
+            "cli.js",
+        ],
     ];
 
     for relative in RELATIVE_CLI_PATHS {
-        let candidate = relative.iter().fold(base_dir.to_path_buf(), |acc, seg| acc.join(seg));
+        let candidate = relative
+            .iter()
+            .fold(base_dir.to_path_buf(), |acc, seg| acc.join(seg));
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -133,7 +140,8 @@ fn locate_unix_claude_cli_js(entry: &Path) -> Option<PathBuf> {
                 continue;
             }
             for segment in extract_quoted_segments(line) {
-                let p = PathBuf::from(segment.replace("%~dp0", &format!("{}/", base_dir.display())));
+                let p =
+                    PathBuf::from(segment.replace("%~dp0", &format!("{}/", base_dir.display())));
                 if p.is_file()
                     && p.file_name()
                         .and_then(|n| n.to_str())
@@ -308,24 +316,32 @@ fn find_node_exe(cmd_dir: &Path) -> Option<String> {
     // 常见安装路径
     if let Some(home) = std::env::var_os("LOCALAPPDATA") {
         let p = PathBuf::from(home).join("fnm_multishells").join("node.exe");
-        if p.is_file() { return Some(p.to_string_lossy().into_owned()); }
+        if p.is_file() {
+            return Some(p.to_string_lossy().into_owned());
+        }
     }
     if let Some(home) = std::env::var_os("APPDATA") {
         for sub in &["nvm\\current", "volta"] {
             let p = PathBuf::from(home.clone()).join(sub).join("node.exe");
-            if p.is_file() { return Some(p.to_string_lossy().into_owned()); }
+            if p.is_file() {
+                return Some(p.to_string_lossy().into_owned());
+            }
         }
     }
     if let Some(home) = std::env::var_os("USERPROFILE") {
         for sub in &[".nvm\\current\\bin", ".volta\\bin", ".fnm\\current"] {
             let p = PathBuf::from(home.clone()).join(sub).join("node.exe");
-            if p.is_file() { return Some(p.to_string_lossy().into_owned()); }
+            if p.is_file() {
+                return Some(p.to_string_lossy().into_owned());
+            }
         }
     }
     // Program Files
     if let Some(pf) = std::env::var_os("PROGRAMFILES") {
         let p = PathBuf::from(pf).join("nodejs").join("node.exe");
-        if p.is_file() { return Some(p.to_string_lossy().into_owned()); }
+        if p.is_file() {
+            return Some(p.to_string_lossy().into_owned());
+        }
     }
     None
 }
@@ -333,9 +349,10 @@ fn find_node_exe(cmd_dir: &Path) -> Option<String> {
 #[cfg(not(windows))]
 fn find_node_exe(_cmd_dir: &Path) -> Option<String> {
     prepare_cli_discovery_environment();
-    which::which("node").ok().map(|p| p.to_string_lossy().into_owned())
+    which::which("node")
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
-
 
 /// IDE 桥接已启用时追加到 Claude，促使其调用 MCP 工具而非仅文字回答。
 const IDE_BRIDGE_APPEND_PROMPT: &str = r#"You are connected to AI Terminal via IDE MCP integration (server `aiterm`).
@@ -512,16 +529,14 @@ impl ClaudeSessionManager {
     ) -> Result<(), String> {
         let claude = resolve_claude_path(claude_path)?;
         let want_session = session_id.filter(|s| !s.trim().is_empty());
-        let fingerprint =
-            build_fingerprint(&claude, bridge_port, workspace_dir.as_ref(), mcp_config.as_ref());
+        let fingerprint = build_fingerprint(
+            &claude,
+            bridge_port,
+            workspace_dir.as_ref(),
+            mcp_config.as_ref(),
+        );
 
-        if self.try_reuse(
-            &app,
-            &request_id,
-            &prompt,
-            &fingerprint,
-            &want_session,
-        ) {
+        if self.try_reuse(&app, &request_id, &prompt, &fingerprint, &want_session) {
             return Ok(());
         }
 
@@ -870,8 +885,10 @@ impl ClaudeSessionManager {
                     serde_json::from_str::<serde_json::Value>(trimmed)
                         .ok()
                         .and_then(|v| {
-                            let inner =
-                                v.pointer("/event/type").and_then(|t| t.as_str()).unwrap_or("");
+                            let inner = v
+                                .pointer("/event/type")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("");
                             let delta = v
                                 .pointer("/event/delta/type")
                                 .and_then(|t| t.as_str())
@@ -886,14 +903,15 @@ impl ClaudeSessionManager {
 
                 let req = current.lock().clone();
                 let mut local_sid = session.lock().clone();
-                let mut events =
-                    parse_stream_line(trimmed, req.as_deref().unwrap_or(""), &mut local_sid, &saw_text);
+                let mut events = parse_stream_line(
+                    trimmed,
+                    req.as_deref().unwrap_or(""),
+                    &mut local_sid,
+                    &saw_text,
+                );
                 if events.is_empty() {
-                    events = parse_plaintext_fallback(
-                        trimmed,
-                        req.as_deref().unwrap_or(""),
-                        &local_sid,
-                    );
+                    events =
+                        parse_plaintext_fallback(trimmed, req.as_deref().unwrap_or(""), &local_sid);
                 }
                 // 回写进程会话 id（system/init、result 都可能更新）。
                 {
@@ -1179,10 +1197,7 @@ fn parse_stream_line(
                 match block.get("type").and_then(|t| t.as_str()) {
                     Some("tool_use") => {
                         let mut ev = mk("tool_start");
-                        ev.tool_id = block
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string);
+                        ev.tool_id = block.get("id").and_then(|v| v.as_str()).map(str::to_string);
                         ev.tool_name = block
                             .get("name")
                             .and_then(|v| v.as_str())
@@ -1238,10 +1253,7 @@ fn parse_stream_line(
                     }
                     Some("tool_use") => {
                         let mut ev = mk("tool_start");
-                        ev.tool_id = block
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string);
+                        ev.tool_id = block.get("id").and_then(|v| v.as_str()).map(str::to_string);
                         ev.tool_name = block
                             .get("name")
                             .and_then(|v| v.as_str())
@@ -1282,7 +1294,10 @@ fn parse_stream_line(
                     .get("tool_use_id")
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
-                let is_error = block.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_error = block
+                    .get("is_error")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let content = tool_result_text(block);
                 if is_error {
                     ev.tool_error = content;
@@ -1359,10 +1374,7 @@ fn parse_plaintext_fallback(
         return vec![];
     }
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("error:")
-        || lower.starts_with("warning:")
-        || lower.starts_with("usage:")
-    {
+    if lower.starts_with("error:") || lower.starts_with("warning:") || lower.starts_with("usage:") {
         return vec![];
     }
     vec![ClaudeStreamEvent {
@@ -1405,21 +1417,28 @@ mod tests {
     fn test_resolve_claude_invocation_with_cmd() {
         let test_dir = std::env::temp_dir().join("claude_test");
         let cmd_path = test_dir.join("claude.cmd");
-        
+
         if !cmd_path.is_file() {
             println!("Test .cmd file not found, skipping");
             return;
         }
-        
+
         let (program, prefix_args) = resolve_claude_invocation(&cmd_path.display().to_string());
-        
+
         println!("Program: {}", program);
         println!("Prefix args: {:?}", prefix_args);
-        
+
         // 应该找到 node.exe 并绕过 cmd.exe
-        assert!(program.contains("node.exe"), "Should find node.exe, got: {}", program);
+        assert!(
+            program.contains("node.exe"),
+            "Should find node.exe, got: {}",
+            program
+        );
         assert!(!prefix_args.is_empty(), "Should have cli.js in prefix args");
-        assert!(prefix_args[0].contains("cli.js"), "First arg should be cli.js path");
+        assert!(
+            prefix_args[0].contains("cli.js"),
+            "First arg should be cli.js path"
+        );
     }
 
     #[test]
@@ -1427,28 +1446,31 @@ mod tests {
     fn test_parse_cmd_for_cli_js() {
         let test_dir = std::env::temp_dir().join("claude_test");
         let cmd_path = test_dir.join("claude.cmd");
-        
+
         if !cmd_path.is_file() {
             println!("Test .cmd file not found, skipping");
             return;
         }
-        
+
         let result = parse_cmd_for_cli_js(&cmd_path);
         println!("Parsed cli.js path: {:?}", result);
-        
+
         assert!(result.is_some(), "Should parse cli.js path from .cmd");
         let path = result.unwrap();
-        assert!(path.to_string_lossy().contains("cli.js"), "Path should contain cli.js");
+        assert!(
+            path.to_string_lossy().contains("cli.js"),
+            "Path should contain cli.js"
+        );
     }
 
     #[test]
     #[cfg(windows)]
     fn test_find_node_exe() {
         let test_dir = std::env::temp_dir().join("claude_test");
-        
+
         let result = find_node_exe(&test_dir);
         println!("Found node.exe: {:?}", result);
-        
+
         assert!(result.is_some(), "Should find node.exe");
         let path = result.unwrap();
         assert!(path.contains("node.exe"), "Path should contain node.exe");
@@ -1473,11 +1495,17 @@ mod tests {
     fn test_extract_quoted_segments() {
         let line = r#""%~dp0\node.exe" "%~dp0\node_modules\@anthropic-ai\claude-code\cli.js" %*"#;
         let segments = extract_quoted_segments(line);
-        
+
         println!("Extracted segments: {:?}", segments);
-        
+
         assert_eq!(segments.len(), 2, "Should extract 2 quoted segments");
-        assert!(segments[0].contains("node.exe"), "First segment should contain node.exe");
-        assert!(segments[1].contains("cli.js"), "Second segment should contain cli.js");
+        assert!(
+            segments[0].contains("node.exe"),
+            "First segment should contain node.exe"
+        );
+        assert!(
+            segments[1].contains("cli.js"),
+            "Second segment should contain cli.js"
+        );
     }
 }

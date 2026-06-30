@@ -71,7 +71,8 @@ pub fn append_and_emit(app: &AppHandle, session_id: &str, data: &str) {
 pub fn flush_session(app: &AppHandle, session_id: &str) {
     let payload = {
         let mut map = PENDING.lock();
-        map.remove(session_id).map(|mut p| std::mem::take(&mut p.data))
+        map.remove(session_id)
+            .map(|mut p| std::mem::take(&mut p.data))
     };
     if let Some(data) = payload {
         flush_one(app, session_id, data);

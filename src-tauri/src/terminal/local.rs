@@ -34,7 +34,9 @@ fn resolve_system_exe(name: &str) -> Result<PathBuf, String> {
     if candidate.is_file() {
         return Ok(candidate);
     }
-    Err(format!("找不到可执行文件 {name}（PATH 和 System32 均未找到）"))
+    Err(format!(
+        "找不到可执行文件 {name}（PATH 和 System32 均未找到）"
+    ))
 }
 
 /// Windows 下按优先级解析 PowerShell：内置 PS5.1 → pwsh → PATH → cmd
@@ -175,7 +177,10 @@ pub fn spawn_local_pty(
     // 触发初始尺寸，让 PowerShell/cmd 在 PTY 就绪后输出首屏提示符（勿发 \r，会多一行空行）
     let _ = resize_tx.send((120, 32));
 
-    Ok(TerminalChannels { write_tx, resize_tx })
+    Ok(TerminalChannels {
+        write_tx,
+        resize_tx,
+    })
 }
 
 fn run_pty_reader(

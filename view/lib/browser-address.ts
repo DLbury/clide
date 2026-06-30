@@ -1,4 +1,6 @@
 /** 解析地址栏输入：SSH 下 host:port 走隧道，其余按 URL 加载。 */
+import { assertInternalBrowserHost, assertInternalBrowserUrl } from '@/lib/browser-policy'
+
 export function parseBrowserAddress(
   input: string,
   sshProfileId?: string
@@ -16,6 +18,7 @@ export function parseBrowserAddress(
     if (!Number.isFinite(remotePort) || remotePort < 1 || remotePort > 65535) {
       throw new Error('端口号无效')
     }
+    assertInternalBrowserHost(remoteHost)
     return { url: '', tunnel: { remoteHost, remotePort, path } }
   }
 
@@ -25,6 +28,7 @@ export function parseBrowserAddress(
         const u = new URL(trimmed)
         const isLoopback = u.hostname === '127.0.0.1' || u.hostname === 'localhost'
         if (isLoopback && u.port) {
+          assertInternalBrowserHost(u.hostname)
           return {
             url: '',
             tunnel: {
@@ -38,16 +42,17 @@ export function parseBrowserAddress(
         /* fall through */
       }
     }
+    assertInternalBrowserUrl(trimmed)
     return { url: trimmed }
   }
 
-  return { url: `http://${trimmed}` }
+  const url = `http://${trimmed}`
+  assertInternalBrowserUrl(url)
+  return { url }
 }
 
 /**
- * 归一化地址栏输入为可加载的 URL。
- * 走 SOCKS 代理时无需区分远程/本地：`127.0.0.1:8080`、`example.com`、`https://...` 都直接转 URL，
- * 由服务器侧解析与连接。
+ * 归一化地址栏输入为可加载的 URL（仅允许内网地址与内网域名）。
  */
 export function normalizeBrowserUrl(input: string): string {
   const trimmed = input.trim()
@@ -55,9 +60,12 @@ export function normalizeBrowserUrl(input: string): string {
     throw new Error('请输入地址')
   }
   if (/^https?:\/\//i.test(trimmed)) {
+    assertInternalBrowserUrl(trimmed)
     return trimmed
   }
-  return `http://${trimmed}`
+  const url = `http://${trimmed}`
+  assertInternalBrowserUrl(url)
+  return url
 }
 
 export function tabTitleFromUrl(url: string): string {

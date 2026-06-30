@@ -67,9 +67,7 @@ pub fn append_terminal_output(session_id: &str, data: &str) {
         return;
     }
     let mut map = BUFFERS.lock();
-    map.entry(session_id.to_string())
-        .or_default()
-        .append(data);
+    map.entry(session_id.to_string()).or_default().append(data);
 }
 
 /// 逻辑偏移（自会话开始累计，裁剪后仍单调有效）

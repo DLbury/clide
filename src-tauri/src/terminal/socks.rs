@@ -142,11 +142,9 @@ impl SocksManager {
                 if abort_bg.load(Ordering::Relaxed) {
                     break;
                 }
-                let accept = tokio::time::timeout(
-                    std::time::Duration::from_millis(500),
-                    listener.accept(),
-                )
-                .await;
+                let accept =
+                    tokio::time::timeout(std::time::Duration::from_millis(500), listener.accept())
+                        .await;
                 match accept {
                     Ok(Ok((stream, peer))) => {
                         let session = session.clone();
@@ -173,9 +171,7 @@ impl SocksManager {
                 abort,
             },
         );
-        tracing::info!(
-            "SOCKS proxy started: id={id} profile={profile_id} 127.0.0.1:{actual_port}"
-        );
+        tracing::info!("SOCKS proxy started: id={id} profile={profile_id} 127.0.0.1:{actual_port}");
         Ok(info)
     }
 }

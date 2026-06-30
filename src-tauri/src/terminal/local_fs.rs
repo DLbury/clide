@@ -66,19 +66,27 @@ fn wsl_exec(cmd: &str) -> Result<String, String> {
 }
 
 fn build_wsl_list_cmd(path: &str) -> String {
+    let list_body = r#"find . -maxdepth 1 -mindepth 1 -print0 | while IFS= read -r -d '' f; do bn=$(basename "$f"); if [ -d "$f" ]; then k=d; s=0; else k=f; s=$(stat -c%s "$f" 2>/dev/null || echo 0); fi; b64=$(printf '%s' "$bn" | base64 -w0 2>/dev/null || printf '%s' "$bn" | base64 | tr -d '\n'); printf '%s\t%s\t000\tb64:%s\n' "$k" "$s" "$b64"; done"#;
     if path.is_empty() || path == "~" {
-        "LC_ALL=C cd ~ && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null".to_string()
+        format!("LC_ALL=C.UTF-8 cd ~ && {list_body}")
     } else if path.starts_with("~/") {
         let rest = path[2..].replace('\'', "'\\''");
-        format!(
-            "LC_ALL=C cd ~/'{rest}' && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null"
-        )
+        format!("LC_ALL=C.UTF-8 cd ~/'{rest}' && {list_body}")
     } else {
         let safe = path.replace('\'', "'\\''");
-        format!(
-            "LC_ALL=C cd '{safe}' && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null"
-        )
+        format!("LC_ALL=C.UTF-8 cd '{safe}' && {list_body}")
     }
+}
+
+#[cfg(windows)]
+fn dir_entry_name(entry: &std::fs::DirEntry) -> String {
+    use std::os::windows::ffi::OsStrExt;
+    String::from_utf16_lossy(&entry.file_name().encode_wide().collect::<Vec<_>>())
+}
+
+#[cfg(not(windows))]
+fn dir_entry_name(entry: &std::fs::DirEntry) -> String {
+    entry.file_name().to_string_lossy().into_owned()
 }
 
 fn list_directory_native(path: &str) -> Result<Vec<RemoteFileEntry>, String> {
@@ -94,7 +102,7 @@ fn list_directory_native(path: &str) -> Result<Vec<RemoteFileEntry>, String> {
 
     for entry in std::fs::read_dir(&base_path).map_err(|e| format!("读取目录失败: {e}"))? {
         let entry = entry.map_err(|e| format!("读取目录项失败: {e}"))?;
-        let name = entry.file_name().to_string_lossy().to_string();
+        let name = dir_entry_name(&entry);
         if name == "." || name == ".." {
             continue;
         }
@@ -152,9 +160,8 @@ fn read_file_native(path: &str) -> Result<String, String> {
         ));
     }
     let bytes = std::fs::read(&file_path).map_err(|e| format!("读取文件失败: {e}"))?;
-    String::from_utf8(bytes).map_err(|_| {
-        "该文件不是 UTF-8 文本，暂不支持在编辑器中打开二进制文件".to_string()
-    })
+    String::from_utf8(bytes)
+        .map_err(|_| "该文件不是 UTF-8 文本，暂不支持在编辑器中打开二进制文件".to_string())
 }
 
 fn write_file_native(path: &str, content: &str) -> Result<(), String> {
@@ -199,9 +206,8 @@ fn read_file_wsl(path: &str) -> Result<String, String> {
             MAX_FILE_BYTES / 1024 / 1024
         ));
     }
-    String::from_utf8(bytes).map_err(|_| {
-        "该文件不是 UTF-8 文本，暂不支持在编辑器中打开二进制文件".to_string()
-    })
+    String::from_utf8(bytes)
+        .map_err(|_| "该文件不是 UTF-8 文本，暂不支持在编辑器中打开二进制文件".to_string())
 }
 
 fn write_file_wsl(path: &str, content: &str) -> Result<(), String> {
@@ -247,7 +253,10 @@ fn write_file_wsl(path: &str, content: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn list_directory(session_type: &str, path: String) -> Result<Vec<RemoteFileEntry>, String> {
+pub async fn list_directory(
+    session_type: &str,
+    path: String,
+) -> Result<Vec<RemoteFileEntry>, String> {
     match session_type {
         "wsl" => tokio::task::spawn_blocking(move || list_directory_wsl(&path))
             .await

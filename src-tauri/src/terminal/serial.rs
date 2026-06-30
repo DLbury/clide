@@ -42,7 +42,10 @@ pub fn spawn_serial(
         }
     });
 
-    Ok(TerminalChannels { write_tx, resize_tx })
+    Ok(TerminalChannels {
+        write_tx,
+        resize_tx,
+    })
 }
 
 async fn run_serial_session(
@@ -168,4 +171,3 @@ mod tests {
         assert!(matches!(parse_data_bits(None), DataBits::Eight));
     }
 }
-

@@ -1,6 +1,6 @@
 [package]
 name = "aiterm"
-version = "0.1.66"
+version = "0.1.67"
 description = "AI Terminal — non-invasive shell with Claude Code integration"
 authors = ["AITERM"]
 edition = "2021"
@@ -36,3 +36,7 @@ russh = "0.46"
 russh-keys = "0.46"
 portable-pty = "0.9"
 base64 = "0.22"
+tauri-plugin-process = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"

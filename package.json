@@ -1,6 +1,6 @@
 {
   "name": "aiterm",
-  "version": "0.1.66",
+  "version": "0.1.67",
   "private": true,
   "scripts": {
     "dev": "npm run dev --prefix view",
@@ -16,5 +16,9 @@
     "@tauri-apps/cli": "^2.4.0",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1"
   }
 }

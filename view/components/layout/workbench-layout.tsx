@@ -32,6 +32,7 @@ import {
   showAllEmbeddedWebviews,
   syncAllEmbeddedWebviews,
 } from '@/lib/webview-layout-bridge'
+import { focusTerminalBySessionId } from '@/lib/terminal-focus-registry'
 import { editorModelToOpenFile } from '@/lib/editor-service'
 import type { TerminalLine, Session } from '@/lib/types'
 import type { EditorModel } from '@/lib/editor-service'
@@ -61,6 +62,7 @@ interface WorkbenchContextValue {
   tryClosePanel: (panelId: string) => void
   closeOtherPanelsInGroup: (panelId: string) => void
   closeAllPanelsInGroup: (panelId: string) => void
+  activateShellPanel: (shellId: string) => void
   onShellChange: (id: string) => void
   onCloseShell: (id: string) => void
   onCommand: (shellId: string, command: string) => void
@@ -78,6 +80,7 @@ const WorkbenchContext = createContext<WorkbenchContextValue>({
   tryClosePanel: () => {},
   closeOtherPanelsInGroup: () => {},
   closeAllPanelsInGroup: () => {},
+  activateShellPanel: () => {},
   onShellChange: () => {},
   onCloseShell: () => {},
   onCommand: () => {},
@@ -137,7 +140,7 @@ type PanelParams = TerminalPanelParams | EditorPanelParams | BrowserPanelParams
 
 function TerminalPanel({ params }: IDockviewPanelProps<TerminalPanelParams>) {
   const { shells, clearSignals } = useContext(WorkbenchRuntimeContext)
-  const { onShellChange, onNewShell, onCloseShell, onCommand, onReconnect } =
+  const { onShellChange, onNewShell, onCloseShell, onCommand, onReconnect, activateShellPanel } =
     useContext(WorkbenchContext)
   const shell = shells.find(s => s.id === params.shellId)
   if (!shell) {
@@ -159,7 +162,13 @@ function TerminalPanel({ params }: IDockviewPanelProps<TerminalPanelParams>) {
       terminalConnected={shell.terminalStatus === 'connected'}
       terminalStatus={shell.terminalStatus}
       clearSignal={clearSignals[shell.terminalSessionId] ?? 0}
-      onInputFocus={() => onShellChange(params.shellId)}
+      onInputFocus={() => {
+        activateShellPanel(params.shellId)
+        onShellChange(params.shellId)
+        window.requestAnimationFrame(() => {
+          focusTerminalBySessionId(shell.terminalSessionId)
+        })
+      }}
       hideTabBar
       onReconnect={
         shell.terminalStatus === 'disconnected' || shell.terminalStatus === 'error'
@@ -382,7 +391,7 @@ export interface WorkbenchLayoutProps {
 }
 
 export interface WorkbenchLayoutHandle {
-  focusTerminal: () => void
+  focusTerminal: (shellId?: string) => void
   activateShellById: (shellId: string) => void
   focusEditor: () => void
   splitEditor: (direction: 'right' | 'below') => void
@@ -423,6 +432,8 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
   } | null>(null)
   const apiRef = useRef<DockviewApi | null>(null)
   const syncingRef = useRef(false)
+  const shellsRef = useRef(shells)
+  shellsRef.current = shells
   const editorSnapshotRef = useRef<Map<string, string>>(new Map())
   const terminalParamsCacheRef = useRef<Map<string, string>>(new Map())
   const newShellPlacementRef = useRef<string | undefined>(undefined)
@@ -528,6 +539,20 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
     },
     [findTerminalRef]
   )
+
+  const activateShellPanel = useCallback((shellId: string) => {
+    apiRef.current?.getPanel(`terminal-${shellId}`)?.api.setActive()
+  }, [])
+
+  const focusShellTerminal = useCallback((shellId: string) => {
+    activateShellPanel(shellId)
+    const shell = shellsRef.current.find(s => s.id === shellId)
+    if (shell?.terminalSessionId) {
+      window.requestAnimationFrame(() => {
+        focusTerminalBySessionId(shell.terminalSessionId)
+      })
+    }
+  }, [activateShellPanel])
 
   const ensureInitialTerminal = useCallback(
     (api: DockviewApi) => {
@@ -946,7 +971,14 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
         }
       }
       if (panel?.id.startsWith('terminal-')) {
-        onShellChangeRef.current(panel.id.replace('terminal-', ''))
+        const shellId = panel.id.replace('terminal-', '')
+        onShellChangeRef.current(shellId)
+        const shell = shellsRef.current.find(s => s.id === shellId)
+        if (shell?.terminalSessionId) {
+          window.requestAnimationFrame(() => {
+            focusTerminalBySessionId(shell.terminalSessionId)
+          })
+        }
       }
     })
 
@@ -1019,18 +1051,13 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
   useImperativeHandle(
     ref,
     () => ({
-      focusTerminal: () => {
-        const api = apiRef.current
-        if (!api) return
-        const panel =
-          api.getPanel(`terminal-${activeShellId}`) ??
-          api.panels.find(p => p.id.startsWith('terminal-'))
-        panel?.api.setActive()
+      focusTerminal: (shellId?: string) => {
+        const targetShellId = shellId ?? activeShellId
+        if (!targetShellId) return
+        focusShellTerminal(targetShellId)
       },
       activateShellById: (shellId: string) => {
-        const api = apiRef.current
-        if (!api) return
-        api.getPanel(`terminal-${shellId}`)?.api.setActive()
+        focusShellTerminal(shellId)
       },
       focusEditor: () => {
         const api = apiRef.current
@@ -1057,7 +1084,7 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
       },
       captureLayout: () => apiRef.current?.toJSON() ?? null,
     }),
-    [activeShellId, activeFileId, openFiles, buildEditorParams]
+    [activeShellId, activeFileId, openFiles, buildEditorParams, focusShellTerminal]
   )
 
   const workbenchContextValue = useMemo(
@@ -1069,6 +1096,7 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
       tryClosePanel,
       closeOtherPanelsInGroup,
       closeAllPanelsInGroup,
+      activateShellPanel,
       onShellChange: (id: string) => onShellChangeRef.current(id),
       onCloseShell: (id: string) => onCloseShellRef.current(id),
       onCommand: (sid: string, cmd: string) => onCommandRef.current(sid, cmd),
@@ -1081,6 +1109,7 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
       closeAllPanelsInGroup,
       onNewBrowser,
       onReconnect,
+      activateShellPanel,
     ]
   )
 

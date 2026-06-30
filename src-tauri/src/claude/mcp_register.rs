@@ -2,7 +2,11 @@ use crate::app_paths::McpBundlePaths;
 use crate::claude::bridge;
 use crate::claude::detect::resolve_claude_path;
 use crate::mcp_stdio_proxy::{mcp_stdio_launcher_command, mcp_stdio_proxy_flag};
-use crate::process_util::{async_command_no_window, command_no_window, configure_claude_cli_command, propagate_claude_auth_env};
+use crate::process_util::{
+    async_command_no_window, command_no_window, configure_claude_cli_command,
+    propagate_claude_auth_env,
+};
+use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fmt::Write as _;
@@ -11,7 +15,6 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-use parking_lot::Mutex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const MCP_SERVER_NAME: &str = "aiterm";
@@ -44,7 +47,8 @@ pub struct McpRuntimeCache {
 impl McpRuntimeCache {
     pub fn record_ok(&self, count: usize) {
         self.tools_ready.store(true, Ordering::Relaxed);
-        self.tool_count.store(count.min(u32::MAX as usize) as u32, Ordering::Relaxed);
+        self.tool_count
+            .store(count.min(u32::MAX as usize) as u32, Ordering::Relaxed);
         *self.error.lock() = None;
         *self.checked_at.lock() = Some(Instant::now());
     }
@@ -70,7 +74,12 @@ impl McpRuntimeCache {
         }
     }
 
-    pub fn apply_to_status(&self, status: &mut McpRegisterStatus, bridge_running: bool, strict_runtime: bool) {
+    pub fn apply_to_status(
+        &self,
+        status: &mut McpRegisterStatus,
+        bridge_running: bool,
+        strict_runtime: bool,
+    ) {
         status.runtime_tools_ready = self.tools_ready.load(Ordering::Relaxed);
         status.runtime_tool_count = self.tool_count.load(Ordering::Relaxed);
         status.runtime_error = self.error.lock().clone();
@@ -84,8 +93,9 @@ impl McpRuntimeCache {
 }
 
 fn mcp_config_template(bridge: Option<(u16, &str)>) -> Result<Value, String> {
-    let (command, args) = mcp_stdio_launcher_command()
-        .ok_or_else(|| "无法定位 Clide 可执行文件（MCP 需要 clide --aiterm-mcp-stdio）".to_string())?;
+    let (command, args) = mcp_stdio_launcher_command().ok_or_else(|| {
+        "无法定位 Clide 可执行文件（MCP 需要 clide --aiterm-mcp-stdio）".to_string()
+    })?;
     let mut server = json!({
         "command": command,
         "args": args,
@@ -162,7 +172,10 @@ fn try_claude_mcp_add(claude_path: Option<String>) {
     }
 }
 
-fn write_mcp_config(paths: &McpBundlePaths, bridge: Option<(u16, &str)>) -> Result<PathBuf, String> {
+fn write_mcp_config(
+    paths: &McpBundlePaths,
+    bridge: Option<(u16, &str)>,
+) -> Result<PathBuf, String> {
     tracing::info!("Writing MCP config...");
     tracing::debug!("Config file path: {}", paths.mcp_config_file.display());
 
@@ -190,12 +203,11 @@ fn write_mcp_config(paths: &McpBundlePaths, bridge: Option<(u16, &str)>) -> Resu
         }
     }
 
-    fs::write(&paths.mcp_config_file, config_json)
-        .map_err(|e| {
-            let msg = format!("写入 MCP 配置失败: {}", e);
-            tracing::error!("{}", msg);
-            msg
-        })?;
+    fs::write(&paths.mcp_config_file, config_json).map_err(|e| {
+        let msg = format!("写入 MCP 配置失败: {}", e);
+        tracing::error!("{}", msg);
+        msg
+    })?;
 
     tracing::info!("MCP config written to: {}", paths.mcp_config_file.display());
     Ok(paths.mcp_config_file.clone())
@@ -277,7 +289,13 @@ pub fn register_mcp(
 ) -> Result<McpRegisterStatus, String> {
     ensure_project_mcp_json(paths, bridge)?;
     try_claude_mcp_add(claude_path);
-    Ok(check_mcp_status(paths, None, runtime, bridge.is_some(), false))
+    Ok(check_mcp_status(
+        paths,
+        None,
+        runtime,
+        bridge.is_some(),
+        false,
+    ))
 }
 
 pub fn try_auto_ensure_project_mcp(paths: &McpBundlePaths) {
@@ -293,12 +311,7 @@ pub fn try_auto_register_mcp(
     port: u16,
     auth_token: &str,
 ) {
-    if let Err(err) = register_mcp(
-        paths,
-        claude_path,
-        Some((port, auth_token)),
-        None,
-    ) {
+    if let Err(err) = register_mcp(paths, claude_path, Some((port, auth_token)), None) {
         tracing::warn!("自动注册 MCP 失败: {err}");
     }
 }
@@ -338,14 +351,8 @@ async fn preflight_stdio_tools_once(
         .spawn()
         .map_err(|e| format!("启动 MCP 预检进程失败 ({program}): {e}"))?;
 
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or("无法写入 MCP 预检 stdin")?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("无法读取 MCP 预检 stdout")?;
+    let mut stdin = child.stdin.take().ok_or("无法写入 MCP 预检 stdin")?;
+    let stdout = child.stdout.take().ok_or("无法读取 MCP 预检 stdout")?;
     let mut lines = BufReader::new(stdout).lines();
     let stderr = child.stderr.take();
     let stderr_task = tokio::spawn(async move {

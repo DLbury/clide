@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { AiSettingsPanel } from '@/components/settings/ai-settings-panel'
+import { UpdateSettingsPanel } from '@/components/settings/update-settings-panel'
 import {
   type AiSettings,
   DEFAULT_AI_SETTINGS,
@@ -29,6 +30,7 @@ interface SettingsModalProps {
 
 const NAV_ITEMS: { id: SettingsTab; label: string }[] = [
   { id: 'ai', label: 'AI 助手' },
+  { id: 'update', label: '应用更新' },
   { id: 'shortcuts', label: '快捷键' },
 ]
 
@@ -109,6 +111,8 @@ export function SettingsModal({
                 <AiSettingsPanel draft={aiDraft} onChange={setAiDraft} />
               </>
             )}
+
+            {tab === 'update' && <UpdateSettingsPanel />}
 
             {tab === 'shortcuts' && (
               <>

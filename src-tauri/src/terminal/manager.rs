@@ -70,7 +70,10 @@ impl TerminalManager {
 
         let abort = Arc::new(AtomicBool::new(false));
 
-        let TerminalChannels { write_tx, resize_tx } = match request.session_type.as_str() {
+        let TerminalChannels {
+            write_tx,
+            resize_tx,
+        } = match request.session_type.as_str() {
             "ssh" => ssh::spawn_ssh(app.clone(), request, abort.clone())?,
             "telnet" => telnet::spawn_telnet(app.clone(), request, abort.clone())?,
             "serial" => serial::spawn_serial(app.clone(), request, abort.clone())?,
@@ -149,21 +152,24 @@ impl TerminalManager {
         wait_ms: u64,
     ) -> Result<String, String> {
         if !self.is_connected(terminal_session_id) {
-            tracing::warn!("run_command_with_display: terminal not connected: {}", terminal_session_id);
+            tracing::warn!(
+                "run_command_with_display: terminal not connected: {}",
+                terminal_session_id
+            );
             return Err("终端未连接".to_string());
         }
 
         let safe = command.replace('\x1b', "").trim().to_string();
-        tracing::info!("run_command_with_display: session={}, command={}", terminal_session_id, safe);
+        tracing::info!(
+            "run_command_with_display: session={}, command={}",
+            terminal_session_id,
+            safe
+        );
 
         if !safe.is_empty() {
             let display_line = format!("\r\n\x1b[90m[Claude Code]\x1b[0m \x1b[36m$ {safe}\x1b[0m");
             tracing::debug!("Pushing display line: {}", display_line);
-            push_terminal_display(
-                app,
-                terminal_session_id,
-                &display_line,
-            );
+            push_terminal_display(app, terminal_session_id, &display_line);
         }
 
         let offset = output_buffer::buffer_len(terminal_session_id);
@@ -179,7 +185,11 @@ impl TerminalManager {
         self.write(terminal_session_id, &payload)?;
 
         let output = wait_for_command_output(terminal_session_id, offset, wait_ms);
-        tracing::info!("run_command_with_display: output length={}, preview={}", output.len(), output.chars().take(100).collect::<String>());
+        tracing::info!(
+            "run_command_with_display: output length={}, preview={}",
+            output.len(),
+            output.chars().take(100).collect::<String>()
+        );
         Ok(output)
     }
 
@@ -201,7 +211,11 @@ impl TerminalManager {
         };
         self.write(terminal_session_id, &payload)?;
 
-        Ok(wait_for_command_output(terminal_session_id, offset, wait_ms))
+        Ok(wait_for_command_output(
+            terminal_session_id,
+            offset,
+            wait_ms,
+        ))
     }
 }
 
@@ -310,7 +324,11 @@ fn looks_like_shell_prompt(output: &str) -> bool {
     // 如果行很短且以常见提示符结尾
     if trimmed.len() < 100 {
         // 检测 bash/zsh/fish 常见提示符
-        if trimmed.ends_with('$') || trimmed.ends_with('#') || trimmed.ends_with('%') || trimmed.ends_with('>') {
+        if trimmed.ends_with('$')
+            || trimmed.ends_with('#')
+            || trimmed.ends_with('%')
+            || trimmed.ends_with('>')
+        {
             return true;
         }
         // 检测 user@host 模式

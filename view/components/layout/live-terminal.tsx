@@ -8,6 +8,10 @@ import '@xterm/xterm/css/xterm.css'
 import { writeTerminal, resizeTerminal, readTerminalBufferSince } from '@/lib/terminal-client'
 import { registerTerminalInputHandler } from '@/lib/terminal-input-registry'
 import {
+  isAnyXtermFocused,
+  registerTerminalFocusHandler,
+} from '@/lib/terminal-focus-registry'
+import {
   getTerminalOutputBuffer,
   subscribeTerminalOutput,
   onTerminalResync,
@@ -55,6 +59,7 @@ export function LiveTerminal({
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
   const resizeRafRef = useRef<number | null>(null)
   const outputUnsubscribeRef = useRef<(() => void) | null>(null)
+  const wasConnectedRef = useRef(false)
   const [termReady, setTermReady] = useState(false)
   const { isDark } = useAppTheme()
 
@@ -263,22 +268,34 @@ export function LiveTerminal({
       await writeTerminal(sessionId, data)
     })
 
+    const unsubFocus = registerTerminalFocusHandler(sessionId, () => {
+      termRef.current?.focus()
+    })
+
     return () => {
       outputUnsubscribeRef.current?.()
       outputUnsubscribeRef.current = null
       unsubResync()
       unsubInput()
+      unsubFocus()
     }
   }, [sessionId, termReady, syncBufferToTerm, catchUpTerminalBuffer, replayBufferToTerm])
 
   useEffect(() => {
-    if (connected && inputEnabled) {
+    if (!connected) {
+      wasConnectedRef.current = false
+      return
+    }
+
+    const justConnected = !wasConnectedRef.current
+    wasConnectedRef.current = true
+
+    syncPtySize()
+    scheduleFit()
+
+    // 仅在首次连上且当前没有其它 xterm 持焦时自动聚焦，避免分屏时后连上的 Shell 抢走输入焦点
+    if (justConnected && inputEnabled && !isAnyXtermFocused()) {
       termRef.current?.focus()
-      syncPtySize()
-      scheduleFit()
-    } else if (connected) {
-      syncPtySize()
-      scheduleFit()
     }
   }, [connected, inputEnabled, scheduleFit, syncPtySize])
 

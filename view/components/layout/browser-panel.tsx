@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowRight, Loader2 } from 'lucide-react'
 import { isTauriRuntime } from '@/lib/tauri-env'
 import { normalizeBrowserUrl } from '@/lib/browser-address'
+import { assertInternalBrowserUrl } from '@/lib/browser-policy'
 import {
   closeWebviewByLabel,
   sanitizeWebviewLabel,
@@ -312,6 +313,12 @@ export function BrowserPanel({
       void listen<{ parentLabel: string; url: string }>('browser-new-window', event => {
         const { parentLabel, url } = event.payload
         if (parentLabel !== safeLabel && !parentLabel.startsWith(`${safeLabel}-auth`)) return
+        try {
+          assertInternalBrowserUrl(url)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err))
+          return
+        }
         const authLabel = sanitizeWebviewLabel(`${safeLabel}-auth-${Date.now().toString(36)}`)
         setAuthPopup(prev => {
           if (prev?.label) void closeWebviewByLabel(prev.label)
@@ -406,6 +413,12 @@ export function BrowserPanel({
   useEffect(() => {
     if (!isTauriRuntime() || !loadedUrl) return
     if (lastMountedUrlRef.current === loadedUrl) return
+    try {
+      assertInternalBrowserUrl(loadedUrl)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      return
+    }
     lastMountedUrlRef.current = loadedUrl
     void mountWebview(loadedUrl).catch(err => {
       lastMountedUrlRef.current = ''
@@ -520,8 +533,8 @@ export function BrowserPanel({
           onChange={e => setAddress(e.target.value)}
           placeholder={
             profileId
-              ? '经服务器访问，如 https://example.com 或 127.0.0.1:8080'
-              : '输入 URL，如 https://example.com'
+              ? '仅内网，如 192.168.1.10:8080 或 app.internal'
+              : '仅内网地址/域名，如 10.0.0.5 或 svc.local'
           }
           className="h-8 font-mono text-xs"
           disabled={loading}

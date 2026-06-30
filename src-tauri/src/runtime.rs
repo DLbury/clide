@@ -97,10 +97,11 @@ impl RuntimeStore {
         if let Some(conn_id) = &snap.active_connection_id {
             if let Some(conn) = snap.connections.iter().find(|c| &c.id == conn_id) {
                 if conn.profile_id == profile_id {
-                    let shell = conn
-                        .shells
-                        .iter()
-                        .find(|s| shell_id.map(|id| s.id == id).unwrap_or(s.id == conn.active_shell_id))?;
+                    let shell = conn.shells.iter().find(|s| {
+                        shell_id
+                            .map(|id| s.id == id)
+                            .unwrap_or(s.id == conn.active_shell_id)
+                    })?;
                     return Some((
                         shell.terminal_session_id.clone(),
                         conn.profile_id.clone(),
@@ -112,10 +113,11 @@ impl RuntimeStore {
 
         for conn in &snap.connections {
             if conn.profile_id == profile_id {
-                let shell = conn
-                    .shells
-                    .iter()
-                    .find(|s| shell_id.map(|id| s.id == id).unwrap_or(s.id == conn.active_shell_id))?;
+                let shell = conn.shells.iter().find(|s| {
+                    shell_id
+                        .map(|id| s.id == id)
+                        .unwrap_or(s.id == conn.active_shell_id)
+                })?;
                 return Some((
                     shell.terminal_session_id.clone(),
                     conn.profile_id.clone(),
@@ -149,7 +151,9 @@ pub fn apply_focus_to_ide_context(ide: &mut IdeContext, snap: &RuntimeSnapshot) 
 
     ide.active_profile_id = Some(conn.profile_id.clone());
     ide.active_connection_id = Some(conn.id.clone());
-    ide.active_shell_id = shell.map(|s| s.id.clone()).or(Some(conn.active_shell_id.clone()));
+    ide.active_shell_id = shell
+        .map(|s| s.id.clone())
+        .or(Some(conn.active_shell_id.clone()));
     ide.active_session_name = Some(conn.profile_name.clone());
 
     let host_label = match profile {

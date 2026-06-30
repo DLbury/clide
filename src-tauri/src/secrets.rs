@@ -100,7 +100,9 @@ pub fn to_connect_auth(profile_id: &str) -> (Option<String>, Option<String>, Opt
     };
     match cred {
         ProfileCredential::Password(p) => (Some("password".into()), Some(p.clone()), None),
-        ProfileCredential::PasswordEnv { .. } => (Some("password".into()), resolve_password(profile_id), None),
+        ProfileCredential::PasswordEnv { .. } => {
+            (Some("password".into()), resolve_password(profile_id), None)
+        }
         ProfileCredential::PrivateKeyPath(p) => (Some("key".into()), None, Some(p.clone())),
         ProfileCredential::KeyEnv { var_name } => {
             let path = std::env::var(var_name).ok();

@@ -41,7 +41,10 @@ pub fn spawn_ssh(
         }
     });
 
-    Ok(TerminalChannels { write_tx, resize_tx })
+    Ok(TerminalChannels {
+        write_tx,
+        resize_tx,
+    })
 }
 
 async fn run_ssh_session(
@@ -91,9 +94,7 @@ async fn run_ssh_session(
         }
 
         while let Ok((cols, rows)) = resize_rx.try_recv() {
-            let _ = channel
-                .window_change(cols as u32, rows as u32, 0, 0)
-                .await;
+            let _ = channel.window_change(cols as u32, rows as u32, 0, 0).await;
         }
 
         while let Ok(data) = write_rx.try_recv() {

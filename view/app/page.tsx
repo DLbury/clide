@@ -92,6 +92,9 @@ import {
   listLayoutSnapshots,
   saveLayoutSnapshot,
   deleteLayoutSnapshot,
+  resolveShellSnapshotCwd,
+  resolveSnapshotFileTreePath,
+  snapshotPathForFileTreeLoad,
   type ServerLayoutSnapshot,
 } from '@/lib/layout-snapshots'
 import { listTunnels, stopTunnel, stopSocksForProfile } from '@/lib/tunnel-client'
@@ -101,6 +104,12 @@ import { FileTree } from '@/components/layout/file-tree'
 import { DeleteRemoteFileDialog } from '@/components/layout/delete-remote-file-dialog'
 import { AiPane } from '@/components/layout/ai-pane'
 import { AppAlertDialog, type AppAlertDialogState } from '@/components/ui/app-alert-dialog'
+import { UpdateAvailableDialog } from '@/components/settings/update-available-dialog'
+import {
+  checkForAppUpdate,
+  loadAutoCheckUpdates,
+  type UpdateCheckResult,
+} from '@/lib/app-updater'
 import { readFileContent, writeFileContent } from '@/lib/file-system'
 import {
   openEditorModel,
@@ -330,6 +339,8 @@ export default function AITerminal() {
     open: false,
     title: '',
   })
+  const [updatePrompt, setUpdatePrompt] = useState<UpdateCheckResult | null>(null)
+  const [updatePromptOpen, setUpdatePromptOpen] = useState(false)
   const followTerminalCwdRef = useRef(followTerminalCwd)
   followTerminalCwdRef.current = followTerminalCwd
   const fileRootModeRef = useRef(fileRootMode)
@@ -594,10 +605,7 @@ export default function AITerminal() {
             shells,
             ...(shouldSync
               ? {
-                  remotePath: resolveRemoteDisplayPath(
-                    remotePathForListApi(cwd, c.session.user),
-                    c.session.user
-                  ),
+                  remotePath: resolveSnapshotFileTreePath(c.session, cwd, c.remotePath),
                 }
               : {}),
           }
@@ -1149,23 +1157,29 @@ export default function AITerminal() {
           const pendingLayoutCwd = pendingLayoutShellCwdRef.current.get(event.sessionId)
           if (pendingLayoutCwd && connectedConn) {
             pendingLayoutShellCwdRef.current.delete(event.sessionId)
-            void writeTerminal(event.sessionId, formatShellCdCommand(pendingLayoutCwd)).catch(
-              () => {}
-            )
-            applyShellCwd(connectedConn.id, event.sessionId, pendingLayoutCwd)
-          } else if (
-            connectedConn &&
-            connectedConn.session.type === 'ssh' &&
-            followTerminalCwdRef.current
-          ) {
-            void getRemoteCwd(
-              resolveSessionForConnect(connectedConn.session),
-              remoteFileOpts()
-            )
-              .then(cwd =>
-                applyShellCwd(connectedConn.id, event.sessionId, cwd)
+            window.setTimeout(() => {
+              void writeTerminal(
+                event.sessionId,
+                formatShellCdCommand(pendingLayoutCwd, connectedConn.session.type)
+              ).catch(() => {})
+              applyShellCwd(connectedConn.id, event.sessionId, pendingLayoutCwd)
+            }, 400)
+          } else if (connectedConn) {
+            if (connectedConn.session.type === 'ssh') {
+              void getRemoteCwd(
+                resolveSessionForConnect(connectedConn.session),
+                remoteFileOpts()
               )
-              .catch(() => {})
+                .then(cwd => applyShellCwd(connectedConn.id, event.sessionId, cwd))
+                .catch(() => {})
+            } else if (
+              connectedConn.session.type === 'local' ||
+              connectedConn.session.type === 'wsl'
+            ) {
+              void getLocalHomeDir(connectedConn.session.type)
+                .then(home => applyShellCwd(connectedConn.id, event.sessionId, home))
+                .catch(() => {})
+            }
           }
         } else if (event.status === 'error') {
           const message = event.error ?? '连接失败'
@@ -1400,13 +1414,14 @@ export default function AITerminal() {
     const dockview = workbenchRef.current?.captureLayout()
     if (!dockview) return
     const activeShell = conn.shells.find(s => s.id === conn.activeShellId)
-    const snapshotRemotePath =
-      activeShell?.shellCwd && conn.session.type === 'ssh'
-        ? resolveRemoteDisplayPath(
-            remotePathForListApi(activeShell.shellCwd, conn.session.user),
-            conn.session.user
-          )
-        : conn.remotePath
+    const activeCwd = activeShell
+      ? resolveShellSnapshotCwd(activeShell, conn.activeShellId, conn.remotePath)
+      : undefined
+    const snapshotRemotePath = resolveSnapshotFileTreePath(
+      conn.session,
+      activeCwd,
+      conn.remotePath
+    )
     const snapshot: ServerLayoutSnapshot = {
       id: `layout-${Date.now()}`,
       name,
@@ -1419,7 +1434,7 @@ export default function AITerminal() {
       shells: conn.shells.map(s => ({
         id: s.id,
         name: s.name,
-        cwd: s.shellCwd,
+        cwd: resolveShellSnapshotCwd(s, conn.activeShellId, conn.remotePath),
       })),
       openFiles: conn.openFiles.map(f => ({ id: f.id, path: f.path })),
       browserTabs: (conn.browserTabs ?? []).map(t => ({
@@ -1473,13 +1488,11 @@ export default function AITerminal() {
       }))
 
       const activeShellSnapshot = snapshot.shells.find(s => s.id === snapshot.activeShellId)
-      const restoredRemotePath =
-        activeShellSnapshot?.cwd && conn.session.type === 'ssh'
-          ? resolveRemoteDisplayPath(
-              remotePathForListApi(activeShellSnapshot.cwd, conn.session.user),
-              conn.session.user
-            )
-          : snapshot.remotePath
+      const restoredRemotePath = resolveSnapshotFileTreePath(
+        conn.session,
+        activeShellSnapshot?.cwd,
+        snapshot.remotePath
+      )
 
       setConnections(prev =>
         prev.map(c =>
@@ -1506,12 +1519,26 @@ export default function AITerminal() {
         }
       }
 
-      if (conn.session.type === 'ssh' && restoredRemotePath) {
-        void loadRemoteFiles(conn.session, restoredRemotePath)
+      if (
+        restoredRemotePath &&
+        (conn.session.type === 'ssh' ||
+          conn.session.type === 'local' ||
+          conn.session.type === 'wsl')
+      ) {
+        void loadRemoteFiles(
+          conn.session,
+          snapshotPathForFileTreeLoad(conn.session, restoredRemotePath)
+        )
       }
 
       for (const f of snapshot.openFiles) {
-        void readRemoteFile(conn.session, f.path, remoteFileOpts())
+        const loadPromise =
+          conn.session.type === 'ssh'
+            ? readRemoteFile(conn.session, f.path, remoteFileOpts())
+            : conn.session.type === 'local' || conn.session.type === 'wsl'
+              ? readLocalFile(conn.session.type, f.path)
+              : Promise.resolve(readFileContent(f.path))
+        void loadPromise
           .then(content => {
             setConnections(prev =>
               prev.map(c =>
@@ -1898,6 +1925,21 @@ export default function AITerminal() {
         : createDefaultLocalShellSession())
     handleSessionConnect(localSession)
   }, [foldersLoaded, folders, handleSessionConnect])
+
+  useEffect(() => {
+    if (!isTauriRuntime() || !loadAutoCheckUpdates()) return
+    const timer = window.setTimeout(() => {
+      void checkForAppUpdate()
+        .then(result => {
+          if (result.available) {
+            setUpdatePrompt(result)
+            setUpdatePromptOpen(true)
+          }
+        })
+        .catch(() => {})
+    }, 4000)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   // 切换连接标签时刷新该会话的文件树
   useEffect(() => {
@@ -2326,12 +2368,50 @@ export default function AITerminal() {
   const handleShellChange = useCallback((shellId: string) => {
     if (!activeConnectionId) return
 
-    setConnections(prev => prev.map(conn => {
-      if (conn.id !== activeConnectionId) return conn
-      if (conn.activeShellId === shellId) return conn
-      return { ...conn, activeShellId: shellId }
-    }))
-  }, [activeConnectionId])
+    const connBefore = connectionsRef.current.find(c => c.id === activeConnectionId)
+    const targetShell = connBefore?.shells.find(s => s.id === shellId)
+    const sessionType = connBefore?.session.type
+
+    setConnections(prev =>
+      prev.map(conn => {
+        if (conn.id !== activeConnectionId) return conn
+        if (conn.activeShellId === shellId) return conn
+
+        const shouldSyncTree =
+          followTerminalCwdRef.current &&
+          targetShell?.shellCwd &&
+          (sessionType === 'ssh' ||
+            sessionType === 'local' ||
+            sessionType === 'wsl')
+
+        const remotePath = shouldSyncTree
+          ? resolveSnapshotFileTreePath(
+              conn.session,
+              targetShell.shellCwd,
+              conn.remotePath
+            )
+          : conn.remotePath
+
+        return {
+          ...conn,
+          activeShellId: shellId,
+          ...(shouldSyncTree && remotePath ? { remotePath } : {}),
+        }
+      })
+    )
+
+    if (
+      connBefore &&
+      targetShell?.shellCwd &&
+      followTerminalCwdRef.current &&
+      (sessionType === 'ssh' || sessionType === 'local' || sessionType === 'wsl')
+    ) {
+      void loadRemoteFiles(
+        connBefore.session,
+        snapshotPathForFileTreeLoad(connBefore.session, targetShell.shellCwd)
+      )
+    }
+  }, [activeConnectionId, loadRemoteFiles])
   handleShellChangeRef.current = handleShellChange
 
   const focusShellByTerminalId = useCallback((terminalSessionId: string): Promise<void> => {
@@ -2355,8 +2435,7 @@ export default function AITerminal() {
         handleShellChangeRef.current(shell.id)
       }
       window.requestAnimationFrame(() => {
-        workbenchRef.current?.activateShellById(shell.id)
-        workbenchRef.current?.focusTerminal()
+        workbenchRef.current?.focusTerminal(shell.id)
         window.setTimeout(() => resolve(), 120)
       })
     })
@@ -3145,6 +3224,13 @@ export default function AITerminal() {
     void resetConnectionClaudeSession(activeConnectionId, { clearChat: true })
   }, [activeConnectionId, resetConnectionClaudeSession])
 
+  const handleClaudePathChange = useCallback(
+    (path: string) => {
+      updateAiSettings({ ...aiSettings, claudePath: path, backend: 'claude-code' })
+    },
+    [aiSettings, updateAiSettings]
+  )
+
   const handleStopAiMessage = useCallback(() => {
     if (!activeConnectionId) return
     const pending = claudeRequestsByConnectionRef.current.get(activeConnectionId)
@@ -3846,6 +3932,8 @@ export default function AITerminal() {
               onClearChat={handleClearAiChat}
               onRegenerateMessage={handleRegenerateMessage}
               claudePath={aiSettings.claudePath || undefined}
+              claudeCandidates={claudeCode.detected?.candidates ?? []}
+              onClaudePathChange={handleClaudePathChange}
               interactivePrompt={interactivePrompt}
               onPromptDismiss={handlePromptContinue}
               onFocusTerminal={() => workbenchRef.current?.focusTerminal()}
@@ -3899,6 +3987,12 @@ export default function AITerminal() {
         onOpenChange={handlePasswordPromptOpenChange}
         onSubmit={handlePasswordPromptSubmit}
         onUseDefaultKeys={handlePasswordPromptUseDefaultKeys}
+      />
+
+      <UpdateAvailableDialog
+        open={updatePromptOpen}
+        update={updatePrompt}
+        onOpenChange={setUpdatePromptOpen}
       />
 
       <SettingsModal

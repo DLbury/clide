@@ -8,36 +8,31 @@ pub mod output_buffer;
 mod output_emit;
 pub mod remote_fs;
 mod remote_stats;
+mod serial;
 mod socks;
 mod ssh;
 mod ssh_auth;
 mod telnet;
-mod serial;
 mod tunnel;
 mod utf8_chunk;
 
-pub use output_emit::TerminalOutputEvent;
-pub use manager::{push_terminal_display, TerminalManager};
-pub use socks::{SocksInfo, SocksManager};
-pub use tunnel::{TunnelInfo, TunnelManager};
-pub use output_buffer::{buffer_len, read_since, tail_snippet};
-pub use remote_fs::{
-    delete_path as delete_remote_path,
-    get_cwd as get_remote_cwd,
-    list_directory as list_remote_directory,
-    move_path as move_remote_path,
-    rename_path as rename_remote_path,
-    read_file as read_remote_file,
-    read_file_base64 as read_remote_file_base64,
-    write_file as write_remote_file,
-    write_file_base64 as write_remote_file_base64,
-    RemoteFileEntry,
-};
-pub use remote_stats::{get_host_stats as get_remote_host_stats, RemoteHostStats};
 pub use local_fs::{
     get_home_dir as get_local_home_dir, list_directory as list_local_directory,
     read_file as read_local_file, write_file as write_local_file,
 };
+pub use manager::{push_terminal_display, TerminalManager};
+pub use output_buffer::{buffer_len, read_since, tail_snippet};
+pub use output_emit::TerminalOutputEvent;
+pub use remote_fs::{
+    delete_path as delete_remote_path, get_cwd as get_remote_cwd,
+    list_directory as list_remote_directory, move_path as move_remote_path,
+    read_file as read_remote_file, read_file_base64 as read_remote_file_base64,
+    rename_path as rename_remote_path, write_file as write_remote_file,
+    write_file_base64 as write_remote_file_base64, RemoteFileEntry,
+};
+pub use remote_stats::{get_host_stats as get_remote_host_stats, RemoteHostStats};
+pub use socks::{SocksInfo, SocksManager};
+pub use tunnel::{TunnelInfo, TunnelManager};
 
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};

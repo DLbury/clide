@@ -71,7 +71,12 @@ impl ShellToolCoordinator {
         }
     }
 
-    pub fn complete(&self, request_id: &str, output: String, timed_out: bool) -> Result<(), String> {
+    pub fn complete(
+        &self,
+        request_id: &str,
+        output: String,
+        timed_out: bool,
+    ) -> Result<(), String> {
         let mut map = self.pending.lock();
         let slot = map
             .get_mut(request_id)
@@ -142,7 +147,9 @@ impl ShellToolCoordinator {
     pub fn gc_stale(&self) -> usize {
         let mut map = self.pending.lock();
         let before = map.len();
-        map.retain(|_id, slot| slot.done || slot.created_at.elapsed().as_millis() < STALE_ENTRY_MS as u128);
+        map.retain(|_id, slot| {
+            slot.done || slot.created_at.elapsed().as_millis() < STALE_ENTRY_MS as u128
+        });
         before - map.len()
     }
 }

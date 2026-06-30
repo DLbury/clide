@@ -73,6 +73,29 @@ export async function detectClaude(claudePath?: string): Promise<ClaudeDetectRes
   return invoke<ClaudeDetectResult>('claude_detect', { claudePath: claudePath || null })
 }
 
+export function uniqueClaudeCandidates(candidates: string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim()
+    if (!trimmed) continue
+    const key = trimmed.replace(/\\/g, '/').toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(trimmed)
+  }
+  return unique
+}
+
+export function claudePathLabel(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const parts = normalized.split('/').filter(Boolean)
+  if (parts.length >= 2) {
+    return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`
+  }
+  return parts[parts.length - 1] ?? path
+}
+
 export async function startClaudeBridge(
   workspaceFolders: string[],
   claudePath?: string

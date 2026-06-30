@@ -19,7 +19,9 @@ impl client::Handler for SshClientHandler {
     }
 }
 
-pub async fn connect_and_auth(request: &ConnectRequest) -> Result<client::Handle<SshClientHandler>, String> {
+pub async fn connect_and_auth(
+    request: &ConnectRequest,
+) -> Result<client::Handle<SshClientHandler>, String> {
     let host = request.host.clone();
     let port = request.port.unwrap_or(22);
     let user = request
@@ -46,7 +48,8 @@ pub async fn connect_and_auth(request: &ConnectRequest) -> Result<client::Handle
                 .password
                 .as_deref()
                 .ok_or_else(|| "密码认证需要填写密码".to_string())?;
-            let result: Result<bool, russh::Error> = session.authenticate_password(&user, password).await;
+            let result: Result<bool, russh::Error> =
+                session.authenticate_password(&user, password).await;
             result.map_err(|e| format!("密码认证失败: {e}"))?
         }
         "key" => {
@@ -55,13 +58,15 @@ pub async fn connect_and_auth(request: &ConnectRequest) -> Result<client::Handle
                 .as_deref()
                 .ok_or_else(|| "密钥认证需要私钥路径".to_string())?;
             let expanded = expand_home(key_path);
-            let key_bytes = std::fs::read(&expanded)
-                .map_err(|e| format!("无法读取私钥 ({expanded}): {e}"))?;
+            let key_bytes =
+                std::fs::read(&expanded).map_err(|e| format!("无法读取私钥 ({expanded}): {e}"))?;
             let key_text = std::str::from_utf8(&key_bytes)
                 .map_err(|e| format!("私钥格式无效 ({expanded}): {e}"))?;
             let key_pair = russh_keys::decode_secret_key(key_text, None)
                 .map_err(|e| format!("无法解析私钥 ({expanded}): {e}"))?;
-            let result: Result<bool, russh::Error> = session.authenticate_publickey(&user, Arc::new(key_pair)).await;
+            let result: Result<bool, russh::Error> = session
+                .authenticate_publickey(&user, Arc::new(key_pair))
+                .await;
             result.map_err(|e| format!("密钥认证失败: {e}"))?
         }
         _ => {
@@ -75,7 +80,9 @@ pub async fn connect_and_auth(request: &ConnectRequest) -> Result<client::Handle
                     if let Ok(key_bytes) = std::fs::read(&path) {
                         if let Ok(key_text) = std::str::from_utf8(&key_bytes) {
                             if let Ok(key_pair) = russh_keys::decode_secret_key(key_text, None) {
-                                let result: Result<bool, russh::Error> = session.authenticate_publickey(&user, Arc::new(key_pair)).await;
+                                let result: Result<bool, russh::Error> = session
+                                    .authenticate_publickey(&user, Arc::new(key_pair))
+                                    .await;
                                 if result.unwrap_or(false) {
                                     ok = true;
                                     break;
@@ -86,7 +93,8 @@ pub async fn connect_and_auth(request: &ConnectRequest) -> Result<client::Handle
                 }
                 if !ok {
                     return Err(
-                        "未配置认证方式，且默认密钥认证失败。请在会话中设置密码或密钥。".to_string(),
+                        "未配置认证方式，且默认密钥认证失败。请在会话中设置密码或密钥。"
+                            .to_string(),
                     );
                 }
                 true

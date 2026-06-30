@@ -1,4 +1,4 @@
-use super::{ConnectRequest, ssh_auth};
+use super::{ssh_auth, ConnectRequest};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use russh::ChannelMsg;
 use std::time::Duration;
@@ -6,7 +6,8 @@ use std::time::Duration;
 const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
 const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
-const ROOT_HINT: &str = "请在左侧 Shell 执行 sudo -v 刷新权限，或为当前用户配置免密 sudo (NOPASSWD)。";
+const ROOT_HINT: &str =
+    "请在左侧 Shell 执行 sudo -v 刷新权限，或为当前用户配置免密 sudo (NOPASSWD)。";
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,8 +103,19 @@ async fn resolve_windows_path(request: &ConnectRequest, path: &str) -> Result<St
 fn build_windows_list_cmd(resolved_path: &str) -> String {
     let safe = escape_powershell_single(resolved_path);
     format!(
-        "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ $p = '{safe}'; if (-not (Test-Path -LiteralPath $p)) {{ Write-Error ('Path not found: ' + $p); exit 1 }}; Get-ChildItem -LiteralPath $p -Force | ForEach-Object {{ $k = if ($_.PSIsContainer) {{ 'd' }} else {{ 'f' }}; $s = if ($_.PSIsContainer) {{ 0 }} else {{ $_.Length }}; Write-Output ($k + [char]9 + $s + [char]9 + '000' + [char]9 + $_.Name) }} }}\""
+        "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ $p = '{safe}'; if (-not (Test-Path -LiteralPath $p)) {{ Write-Error ('Path not found: ' + $p); exit 1 }}; Get-ChildItem -LiteralPath $p -Force | ForEach-Object {{ $k = if ($_.PSIsContainer) {{ 'd' }} else {{ 'f' }}; $s = if ($_.PSIsContainer) {{ 0 }} else {{ $_.Length }}; $n = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($_.Name)); Write-Output ($k + [char]9 + $s + [char]9 + '000' + [char]9 + ('b64:' + $n)) }} }}\""
     )
+}
+
+pub(crate) fn decode_listing_name(raw: &str) -> String {
+    if let Some(b64) = raw.strip_prefix("b64:") {
+        if let Ok(bytes) = BASE64.decode(b64.trim()) {
+            if let Ok(name) = String::from_utf8(bytes) {
+                return name;
+            }
+        }
+    }
+    raw.to_string()
 }
 
 async fn list_directory_windows(
@@ -357,9 +369,8 @@ pub async fn read_file(
         ));
     }
 
-    String::from_utf8(bytes).map_err(|_| {
-        "该文件不是 UTF-8 文本，暂不支持在编辑器中打开二进制文件".to_string()
-    })
+    String::from_utf8(bytes)
+        .map_err(|_| "该文件不是 UTF-8 文本，暂不支持在编辑器中打开二进制文件".to_string())
 }
 
 pub async fn write_file(
@@ -553,7 +564,10 @@ pub async fn get_cwd(request: ConnectRequest, elevated: bool) -> Result<String, 
     Ok(cwd)
 }
 
-pub(crate) fn parse_directory_output(output: &str, base_path: &str) -> Result<Vec<RemoteFileEntry>, String> {
+pub(crate) fn parse_directory_output(
+    output: &str,
+    base_path: &str,
+) -> Result<Vec<RemoteFileEntry>, String> {
     let mut entries = Vec::new();
     let base = base_path.trim_end_matches('/');
 
@@ -571,15 +585,15 @@ pub(crate) fn parse_directory_output(output: &str, base_path: &str) -> Result<Ve
             let kind = parts[0];
             let size = parts[1].parse::<u64>().ok();
             let mode = parts[2];
-            let name = parts[3];
+            let name = decode_listing_name(parts[3]);
             if name.is_empty() || name == "." || name == ".." {
                 continue;
             }
             let entry_type = if kind == "d" { "directory" } else { "file" };
             let permissions = mode_to_permissions(mode, entry_type == "directory");
             entries.push(RemoteFileEntry {
-                name: name.to_string(),
-                path: join_remote_entry_path(base, name),
+                name: name.clone(),
+                path: join_remote_entry_path(base, &name),
                 entry_type: entry_type.to_string(),
                 size: if entry_type == "file" { size } else { None },
                 permissions: Some(permissions),
@@ -627,8 +641,16 @@ fn mode_to_permissions(mode: &str, is_dir: bool) -> String {
         let mut s = String::new();
         s.push(if is_dir { 'd' } else { '-' });
         for shift in [6, 3, 0] {
-            s.push(if bits & (1 << (shift + 2)) != 0 { 'r' } else { '-' });
-            s.push(if bits & (1 << (shift + 1)) != 0 { 'w' } else { '-' });
+            s.push(if bits & (1 << (shift + 2)) != 0 {
+                'r'
+            } else {
+                '-'
+            });
+            s.push(if bits & (1 << (shift + 1)) != 0 {
+                'w'
+            } else {
+                '-'
+            });
             s.push(match (bits >> shift) & 7 {
                 7 | 6 | 5 | 3 => 'x',
                 2 | 1 => 'w',

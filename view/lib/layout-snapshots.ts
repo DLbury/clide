@@ -1,5 +1,9 @@
 /** 按服务器（profile/session.id）保存多套工作台布局快照 */
 
+import { resolveRemoteDisplayPath } from '@/lib/remote-file-tree'
+import { remotePathForListApi } from '@/lib/terminal-cwd'
+import type { Session } from '@/lib/types'
+
 export interface LayoutSnapshotShell {
   id: string
   name: string
@@ -83,4 +87,41 @@ export function renameLayoutSnapshot(
   const list = store[profileId] ?? []
   store[profileId] = list.map(s => (s.id === snapshotId ? { ...s, name } : s))
   writeStore(store)
+}
+
+export function resolveShellSnapshotCwd(
+  shell: { id: string; shellCwd?: string },
+  activeShellId: string,
+  remotePath?: string
+): string | undefined {
+  if (shell.shellCwd) return shell.shellCwd
+  if (shell.id === activeShellId && remotePath) return remotePath
+  return undefined
+}
+
+export function resolveSnapshotFileTreePath(
+  session: Pick<Session, 'type' | 'user'>,
+  cwd?: string,
+  fallback?: string
+): string | undefined {
+  if (!cwd) return fallback
+  const normalized = cwd.replace(/\\/g, '/')
+  if (session.type === 'ssh') {
+    return resolveRemoteDisplayPath(
+      remotePathForListApi(normalized, session.user),
+      session.user
+    )
+  }
+  return normalized
+}
+
+export function snapshotPathForFileTreeLoad(
+  session: Pick<Session, 'type' | 'user'>,
+  displayPath?: string
+): string {
+  if (!displayPath) return '~'
+  if (session.type === 'ssh') {
+    return remotePathForListApi(displayPath, session.user)
+  }
+  return displayPath
 }

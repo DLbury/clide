@@ -1,4 +1,4 @@
-use super::{ConnectRequest, remote_fs};
+use super::{remote_fs, ConnectRequest};
 
 const STATS_SCRIPT: &str = r#"LC_ALL=C
 idle1=$(awk '/^cpu / {print $5+$6}' /proc/stat)

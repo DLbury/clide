@@ -42,7 +42,10 @@ pub fn spawn_telnet(
         }
     });
 
-    Ok(TerminalChannels { write_tx, resize_tx })
+    Ok(TerminalChannels {
+        write_tx,
+        resize_tx,
+    })
 }
 
 async fn run_telnet_session(
@@ -248,4 +251,3 @@ mod tests {
         assert!(resp.is_empty());
     }
 }
-
