@@ -61,7 +61,29 @@ Claude Code **只在你本机运行**，通过 **IDE 桥接 + MCP** 把命令下
   <img src="docs/assets/readme-hero.png" alt="Clide 界面概览：左侧 SSH Shell、中间文件与监控、右侧 Claude Code AI" width="900">
 </p>
 
+<p align="center"><strong>Clide</strong> 是一款桌面运维终端，把真实 SSH Shell 与本机 Claude Code 副驾组合在一起——让 SRE 和后端工程师放心让 AI 排障服务器，<em>而无需交出密码、私钥或 root 权限</em>。</p>
+
+### 👤 谁适合用？
+
+- **SRE / DevOps / 平台工程师**：日常要敲 `sudo`、看日志、在大量机器上救火，想让 AI 帮忙又不想泄露凭据。
+- **后端工程师**：SSH 进生产排查服务问题，想让 Claude 跟你一起读实时终端输出。
+- **对安全敏感的团队**：不能（或不愿）给每台服务器分发 AI 公钥，也不愿把 root 密码贴进对话框。
+
+> 🎬 **看它在动** —— 60 秒演示 AI 驱动左侧 Shell 的录像见 [docs/demo-recording.md](docs/demo-recording.md)。（录像位已就绪，把 `docs/assets/demo.gif` 放进去即可在此处内嵌。）
+
 > 关键词：**运维终端** · **AI 排障** · **Claude Code** · **MCP** · **SSH** · **sudo 安全** · **SRE** · **Tauri 桌面应用**
+
+### 🔄 Clide 与其他方案对比
+
+| | SSH 客户端 + 另开一个 Claude 窗口 | Claude Code 直连 SSH | **Clide** |
+|---|---|---|---|
+| AI 能看到实时终端输出 | ❌ 靠手工复制粘贴 | ✅ 可以 | ✅ 可以，和你敲命令同一条 PTY |
+| 服务器凭据 | ✅ 留在你手里 | ❌ 每台机器放公钥或密码给 AI | ✅ 留在你手里，AI 不接触 |
+| `sudo` / 二次验证 | ✅ 你自己处理 | ❌ 难以安全交互 | ✅ 左侧 Shell 输入，AI 看不到 |
+| 服务器上装 agent / 额外公钥 | ✅ 不需要 | ❌ 必需 | ✅ 不需要 |
+| Shell + 文件 + AI 同一窗口 | ❌ 否 | ⚠️ 部分 | ✅ 是 |
+
+Clide 保留了**传统 SSH 客户端的安全模型**，同时拥有**直连 Claude Code 的 AI 上下文**——且不暴露凭据。
 
 ---
 
@@ -381,9 +403,20 @@ Copyright © 2026 [DLbury](https://github.com/DLbury)
 
 ---
 
+## Star History
+
+<p align="center">
+  <a href="https://star-history.com/#DLbury/clide&Date">
+    <img width="500" alt="Star History Chart" src="https://api.star-history.com/svg?v1=DLbury/clide&type=Date">
+  </a>
+</p>
+
+---
+
 <p align="center">
   <sub>
     Clide · AI Ops Terminal · Claude Code · Secure SSH &amp; sudo<br>
-    如果这个项目对你有帮助，欢迎 ⭐ Star 支持
+    如果 Clide 帮你少熬一个通宵救火，欢迎 ⭐ <strong>Star</strong> 这个仓库，<br>
+    并把它分享给身边还在往对话框里粘贴 root 密码的运维同学。
   </sub>
 </p>

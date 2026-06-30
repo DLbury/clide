@@ -59,7 +59,29 @@ The same window provides multi-session SSH terminals, SFTP file browsing, resour
   <img src="docs/assets/readme-hero.png" alt="Clide UI: SSH shell on the left, files and monitoring in the center, Claude Code AI on the right" width="900">
 </p>
 
+<p align="center"><strong>Clide</strong> is a desktop ops terminal that pairs a real SSH shell with a local Claude Code copilot — so SREs and backend engineers can let AI troubleshoot servers <em>without</em> handing over passwords, private keys, or root.</p>
+
+### 👤 Who is this for?
+
+- **SRE / DevOps / Platform engineers** who run `sudo`, tail logs, and fight incidents on many boxes — and want AI help without exposing credentials.
+- **Backend engineers** who SSH into production to debug a service, and want Claude to read the live terminal output alongside you.
+- **Security-conscious teams** that can't (or won't) distribute AI public keys to every server or paste root passwords into a chat.
+
+> 🎬 **See it in action** — a 60-second walkthrough of the AI driving the left shell is in [docs/demo-recording.md](docs/demo-recording.md). (Recording slot ready — drop `docs/assets/demo.gif` in place to embed it inline here.)
+
 > Keywords: **ops terminal** · **AI troubleshooting** · **Claude Code** · **MCP** · **SSH** · **secure sudo** · **SRE** · **Tauri desktop app**
+
+### 🔄 How Clide compares
+
+| | SSH client + Claude in another window | Claude Code direct SSH | **Clide** |
+|---|---|---|---|
+| AI sees live terminal output | ❌ Copy-paste by hand | ✅ Yes | ✅ Yes, same PTY you type in |
+| Server credentials | ✅ Stay with you | ❌ Keys on every server or password to AI | ✅ Stay with you — AI never touches them |
+| `sudo` / 2FA | ✅ You handle it | ❌ Hard to do safely | ✅ Type in left shell, AI never sees it |
+| Agent / extra keys on servers | ✅ None needed | ❌ Required | ✅ None needed |
+| One window for shell + files + AI | ❌ No | ⚠️ Partial | ✅ Yes |
+
+Clide keeps the **security model of a traditional SSH client** and adds the **AI context of direct Claude Code SSH** — without the credential exposure.
 
 ---
 
@@ -379,9 +401,20 @@ Copyright © 2026 [DLbury](https://github.com/DLbury)
 
 ---
 
+## Star History
+
+<p align="center">
+  <a href="https://star-history.com/#DLbury/clide&Date">
+    <img width="500" alt="Star History Chart" src="https://api.star-history.com/svg?v1=DLbury/clide&type=Date">
+  </a>
+</p>
+
+---
+
 <p align="center">
   <sub>
     Clide · AI Ops Terminal · Claude Code · Secure SSH &amp; sudo<br>
-    ⭐ Star this repo if you find it useful
+    If Clide saves you a late-night incident or two, consider ⭐ <strong>starring</strong> the repo<br>
+    and sharing it with a fellow SRE who still pastes root passwords into a chat.
   </sub>
 </p>

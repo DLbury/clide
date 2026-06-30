@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Settings } from 'lucide-react'
+import { ExternalLink, Github, Settings, Star } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -167,6 +167,40 @@ export function SettingsModal({
             </Button>
           </DialogFooter>
         )}
+
+        {/* 站内推广：仓库入口（始终可见，非打扰式） */}
+        <div className="flex items-center justify-between gap-3 px-6 py-2.5 border-t border-border bg-muted/30 text-xs text-muted-foreground">
+          <span>Clide · MIT · 开源运维终端</span>
+          <div className="flex items-center gap-3">
+            <a
+              href="https://github.com/DLbury/clide"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              <Star className="w-3.5 h-3.5" />
+              Star on GitHub
+            </a>
+            <a
+              href="https://github.com/DLbury/clide/issues"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
+            >
+              <Github className="w-3.5 h-3.5" />
+              Issues
+            </a>
+            <a
+              href="https://github.com/DLbury/clide/releases"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Releases
+            </a>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   )
