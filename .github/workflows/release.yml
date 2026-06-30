@@ -86,17 +86,15 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.67
+            ## Clide v0.1.68
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **应用内自动更新**：启动时检查新版本，设置中可手动检查并安装（需 GitHub Release 签名包）
-            - **分屏 Shell 输入修复**：多个 Shell 处于不同目录时，点击终端即可正常输入，不再被其它 Shell 抢走焦点
-            - **布局快照 cwd**：保存/恢复每个 Shell 的工作目录，切换 Shell 时文件树跟随对应 cwd
-            - **文件列表中文**：修复 Windows SSH / WSL 目录名乱码
-            - **Claude Code 多安装**：设置与 AI 面板支持在多个检测到的安装之间快速切换
-            - **浏览器内网限制**：仅允许访问私有 IP、localhost 及内网域名后缀（前后端双重校验）
+            - **修复 CI 更新包签名**：支持 base64 格式私钥，重新生成签名密钥对
+            - **应用内自动更新**：v0.1.68 起支持签名更新包（需从本版起安装）
+            - **分屏 Shell 输入修复**：多个 Shell 不同目录时可正常切换输入
+            - **布局快照 cwd**、**文件列表中文**、**Claude 多安装切换**、**浏览器内网限制**（同 v0.1.67）
 
             ### 平台说明
             - **Windows**: `.msi` / `.exe`（支持应用内更新）

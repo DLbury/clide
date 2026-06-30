@@ -1,6 +1,6 @@
 {
   "name": "aiterm",
-  "version": "0.1.67",
+  "version": "0.1.68",
   "private": true,
   "scripts": {
     "dev": "npm run dev --prefix view",
