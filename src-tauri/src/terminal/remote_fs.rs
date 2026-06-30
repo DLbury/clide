@@ -26,6 +26,96 @@ fn ensure_ssh(request: &ConnectRequest) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RemotePlatform {
+    Unix,
+    Windows,
+}
+
+fn normalize_path_slashes(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn join_remote_entry_path(base: &str, name: &str) -> String {
+    let base = normalize_path_slashes(base.trim_end_matches('/').trim_end_matches('\\'));
+    if base.is_empty() {
+        return normalize_path_slashes(name);
+    }
+    format!("{base}/{name}")
+}
+
+fn escape_powershell_single(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+async fn detect_platform(request: &ConnectRequest) -> RemotePlatform {
+    if let Ok(out) = exec_capture(
+        request,
+        "powershell -NoProfile -NoLogo -NonInteractive -Command \"if ($env:OS -eq 'Windows_NT') { Write-Output 'windows' } else { Write-Output 'unix' }\"",
+        false,
+    )
+    .await
+    {
+        if out.trim().eq_ignore_ascii_case("windows") {
+            return RemotePlatform::Windows;
+        }
+    }
+    if let Ok(out) = exec_capture(
+        request,
+        "cmd /c \"if %OS%==Windows_NT (echo windows) else (echo unix)\"",
+        false,
+    )
+    .await
+    {
+        if out.trim().eq_ignore_ascii_case("windows") {
+            return RemotePlatform::Windows;
+        }
+    }
+    RemotePlatform::Unix
+}
+
+async fn resolve_windows_path(request: &ConnectRequest, path: &str) -> Result<String, String> {
+    if path.is_empty() || path == "~" {
+        let out = exec_capture(
+            request,
+            "powershell -NoProfile -NoLogo -NonInteractive -Command \"Write-Output $env:USERPROFILE\"",
+            false,
+        )
+        .await?;
+        let resolved = normalize_path_slashes(out.trim());
+        if resolved.is_empty() {
+            return Err("无法解析 Windows 用户目录".to_string());
+        }
+        return Ok(resolved);
+    }
+    if path.starts_with("~/") {
+        let rest = escape_powershell_single(&path[2..]);
+        let cmd = format!(
+            "powershell -NoProfile -NoLogo -NonInteractive -Command \"Write-Output (Join-Path $env:USERPROFILE '{rest}')\""
+        );
+        let out = exec_capture(request, &cmd, false).await?;
+        return Ok(normalize_path_slashes(out.trim()));
+    }
+    Ok(normalize_path_slashes(path))
+}
+
+fn build_windows_list_cmd(resolved_path: &str) -> String {
+    let safe = escape_powershell_single(resolved_path);
+    format!(
+        "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ $p = '{safe}'; if (-not (Test-Path -LiteralPath $p)) {{ Write-Error ('Path not found: ' + $p); exit 1 }}; Get-ChildItem -LiteralPath $p -Force | ForEach-Object {{ $k = if ($_.PSIsContainer) {{ 'd' }} else {{ 'f' }}; $s = if ($_.PSIsContainer) {{ 0 }} else {{ $_.Length }}; Write-Output ($k + [char]9 + $s + [char]9 + '000' + [char]9 + $_.Name) }} }}\""
+    )
+}
+
+async fn list_directory_windows(
+    request: &ConnectRequest,
+    path: &str,
+) -> Result<Vec<RemoteFileEntry>, String> {
+    let base = resolve_windows_path(request, path).await?;
+    let cmd = build_windows_list_cmd(&base.replace('/', "\\"));
+    let output = exec_capture(request, &cmd, false).await?;
+    parse_directory_output(&output, &base)
+}
+
 fn escape_single_quotes(value: &str) -> String {
     value.replace('\'', "'\\''")
 }
@@ -52,6 +142,9 @@ fn map_root_error(err: String, elevated: bool) -> String {
 }
 
 fn resolve_remote_path(request: &ConnectRequest, path: &str) -> String {
+    if path.contains(':') || path.starts_with("\\\\") {
+        return normalize_path_slashes(path);
+    }
     if path.is_empty() || path == "~" {
         if let Some(user) = &request.user {
             return format!("/home/{user}");
@@ -65,6 +158,30 @@ fn resolve_remote_path(request: &ConnectRequest, path: &str) -> String {
         return path.trim_start_matches('~').to_string();
     }
     path.to_string()
+}
+
+async fn list_directory_unix(
+    request: &ConnectRequest,
+    path: String,
+    elevated: bool,
+) -> Result<Vec<RemoteFileEntry>, String> {
+    let cmd = if path.is_empty() || path == "~" {
+        "LC_ALL=C cd ~ && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null".to_string()
+    } else if path.starts_with("~/") {
+        let rest = path[2..].replace('\'', "'\\''");
+        format!(
+            "LC_ALL=C cd ~/'{rest}' && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null"
+        )
+    } else {
+        let safe = path.replace('\'', "'\\''");
+        format!(
+            "LC_ALL=C cd '{safe}' && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null"
+        )
+    };
+
+    let output = exec_capture(request, &cmd, elevated).await?;
+    let base = resolve_remote_path(request, &path);
+    parse_directory_output(&output, &base)
 }
 
 pub(crate) async fn exec_capture(
@@ -196,24 +313,11 @@ pub async fn list_directory(
     elevated: bool,
 ) -> Result<Vec<RemoteFileEntry>, String> {
     ensure_ssh(&request)?;
-
-    let cmd = if path.is_empty() || path == "~" {
-        "LC_ALL=C cd ~ && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null".to_string()
-    } else if path.starts_with("~/") {
-        let rest = path[2..].replace('\'', "'\\''");
-        format!(
-            "LC_ALL=C cd ~/'{rest}' && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null"
-        )
-    } else {
-        let safe = path.replace('\'', "'\\''");
-        format!(
-            "LC_ALL=C cd '{safe}' && LC_ALL=C find . -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%m\\t%f\\n' 2>/dev/null || LC_ALL=C ls -1F . 2>/dev/null"
-        )
-    };
-
-    let output = exec_capture(&request, &cmd, elevated).await?;
-    let base = resolve_remote_path(&request, &path);
-    parse_directory_output(&output, &base)
+    let platform = detect_platform(&request).await;
+    match platform {
+        RemotePlatform::Windows => list_directory_windows(&request, &path).await,
+        RemotePlatform::Unix => list_directory_unix(&request, path, elevated).await,
+    }
 }
 
 pub async fn read_file(
@@ -430,15 +534,26 @@ pub async fn delete_path(
 
 pub async fn get_cwd(request: ConnectRequest, elevated: bool) -> Result<String, String> {
     ensure_ssh(&request)?;
-    let output = exec_capture(&request, "pwd", elevated).await?;
-    let cwd = output.trim().to_string();
+    let platform = detect_platform(&request).await;
+    let output = match platform {
+        RemotePlatform::Windows => {
+            exec_capture(
+                &request,
+                "powershell -NoProfile -NoLogo -NonInteractive -Command \"Write-Output $env:USERPROFILE\"",
+                false,
+            )
+            .await?
+        }
+        RemotePlatform::Unix => exec_capture(&request, "pwd", elevated).await?,
+    };
+    let cwd = normalize_path_slashes(output.trim());
     if cwd.is_empty() {
         return Err("无法获取远程工作目录".to_string());
     }
     Ok(cwd)
 }
 
-fn parse_directory_output(output: &str, base_path: &str) -> Result<Vec<RemoteFileEntry>, String> {
+pub(crate) fn parse_directory_output(output: &str, base_path: &str) -> Result<Vec<RemoteFileEntry>, String> {
     let mut entries = Vec::new();
     let base = base_path.trim_end_matches('/');
 
@@ -464,7 +579,7 @@ fn parse_directory_output(output: &str, base_path: &str) -> Result<Vec<RemoteFil
             let permissions = mode_to_permissions(mode, entry_type == "directory");
             entries.push(RemoteFileEntry {
                 name: name.to_string(),
-                path: format!("{base}/{name}"),
+                path: join_remote_entry_path(base, name),
                 entry_type: entry_type.to_string(),
                 size: if entry_type == "file" { size } else { None },
                 permissions: Some(permissions),
@@ -482,7 +597,7 @@ fn parse_directory_output(output: &str, base_path: &str) -> Result<Vec<RemoteFil
         }
         entries.push(RemoteFileEntry {
             name: name.clone(),
-            path: format!("{base}/{name}"),
+            path: join_remote_entry_path(base, &name),
             entry_type: if is_dir {
                 "directory".to_string()
             } else {

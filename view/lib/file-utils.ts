@@ -75,7 +75,15 @@ export function getFileName(path: string): string {
 }
 
 export function getParentPath(path: string): string {
-  const parts = path.split('/').filter(Boolean)
+  const normalized = path.replace(/\\/g, '/')
+  if (/^[A-Za-z]:\//.test(normalized)) {
+    const drive = normalized.slice(0, 2)
+    const rest = normalized.slice(3)
+    const parts = rest.split('/').filter(Boolean)
+    if (parts.length <= 1) return `${drive}/`
+    return `${drive}/${parts.slice(0, -1).join('/')}`
+  }
+  const parts = normalized.split('/').filter(Boolean)
   if (parts.length <= 1) return '/'
   return '/' + parts.slice(0, -1).join('/')
 }

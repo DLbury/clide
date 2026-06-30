@@ -3,6 +3,8 @@
 export interface LayoutSnapshotShell {
   id: string
   name: string
+  /** Shell 当前工作目录（绝对路径） */
+  cwd?: string
 }
 
 export interface LayoutSnapshotFile {

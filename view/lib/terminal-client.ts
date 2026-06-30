@@ -310,6 +310,35 @@ export async function getRemoteCwd(
   })
 }
 
+export async function listLocalDirectory(
+  sessionType: 'local' | 'wsl',
+  path: string
+): Promise<RemoteFileEntry[]> {
+  return invoke<RemoteFileEntry[]>('local_list_directory', {
+    sessionType,
+    path,
+  })
+}
+
+export async function readLocalFile(
+  sessionType: 'local' | 'wsl',
+  path: string
+): Promise<string> {
+  return invoke<string>('local_read_file', { sessionType, path })
+}
+
+export async function writeLocalFile(
+  sessionType: 'local' | 'wsl',
+  path: string,
+  content: string
+): Promise<void> {
+  return invoke<void>('local_write_file', { sessionType, path, content })
+}
+
+export async function getLocalHomeDir(sessionType: 'local' | 'wsl'): Promise<string> {
+  return invoke<string>('local_get_home_dir', { sessionType })
+}
+
 export async function moveRemotePath(
   session: Session,
   source: string,

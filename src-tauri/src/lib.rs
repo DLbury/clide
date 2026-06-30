@@ -606,6 +606,33 @@ async fn terminal_list_directory(
 }
 
 #[tauri::command]
+async fn local_list_directory(
+    session_type: String,
+    path: String,
+) -> Result<Vec<terminal::RemoteFileEntry>, String> {
+    terminal::list_local_directory(&session_type, path).await
+}
+
+#[tauri::command]
+async fn local_read_file(session_type: String, path: String) -> Result<String, String> {
+    terminal::read_local_file(&session_type, path).await
+}
+
+#[tauri::command]
+async fn local_write_file(
+    session_type: String,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    terminal::write_local_file(&session_type, path, content).await
+}
+
+#[tauri::command]
+async fn local_get_home_dir(session_type: String) -> Result<String, String> {
+    terminal::get_local_home_dir(&session_type).await
+}
+
+#[tauri::command]
 async fn terminal_read_file(
     request: terminal::ConnectRequest,
     path: String,
@@ -796,6 +823,10 @@ pub fn run() {
             terminal_buffer_len,
             terminal_buffer_read_since,
             terminal_list_directory,
+            local_list_directory,
+            local_read_file,
+            local_write_file,
+            local_get_home_dir,
             terminal_read_file,
             terminal_write_file,
             terminal_read_file_binary,

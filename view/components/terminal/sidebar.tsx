@@ -49,6 +49,10 @@ import {
   LayoutSnapshotSaveDialog,
 } from '@/components/layout/layout-snapshot-menu'
 import { listLayoutSnapshots, type ServerLayoutSnapshot } from '@/lib/layout-snapshots'
+import {
+  hideAllEmbeddedWebviews,
+  showAllEmbeddedWebviews,
+} from '@/lib/webview-layout-bridge'
 
 interface SidebarProps {
   folders: SessionFolder[]
@@ -249,6 +253,7 @@ export function Sidebar({
   const [saveLayoutOpen, setSaveLayoutOpen] = useState(false)
   const [saveLayoutSessionId, setSaveLayoutSessionId] = useState<string | null>(null)
   const [saveLayoutName, setSaveLayoutName] = useState('')
+  const saveLayoutOpenRef = useRef(false)
 
   useEffect(() => {
     const prev = prevFolderIdsRef.current
@@ -332,6 +337,8 @@ export function Sidebar({
       const count = listLayoutSnapshots(sessionId).length
       setSaveLayoutSessionId(sessionId)
       setSaveLayoutName(`布局 ${count + 1}`)
+      saveLayoutOpenRef.current = true
+      hideAllEmbeddedWebviews()
       setSaveLayoutOpen(true)
     },
     [layoutSnapshotsVersion]
@@ -341,8 +348,10 @@ export function Sidebar({
     const trimmed = saveLayoutName.trim()
     if (!trimmed || !saveLayoutSessionId || !onSaveLayoutSnapshot) return
     onSaveLayoutSnapshot(saveLayoutSessionId, trimmed)
+    saveLayoutOpenRef.current = false
     setSaveLayoutOpen(false)
     setSaveLayoutSessionId(null)
+    showAllEmbeddedWebviews()
   }, [saveLayoutName, saveLayoutSessionId, onSaveLayoutSnapshot])
 
   return (
@@ -355,8 +364,12 @@ export function Sidebar({
       <LayoutSnapshotSaveDialog
         open={saveLayoutOpen}
         onOpenChange={open => {
+          saveLayoutOpenRef.current = open
           setSaveLayoutOpen(open)
-          if (!open) setSaveLayoutSessionId(null)
+          if (!open) {
+            setSaveLayoutSessionId(null)
+            showAllEmbeddedWebviews()
+          }
         }}
         name={saveLayoutName}
         onNameChange={setSaveLayoutName}
@@ -492,7 +505,12 @@ export function Sidebar({
                                   连接
                                 </button>
                               )}
-                              <DropdownMenu>
+                              <DropdownMenu
+                                onOpenChange={open => {
+                                  if (open) hideAllEmbeddedWebviews()
+                                  else if (!saveLayoutOpenRef.current) showAllEmbeddedWebviews()
+                                }}
+                              >
                                 <DropdownMenuTrigger asChild>
                                   <button
                                     type="button"
@@ -502,7 +520,11 @@ export function Sidebar({
                                     <MoreHorizontal className="w-3 h-3" />
                                   </button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44">
+                                <DropdownMenuContent
+                                  align="start"
+                                  side="bottom"
+                                  className="z-[200] w-56 max-h-80 overflow-y-auto"
+                                >
                                   {!isConnected ? (
                                     <DropdownMenuItem onClick={() => onSessionConnect(session)}>
                                       连接

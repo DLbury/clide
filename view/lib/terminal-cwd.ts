@@ -135,8 +135,16 @@ export function consumeTerminalInputLine(
   return null
 }
 
+/** 生成写入 PTY 的 cd 命令 */
+export function formatShellCdCommand(cwd: string): string {
+  const escaped = cwd.replace(/'/g, "'\\''")
+  return `cd '${escaped}'\n`
+}
+
 /** 将远程绝对路径转为 loadRemoteFiles 可用的 path 参数 */
 export function remotePathForListApi(absPath: string, user?: string): string {
+  const normalized = absPath.replace(/\\/g, '/')
+  if (/^[A-Za-z]:\//.test(normalized)) return normalized
   const home = defaultRemoteHome(user)
   if (absPath === home) return '~'
   if (user && absPath.startsWith(`/home/${user}/`)) {

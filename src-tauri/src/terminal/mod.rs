@@ -2,6 +2,7 @@ mod channels;
 mod command_prep;
 pub use command_prep::prepare_command_for_pty;
 mod local;
+mod local_fs;
 mod manager;
 pub mod output_buffer;
 mod output_emit;
@@ -33,6 +34,10 @@ pub use remote_fs::{
     RemoteFileEntry,
 };
 pub use remote_stats::{get_host_stats as get_remote_host_stats, RemoteHostStats};
+pub use local_fs::{
+    get_home_dir as get_local_home_dir, list_directory as list_local_directory,
+    read_file as read_local_file, write_file as write_local_file,
+};
 
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};

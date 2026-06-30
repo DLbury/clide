@@ -34,6 +34,10 @@ import {
   listRemoteDirectory,
   readRemoteFile,
   writeRemoteFile,
+  listLocalDirectory,
+  readLocalFile,
+  writeLocalFile,
+  getLocalHomeDir,
   getRemoteCwd,
   getRemoteHostStats,
   type RemoteHostStats,
@@ -54,6 +58,7 @@ import {
   remoteEntriesToFileTree,
   mergeRemoteChildren,
   resolveRemoteDisplayPath,
+  isWindowsRemotePath,
 } from '@/lib/remote-file-tree'
 import {
   loadFollowTerminalCwd,
@@ -67,6 +72,7 @@ import {
   parseCdTargetFromCommand,
   remotePathForListApi,
   consumeTerminalInputLine,
+  formatShellCdCommand,
 } from '@/lib/terminal-cwd'
 import {
   deleteRemoteFile,
@@ -328,8 +334,9 @@ export default function AITerminal() {
   followTerminalCwdRef.current = followTerminalCwd
   const fileRootModeRef = useRef(fileRootMode)
   fileRootModeRef.current = fileRootMode
-  const terminalInputLineBuffersRef = useRef(new Map<string, string>())
+  const pendingLayoutShellCwdRef = useRef(new Map<string, string>())
   const cwdPollTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const terminalInputLineBuffersRef = useRef(new Map<string, string>())
   const [layoutSnapshotsVersion, setLayoutSnapshotsVersion] = useState(0)
   const [pendingLayoutRestore, setPendingLayoutRestore] = useState<{
     token: number
@@ -488,14 +495,39 @@ export default function AITerminal() {
 
   const loadRemoteFiles = useCallback(
     async (session: Session, path = '~', options?: { mergeParentPath?: string }) => {
-      if (session.type !== 'ssh' || !isTauriRuntime()) return
+      if (!isTauriRuntime()) return
+      const isSsh = session.type === 'ssh'
+      const isLocalBrowser = session.type === 'local' || session.type === 'wsl'
+      if (!isSsh && !isLocalBrowser) return
 
-      const resolved = resolveSessionForConnect(session)
-      const displayPath = resolveRemoteDisplayPath(path, session.user)
+      const resolved = isSsh ? resolveSessionForConnect(session) : session
+      let displayPath = isSsh
+        ? resolveRemoteDisplayPath(path, session.user)
+        : path.replace(/\\/g, '/')
 
       try {
-        const entries = await listRemoteDirectory(resolved, path, remoteFileOpts())
+        const entries = isSsh
+          ? await listRemoteDirectory(resolved, path, remoteFileOpts())
+          : await listLocalDirectory(session.type as 'local' | 'wsl', path)
         const children = remoteEntriesToFileTree(entries)
+
+        if (entries.length > 0) {
+          const firstPath = entries[0].path.replace(/\\/g, '/')
+          const slash = firstPath.lastIndexOf('/')
+          if (slash > 0) {
+            displayPath = firstPath.slice(0, slash)
+          }
+        } else if (path === '~' || !path) {
+          if (isSsh) {
+            const cwd = await getRemoteCwd(resolved, remoteFileOpts()).catch(() => null)
+            if (cwd) displayPath = cwd.replace(/\\/g, '/')
+          } else {
+            const home = await getLocalHomeDir(session.type as 'local' | 'wsl').catch(() => null)
+            if (home) displayPath = home.replace(/\\/g, '/')
+          }
+        } else if (isWindowsRemotePath(path)) {
+          displayPath = path.replace(/\\/g, '/')
+        }
 
         setConnections(prev =>
           prev.map(conn => {
@@ -529,7 +561,9 @@ export default function AITerminal() {
 
   const handleRemoteNavigate = useCallback(
     (path: string) => {
-      if (!activeConnection || activeConnection.session.type !== 'ssh') return
+      if (!activeConnection) return
+      const t = activeConnection.session.type
+      if (t !== 'ssh' && t !== 'local' && t !== 'wsl') return
       void loadRemoteFiles(activeConnection.session, path)
     },
     [activeConnection, loadRemoteFiles]
@@ -550,7 +584,11 @@ export default function AITerminal() {
           )
           const isActiveShell = c.activeShellId === shell.id
           const shouldSync =
-            followTerminalCwdRef.current && isActiveShell && c.session.type === 'ssh'
+            followTerminalCwdRef.current &&
+            isActiveShell &&
+            (c.session.type === 'ssh' ||
+              c.session.type === 'local' ||
+              c.session.type === 'wsl')
           return {
             ...c,
             shells,
@@ -570,7 +608,9 @@ export default function AITerminal() {
         followTerminalCwdRef.current &&
         connectionId === activeConnectionIdRef.current &&
         shell.id === conn.activeShellId &&
-        conn.session.type === 'ssh'
+        (conn.session.type === 'ssh' ||
+          conn.session.type === 'local' ||
+          conn.session.type === 'wsl')
       ) {
         void loadRemoteFiles(conn.session, remotePathForListApi(cwd, conn.session.user))
       }
@@ -603,12 +643,18 @@ export default function AITerminal() {
   const handleFollowTerminalCwdChange = useCallback((enabled: boolean) => {
     setFollowTerminalCwd(enabled)
     saveFollowTerminalCwd(enabled)
-    if (!enabled || !activeConnection || activeConnection.session.type !== 'ssh') return
+    if (!enabled || !activeConnection) return
+    const sessionType = activeConnection.session.type
+    if (sessionType !== 'ssh' && sessionType !== 'local' && sessionType !== 'wsl') return
     const shell = activeConnection.shells.find(s => s.id === activeConnection.activeShellId)
     if (!shell || shell.terminalStatus !== 'connected') return
-    void getRemoteCwd(resolveSessionForConnect(activeConnection.session), remoteFileOpts())
-      .then(cwd => applyShellCwd(activeConnection.id, shell.terminalSessionId, cwd))
-      .catch(() => {})
+    if (sessionType === 'ssh') {
+      void getRemoteCwd(resolveSessionForConnect(activeConnection.session), remoteFileOpts())
+        .then(cwd => applyShellCwd(activeConnection.id, shell.terminalSessionId, cwd))
+        .catch(() => {})
+    } else if (shell.shellCwd) {
+      applyShellCwd(activeConnection.id, shell.terminalSessionId, shell.shellCwd)
+    }
   }, [activeConnection, applyShellCwd, remoteFileOpts])
 
   const handleFileRootModeChange = useCallback(
@@ -827,12 +873,17 @@ export default function AITerminal() {
       const conn = connectionsRef.current.find(c =>
         c.shells.some(s => s.terminalSessionId === terminalSessionId)
       )
-      if (!conn || conn.id !== activeConnectionIdRef.current || conn.session.type !== 'ssh') {
+      if (!conn || conn.id !== activeConnectionIdRef.current) return
+      const sessionType = conn.session.type
+      if (sessionType !== 'ssh' && sessionType !== 'local' && sessionType !== 'wsl') {
         return
       }
       const shell = conn.shells.find(s => s.terminalSessionId === terminalSessionId)
       if (!shell) return
-      const home = defaultRemoteHome(conn.session.user)
+      const home =
+        sessionType === 'local'
+          ? conn.remotePath?.replace(/\\/g, '/') ?? '~'
+          : defaultRemoteHome(conn.session.user)
       const current = shell.shellCwd ?? home
 
       const completedLine = consumeTerminalInputLine(
@@ -856,7 +907,9 @@ export default function AITerminal() {
 
   const handleRemoteDirectoryExpand = useCallback(
     (item: FileItem) => {
-      if (!activeConnection || activeConnection.session.type !== 'ssh') return
+      if (!activeConnection) return
+      const t = activeConnection.session.type
+      if (t !== 'ssh' && t !== 'local' && t !== 'wsl') return
       if (item.type !== 'directory') return
       const hasLoadedChildren = item.children && item.children.length > 0
       if (hasLoadedChildren) return
@@ -1061,7 +1114,10 @@ export default function AITerminal() {
               connectedSession = updated.session
               profileSessionId = updated.session.id
               shouldLoadRemote =
-                updated.session.type === 'ssh' && !updated.remoteFiles?.length
+                (updated.session.type === 'ssh' ||
+                  updated.session.type === 'local' ||
+                  updated.session.type === 'wsl') &&
+                !updated.remoteFiles?.length
               return { ...updated, terminalLive: true }
             })
           )
@@ -1090,7 +1146,14 @@ export default function AITerminal() {
           const connectedConn = connectionsRef.current.find(c =>
             c.shells.some(s => s.terminalSessionId === event.sessionId)
           )
-          if (
+          const pendingLayoutCwd = pendingLayoutShellCwdRef.current.get(event.sessionId)
+          if (pendingLayoutCwd && connectedConn) {
+            pendingLayoutShellCwdRef.current.delete(event.sessionId)
+            void writeTerminal(event.sessionId, formatShellCdCommand(pendingLayoutCwd)).catch(
+              () => {}
+            )
+            applyShellCwd(connectedConn.id, event.sessionId, pendingLayoutCwd)
+          } else if (
             connectedConn &&
             connectedConn.session.type === 'ssh' &&
             followTerminalCwdRef.current
@@ -1336,16 +1399,28 @@ export default function AITerminal() {
     if (!conn) return
     const dockview = workbenchRef.current?.captureLayout()
     if (!dockview) return
+    const activeShell = conn.shells.find(s => s.id === conn.activeShellId)
+    const snapshotRemotePath =
+      activeShell?.shellCwd && conn.session.type === 'ssh'
+        ? resolveRemoteDisplayPath(
+            remotePathForListApi(activeShell.shellCwd, conn.session.user),
+            conn.session.user
+          )
+        : conn.remotePath
     const snapshot: ServerLayoutSnapshot = {
       id: `layout-${Date.now()}`,
       name,
       profileId: sessionId,
       savedAt: new Date().toISOString(),
-      remotePath: conn.remotePath,
+      remotePath: snapshotRemotePath,
       activeShellId: conn.activeShellId,
       activeFileId: conn.activeFileId,
       activeBrowserTabId: conn.activeBrowserTabId ?? null,
-      shells: conn.shells.map(s => ({ id: s.id, name: s.name })),
+      shells: conn.shells.map(s => ({
+        id: s.id,
+        name: s.name,
+        cwd: s.shellCwd,
+      })),
       openFiles: conn.openFiles.map(f => ({ id: f.id, path: f.path })),
       browserTabs: (conn.browserTabs ?? []).map(t => ({
         id: t.id,
@@ -1361,6 +1436,16 @@ export default function AITerminal() {
 
   const applyLayoutSnapshotToConnection = useCallback(
     (conn: ServerConnection, snapshot: ServerLayoutSnapshot) => {
+      pendingLayoutShellCwdRef.current.clear()
+      for (const s of snapshot.shells) {
+        if (s.cwd) {
+          pendingLayoutShellCwdRef.current.set(
+            makeTerminalSessionId(conn.session.id, s.id),
+            s.cwd
+          )
+        }
+      }
+
       for (const oldShell of conn.shells) {
         if (!snapshot.shells.some(s => s.id === oldShell.id) && conn.terminalLive) {
           void disconnectTerminal(oldShell.terminalSessionId).catch(() => {})
@@ -1373,6 +1458,7 @@ export default function AITerminal() {
         history: [],
         terminalSessionId: makeTerminalSessionId(conn.session.id, s.id),
         terminalStatus: conn.terminalLive ? 'connecting' : undefined,
+        shellCwd: s.cwd,
       }))
 
       const restoredFiles = snapshot.openFiles.map(f =>
@@ -1386,6 +1472,15 @@ export default function AITerminal() {
         webviewLabel: b.webviewLabel,
       }))
 
+      const activeShellSnapshot = snapshot.shells.find(s => s.id === snapshot.activeShellId)
+      const restoredRemotePath =
+        activeShellSnapshot?.cwd && conn.session.type === 'ssh'
+          ? resolveRemoteDisplayPath(
+              remotePathForListApi(activeShellSnapshot.cwd, conn.session.user),
+              conn.session.user
+            )
+          : snapshot.remotePath
+
       setConnections(prev =>
         prev.map(c =>
           c.id !== conn.id
@@ -1398,7 +1493,7 @@ export default function AITerminal() {
                 activeFileId: snapshot.activeFileId ?? null,
                 browserTabs: restoredBrowserTabs,
                 activeBrowserTabId: snapshot.activeBrowserTabId ?? null,
-                remotePath: snapshot.remotePath ?? c.remotePath,
+                remotePath: restoredRemotePath ?? c.remotePath,
               }
         )
       )
@@ -1411,8 +1506,8 @@ export default function AITerminal() {
         }
       }
 
-      if (conn.session.type === 'ssh' && snapshot.remotePath) {
-        void loadRemoteFiles(conn.session, snapshot.remotePath)
+      if (conn.session.type === 'ssh' && restoredRemotePath) {
+        void loadRemoteFiles(conn.session, restoredRemotePath)
       }
 
       for (const f of snapshot.openFiles) {
@@ -1804,10 +1899,12 @@ export default function AITerminal() {
     handleSessionConnect(localSession)
   }, [foldersLoaded, folders, handleSessionConnect])
 
-  // 切换连接标签时刷新该会话的远程文件树
+  // 切换连接标签时刷新该会话的文件树
   useEffect(() => {
     if (!activeConnection) return
-    if (activeConnection.session.type !== 'ssh' || !isTauriRuntime()) return
+    const t = activeConnection.session.type
+    if (t !== 'ssh' && t !== 'local' && t !== 'wsl') return
+    if (!isTauriRuntime()) return
     if (!activeConnection.shells.some(s => s.terminalStatus === 'connected')) return
     void loadRemoteFiles(activeConnection.session, activeConnection.remotePath ?? '~')
   }, [activeConnectionId, loadRemoteFiles])
@@ -2281,6 +2378,8 @@ export default function AITerminal() {
       if (!conn) return
 
       const isRemote = conn.session.type === 'ssh' && isTauriRuntime()
+      const isLocalBrowser =
+        (conn.session.type === 'local' || conn.session.type === 'wsl') && isTauriRuntime()
       const existing = conn.openFiles.find(f => f.path === file.path)
 
       if (existing) {
@@ -2298,7 +2397,7 @@ export default function AITerminal() {
         return
       }
 
-      const placeholder = isRemote ? '正在加载远程文件…' : readFileContent(file.path)
+      const placeholder = isRemote || isLocalBrowser ? '正在加载文件…' : readFileContent(file.path)
 
       setConnections(prev =>
         prev.map(c => {
@@ -2313,10 +2412,12 @@ export default function AITerminal() {
         })
       )
 
-      if (!isRemote) return
+      if (!isRemote && !isLocalBrowser) return
 
       try {
-        const content = await readRemoteFile(conn.session, file.path, remoteFileOpts())
+        const content = isRemote
+          ? await readRemoteFile(conn.session, file.path, remoteFileOpts())
+          : await readLocalFile(conn.session.type as 'local' | 'wsl', file.path)
         setConnections(prev =>
           prev.map(c =>
             c.id !== activeConnectionId
@@ -2351,10 +2452,20 @@ export default function AITerminal() {
 
       const conn = connections.find(c => c.id === activeConnectionId)
       const isRemote = conn?.session.type === 'ssh' && isTauriRuntime()
+      const isLocalBrowser =
+        conn?.session.type === 'local' || conn?.session.type === 'wsl'
+          ? isTauriRuntime()
+          : false
 
       try {
         if (isRemote && conn) {
           await writeRemoteFile(conn.session, file.path, file.content, remoteFileOpts())
+        } else if (isLocalBrowser && conn) {
+          await writeLocalFile(
+            conn.session.type as 'local' | 'wsl',
+            file.path,
+            file.content
+          )
         } else {
           writeFileContent(file.path, file.content)
         }
@@ -2420,10 +2531,18 @@ export default function AITerminal() {
       if (!file || !conn) return
 
       const isRemote = conn.session.type === 'ssh' && isTauriRuntime()
+      const isLocalBrowser =
+        (conn.session.type === 'local' || conn.session.type === 'wsl') && isTauriRuntime()
 
       try {
         if (isRemote) {
           await writeRemoteFile(conn.session, file.path, file.content, remoteFileOpts())
+        } else if (isLocalBrowser) {
+          await writeLocalFile(
+            conn.session.type as 'local' | 'wsl',
+            file.path,
+            file.content
+          )
         } else {
           writeFileContent(file.path, file.content)
         }
@@ -3590,7 +3709,11 @@ export default function AITerminal() {
                 key={activeConnection.id}
                 files={activeConnection.remoteFiles ?? []}
                 currentPath={activeConnection.remotePath}
-                remoteMode={activeConnection.session.type === 'ssh'}
+                remoteMode={
+                  activeConnection.session.type === 'ssh' ||
+                  activeConnection.session.type === 'local' ||
+                  activeConnection.session.type === 'wsl'
+                }
                 remoteUser={activeConnection.session.user}
                 selectedPath={activeConnection.selectedFilePath}
                 followTerminalCwd={followTerminalCwd}
@@ -3602,21 +3725,38 @@ export default function AITerminal() {
                 }
                 transferBusy={transferBusy}
                 uploadProgress={uploadProgress}
-                fileRootMode={fileRootMode}
-                onFileRootModeChange={handleFileRootModeChange}
-                onUpload={handleRemoteUpload}
-                onMove={handleRemoteMove}
-                onDownload={handleRemoteDownload}
-                onDelete={handleRemoteDelete}
-                onRename={handleRemoteRename}
-                onOpenInTerminal={handleOpenInTerminal}
-                onCreateRemoteFile={handleCreateRemoteFile}
+                fileRootMode={activeConnection.session.type === 'ssh' ? fileRootMode : false}
+                onFileRootModeChange={
+                  activeConnection.session.type === 'ssh'
+                    ? handleFileRootModeChange
+                    : undefined
+                }
+                onUpload={
+                  activeConnection.session.type === 'ssh' ? handleRemoteUpload : undefined
+                }
+                onMove={activeConnection.session.type === 'ssh' ? handleRemoteMove : undefined}
+                onDownload={
+                  activeConnection.session.type === 'ssh' ? handleRemoteDownload : undefined
+                }
+                onDelete={
+                  activeConnection.session.type === 'ssh' ? handleRemoteDelete : undefined
+                }
+                onRename={
+                  activeConnection.session.type === 'ssh' ? handleRemoteRename : undefined
+                }
+                onOpenInTerminal={
+                  activeConnection.session.type === 'ssh' ? handleOpenInTerminal : undefined
+                }
+                onCreateRemoteFile={
+                  activeConnection.session.type === 'ssh' ? handleCreateRemoteFile : undefined
+                }
                 onFileOpen={handleFileOpen}
                 onFileSelect={handleFileSelect}
                 onNavigate={handleRemoteNavigate}
                 onDirectoryExpand={handleRemoteDirectoryExpand}
                 onRefresh={() => {
-                  if (activeConnection.session.type === 'ssh') {
+                  const t = activeConnection.session.type
+                  if (t === 'ssh' || t === 'local' || t === 'wsl') {
                     void loadRemoteFiles(
                       activeConnection.session,
                       activeConnection.remotePath ?? '~'
