@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Sidebar } from '@/components/terminal/sidebar'
 import { ServerTabs } from '@/components/terminal/server-tabs'
 import { StatusBar } from '@/components/terminal/status-bar'
@@ -237,6 +237,32 @@ const MAX_HISTORY_LINES = 200
 const MAX_LINE_CONTENT_CHARS = 8000
 const MAX_AI_MESSAGES = 120
 
+/** 仅含影响 MCP/runtime 同步的字段，避免 AI 流式更新触发后端快照 */
+function buildRuntimeSyncKey(
+  folders: { id: string; isExpanded: boolean; sessions: { id: string; status: string }[] }[],
+  connections: ServerConnection[],
+  activeConnectionId: string | null
+): string {
+  const folderPart = folders
+    .map(
+      f =>
+        `${f.id}:${f.isExpanded ? 1 : 0}:${f.sessions.map(s => `${s.id}:${s.status}`).join(',')}`
+    )
+    .join('|')
+  const connPart = connections
+    .map(c =>
+      [
+        c.id,
+        c.activeShellId,
+        c.session.id,
+        c.session.status,
+        c.shells.map(s => `${s.id}:${s.terminalSessionId}:${s.terminalStatus ?? ''}`).join(';'),
+      ].join(':')
+    )
+    .join('|')
+  return `${folderPart}#${connPart}#${activeConnectionId ?? ''}`
+}
+
 function appendTerminalOutput(history: TerminalLine[], data: string): TerminalLine[] {
   const cleaned = sanitizeTerminalOutput(data)
   if (!cleaned) return history
@@ -347,6 +373,8 @@ export default function AITerminal() {
   fileRootModeRef.current = fileRootMode
   const pendingLayoutShellCwdRef = useRef(new Map<string, string>())
   const cwdPollTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const cwdFileTreeLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastFileTreeLoadRef = useRef({ connectionId: '', path: '' })
   const terminalInputLineBuffersRef = useRef(new Map<string, string>())
   const [layoutSnapshotsVersion, setLayoutSnapshotsVersion] = useState(0)
   const [pendingLayoutRestore, setPendingLayoutRestore] = useState<{
@@ -620,7 +648,14 @@ export default function AITerminal() {
           conn.session.type === 'local' ||
           conn.session.type === 'wsl')
       ) {
-        void loadRemoteFiles(conn.session, remotePathForListApi(cwd, conn.session.user))
+        const listPath = remotePathForListApi(cwd, conn.session.user)
+        if (cwdFileTreeLoadTimerRef.current) {
+          clearTimeout(cwdFileTreeLoadTimerRef.current)
+        }
+        cwdFileTreeLoadTimerRef.current = setTimeout(() => {
+          cwdFileTreeLoadTimerRef.current = null
+          void loadRemoteFiles(conn.session, listPath)
+        }, 350)
       }
     },
     [loadRemoteFiles]
@@ -1803,7 +1838,7 @@ export default function AITerminal() {
     }
   }, [connections, folders, setFolders, loadRemoteFiles, runBackendConnect, resetConnectionClaudeSession])
 
-  const pushRuntimeSnapshot = useCallback(() => {
+  const syncRuntimeToBackend = useCallback(() => {
     if (!isTauriRuntime()) return
     const folderProfiles = folders.flatMap(f => f.sessions)
     const connProfiles = connections
@@ -1825,19 +1860,30 @@ export default function AITerminal() {
       activeConnectionId,
     })
     void syncAppRuntime(snapshot).catch(err => console.error('sync_app_runtime failed', err))
+  }, [folders, connections, activeConnectionId])
+
+  const pushIdeContext = useCallback(() => {
+    if (!isTauriRuntime()) return
     void updateIdeContext(getIdeContext()).catch(err => console.error('claude_update_context failed', err))
-  }, [folders, connections, activeConnectionId, getIdeContext])
+  }, [getIdeContext])
 
-  // 焦点/连接变化时立即同步；其它状态防抖
+  const runtimeSyncKey = useMemo(
+    () => buildRuntimeSyncKey(folders, connections, activeConnectionId),
+    [folders, connections, activeConnectionId]
+  )
+
+  // 焦点/连接变化时立即同步 runtime + IDE 上下文
   useEffect(() => {
-    pushRuntimeSnapshot()
-  }, [activeConnectionId, activeConnection?.activeShellId, pushRuntimeSnapshot])
+    syncRuntimeToBackend()
+    pushIdeContext()
+  }, [activeConnectionId, activeConnection?.activeShellId, syncRuntimeToBackend, pushIdeContext])
 
+  // 文件夹/终端状态变化时防抖同步（忽略 AI 消息等无关 connections 更新）
   useEffect(() => {
     if (!isTauriRuntime()) return
-    const timer = window.setTimeout(() => pushRuntimeSnapshot(), 400)
+    const timer = window.setTimeout(() => syncRuntimeToBackend(), 1000)
     return () => window.clearTimeout(timer)
-  }, [folders, connections, pushRuntimeSnapshot])
+  }, [runtimeSyncKey, syncRuntimeToBackend])
 
   // 启动后恢复本机已存密码（仅 SSH，延迟执行不阻塞首屏）
   useEffect(() => {
@@ -1941,15 +1987,25 @@ export default function AITerminal() {
     return () => window.clearTimeout(timer)
   }, [])
 
-  // 切换连接标签时刷新该会话的文件树
+  // 切换连接标签时刷新该会话的文件树（已有缓存则跳过）
   useEffect(() => {
-    if (!activeConnection) return
+    if (!activeConnection || !activeConnectionId) return
     const t = activeConnection.session.type
     if (t !== 'ssh' && t !== 'local' && t !== 'wsl') return
     if (!isTauriRuntime()) return
     if (!activeConnection.shells.some(s => s.terminalStatus === 'connected')) return
-    void loadRemoteFiles(activeConnection.session, activeConnection.remotePath ?? '~')
-  }, [activeConnectionId, loadRemoteFiles])
+    const path = activeConnection.remotePath ?? '~'
+    const last = lastFileTreeLoadRef.current
+    if (
+      last.connectionId === activeConnectionId &&
+      last.path === path &&
+      (activeConnection.remoteFiles?.length ?? 0) > 0
+    ) {
+      return
+    }
+    lastFileTreeLoadRef.current = { connectionId: activeConnectionId, path }
+    void loadRemoteFiles(activeConnection.session, path)
+  }, [activeConnectionId, activeConnection?.remotePath, activeConnection?.session, loadRemoteFiles])
 
   // Close a connection
   const handleConnectionClose = useCallback((connectionId: string) => {
@@ -3744,6 +3800,27 @@ export default function AITerminal() {
     [connections, runBackendConnect]
   )
 
+  const workbenchShells = useMemo(() => {
+    if (!activeConnection) return []
+    return activeConnection.shells.map(s => ({
+      id: s.id,
+      name: s.name,
+      history: s.history,
+      terminalSessionId: s.terminalSessionId,
+      terminalStatus: s.terminalStatus,
+    }))
+  }, [activeConnection?.shells])
+
+  const workbenchClearSignals = useMemo(() => {
+    if (!activeConnection) return {}
+    return Object.fromEntries(
+      activeConnection.shells.map(s => [
+        s.terminalSessionId,
+        terminalClearSignals[s.terminalSessionId] ?? 0,
+      ])
+    )
+  }, [activeConnection?.shells, terminalClearSignals])
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-background">
       <AppAlertDialog
@@ -3875,17 +3952,12 @@ export default function AITerminal() {
                 ref={workbenchRef}
                 connectionId={activeConnection.id}
                 session={activeConnection.session}
-                  shells={activeConnection.shells}
+                  shells={workbenchShells}
                   activeShellId={activeConnection.activeShellId}
                 openFiles={activeConnection.openFiles}
                 activeFileId={activeConnection.activeFileId}
                 terminalLive={activeConnection.terminalLive}
-                clearSignals={Object.fromEntries(
-                  activeConnection.shells.map(s => [
-                    s.terminalSessionId,
-                    terminalClearSignals[s.terminalSessionId] ?? 0,
-                  ])
-                )}
+                clearSignals={workbenchClearSignals}
                 browserTabs={activeConnection.browserTabs ?? []}
                 activeBrowserTabId={activeConnection.activeBrowserTabId ?? undefined}
                   onShellChange={handleShellChange}

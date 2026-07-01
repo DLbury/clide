@@ -398,8 +398,8 @@ export interface WorkbenchLayoutHandle {
   captureLayout: () => unknown | null
 }
 
-export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayoutProps>(
-  function WorkbenchLayout({
+export const WorkbenchLayout = memo(
+  forwardRef<WorkbenchLayoutHandle, WorkbenchLayoutProps>(function WorkbenchLayout({
   connectionId,
   session,
   shells,
@@ -1163,3 +1163,4 @@ export const WorkbenchLayout = forwardRef<WorkbenchLayoutHandle, WorkbenchLayout
     </>
   )
 })
+)

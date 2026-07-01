@@ -265,7 +265,7 @@ export function useClaudeCode({
           if (status) setBridge(status)
         })
         .catch(() => {})
-    }, 8000)
+    }, 30_000)
 
     return () => {
       clearTimeout(detectTimer)
@@ -287,13 +287,8 @@ export function useClaudeCode({
 
   useEffect(() => {
     if (!isTauriRuntime() || !enabled) return
-    const sync = () => {
-      const fn = getIdeContextRef.current
-      if (fn) updateIdeContext(fn()).catch(console.error)
-    }
-    sync()
-    const timer = setInterval(sync, 3000)
-    return () => clearInterval(timer)
+    const fn = getIdeContextRef.current
+    if (fn) void updateIdeContext(fn()).catch(() => {})
   }, [enabled, contextSyncKey])
 
   const registerStreamHandler = useCallback(

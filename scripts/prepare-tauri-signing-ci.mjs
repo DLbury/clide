@@ -5,7 +5,6 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 
 const confPath = path.join('src-tauri', 'tauri.conf.json')
 const keyFromEnv = process.env.SIGNING_KEY?.trim() ?? ''
@@ -74,11 +73,11 @@ if (!keyBase64) {
   process.exit(0)
 }
 
-const keyFile = path.join(os.tmpdir(), 'tauri-signing.key')
-fs.writeFileSync(keyFile, `${keyBase64}\n`, { mode: 0o600 })
-console.log(`Updater signing key written to ${keyFile} (base64, ${keyBase64.length} chars)`)
+// Tauri expects TAURI_SIGNING_PRIVATE_KEY to contain the base64 key content directly,
+// not a file path. Write the base64 content to the env var.
+console.log(`Updater signing key prepared (base64, ${keyBase64.length} chars)`)
 
-appendGithubEnv(`TAURI_SIGNING_PRIVATE_KEY=${keyFile}`)
+appendGithubEnv(`TAURI_SIGNING_PRIVATE_KEY=${keyBase64}`)
 if (passwordFromEnv) {
   appendGithubEnv(`TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${passwordFromEnv}`)
 }

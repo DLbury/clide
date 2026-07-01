@@ -20,6 +20,7 @@ const INTERACTIVE_IMMEDIATE_MAX: usize = 512;
 struct PendingEmit {
     data: String,
     last_emit: Instant,
+    flush_scheduled: bool,
 }
 
 static PENDING: LazyLock<Mutex<HashMap<String, PendingEmit>>> =
@@ -38,6 +39,15 @@ fn flush_one(app: &AppHandle, session_id: &str, payload: String) {
     );
 }
 
+fn schedule_coalesce_flush(app: &AppHandle, session_id: &str) {
+    let app = app.clone();
+    let sid = session_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(COALESCE_WINDOW).await;
+        flush_session(&app, &sid);
+    });
+}
+
 /// 写入 Rust 缓冲并推送到前端。首包与空闲窗口后立即 emit，避免仅见光标；
 /// 高吞吐时 16ms 内合并，减轻长任务 IPC 压力。
 pub fn append_and_emit(app: &AppHandle, session_id: &str, data: &str) {
@@ -52,6 +62,7 @@ pub fn append_and_emit(app: &AppHandle, session_id: &str, data: &str) {
         .or_insert_with(|| PendingEmit {
             data: String::new(),
             last_emit: Instant::now() - COALESCE_WINDOW,
+            flush_scheduled: false,
         });
     entry.data.push_str(data);
 
@@ -59,11 +70,18 @@ pub fn append_and_emit(app: &AppHandle, session_id: &str, data: &str) {
         || data.len() < INTERACTIVE_IMMEDIATE_MAX
         || entry.last_emit.elapsed() >= COALESCE_WINDOW;
     if !should_flush {
+        if !entry.flush_scheduled {
+            entry.flush_scheduled = true;
+            let sid = session_id.to_string();
+            drop(map);
+            schedule_coalesce_flush(app, &sid);
+        }
         return;
     }
 
     let payload = std::mem::take(&mut entry.data);
     entry.last_emit = Instant::now();
+    entry.flush_scheduled = false;
     drop(map);
     flush_one(app, session_id, payload);
 }
@@ -71,6 +89,9 @@ pub fn append_and_emit(app: &AppHandle, session_id: &str, data: &str) {
 pub fn flush_session(app: &AppHandle, session_id: &str) {
     let payload = {
         let mut map = PENDING.lock();
+        if let Some(entry) = map.get_mut(session_id) {
+            entry.flush_scheduled = false;
+        }
         map.remove(session_id)
             .map(|mut p| std::mem::take(&mut p.data))
     };

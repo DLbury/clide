@@ -899,7 +899,7 @@ impl ClaudeSessionManager {
                 } else {
                     String::new()
                 };
-                tracing::info!("stream line: type={detected_type} {detail}");
+                tracing::trace!("stream line: type={detected_type} {detail}");
 
                 let req = current.lock().clone();
                 let mut local_sid = session.lock().clone();
