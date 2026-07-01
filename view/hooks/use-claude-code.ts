@@ -216,14 +216,13 @@ export function useClaudeCode({
     listenClaudeStream(event => {
       const handler = pendingRequests.current.get(event.requestId)
       if (handler) {
-        // done 事件同步处理，避免 UI 在正文已显示后仍保持「进行中」
-        if (event.done) {
+        queueMicrotask(() => {
           handler(event)
-        } else {
-          queueMicrotask(() => handler(event))
-        }
-      }
-      if (event.done) {
+          if (event.done) {
+            pendingRequests.current.delete(event.requestId)
+          }
+        })
+      } else if (event.done) {
         pendingRequests.current.delete(event.requestId)
       }
       if (event.sessionId) {
@@ -304,6 +303,10 @@ export function useClaudeCode({
     []
   )
 
+  const unregisterStreamHandler = useCallback((requestId: string) => {
+    pendingRequests.current.delete(requestId)
+  }, [])
+
   const restartBridge = useCallback(async () => {
     if (!isTauriRuntime()) return null
     mcpAutoAttemptedRef.current = false
@@ -331,6 +334,7 @@ export function useClaudeCode({
     ensureMcpReady,
     ensureStreamReady,
     registerStreamHandler,
+    unregisterStreamHandler,
     restartBridge,
   }
 }

@@ -93,7 +93,10 @@ function appendPart(message: ChatMessage, part: ChatMessagePart): ChatMessage {
     (part.kind === 'text' || part.kind === 'reasoning') &&
     last.kind === part.kind
   ) {
-    parts[parts.length - 1] = { ...last, content: last.content + part.content }
+    parts[parts.length - 1] = {
+      ...last,
+      content: (last.content ?? '') + part.content,
+    }
   } else if (part.kind === 'tool') {
     // Avoid duplicating tool blocks in timeline.
     if (!parts.some(p => p.kind === 'tool' && p.toolId === part.toolId)) {

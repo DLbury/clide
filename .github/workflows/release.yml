@@ -86,15 +86,14 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.68
+            ## Clide v0.1.69
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **修复 CI 更新包签名**：支持 base64 格式私钥，重新生成签名密钥对
-            - **应用内自动更新**：v0.1.68 起支持签名更新包（需从本版起安装）
-            - **分屏 Shell 输入修复**：多个 Shell 不同目录时可正常切换输入
-            - **布局快照 cwd**、**文件列表中文**、**Claude 多安装切换**、**浏览器内网限制**（同 v0.1.67）
+            - **修复 Release 签名构建**：CI 保留 base64 私钥格式，全平台可正常打出带 updater 的安装包
+            - **修复 AI 流式回复崩溃**：流式更新时不再因过期 handler 或空 content 报错
+            - 含 v0.1.68 功能：应用内更新、分屏 Shell 输入、布局 cwd、中文文件名、Claude 多安装切换、浏览器内网限制
 
             ### 平台说明
             - **Windows**: `.msi` / `.exe`（支持应用内更新）

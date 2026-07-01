@@ -2764,6 +2764,7 @@ export default function AITerminal() {
               silentTimer = null
               clearSettleTimer()
               flushStreamUi()
+              claudeCode.unregisterStreamHandler(requestId)
               claudeSilentKeepaliveRef.current.delete(requestId)
             }
             const armSilentTimeout = () => {
@@ -2815,23 +2816,33 @@ export default function AITerminal() {
               event: ClaudeStreamEvent,
               textChunk?: string
             ) => {
-              setConnections(prev =>
-                prev.map(conn => {
-                  if (conn.id !== activeConnectionId) return conn
-                  return {
-                    ...conn,
-                    aiMessages: conn.aiMessages.map(m => {
-                      if (m.id !== assistantId) return m
+              const connId = activeConnectionIdRef.current
+              const msgId = activeAssistantIdRef.current
+              if (!connId || !msgId) return
+
+              try {
+                setConnections(prev =>
+                  prev.map(conn => {
+                    if (conn.id !== connId) return conn
+                    let matched = false
+                    const aiMessages = conn.aiMessages.map(m => {
+                      if (m.id !== msgId) return m
+                      matched = true
                       let updated = applyClaudeStreamEvent(m, event)
                       if (textChunk) {
-                        updated = { ...updated, content: updated.content + textChunk }
+                        const base = updated.content ?? ''
+                        updated = { ...updated, content: base + textChunk }
                         updated = appendAssistantTextPart(updated, textChunk)
                       }
                       return updated
-                    }),
-                  }
-                })
-              )
+                    })
+                    if (!matched) return conn
+                    return { ...conn, aiMessages }
+                  })
+                )
+              } catch (err) {
+                console.error('applyAssistantStreamUi failed', err, event)
+              }
             }
 
             const flushStreamUi = () => {
@@ -2840,6 +2851,11 @@ export default function AITerminal() {
                 streamUiRaf = null
               }
               if (!pendingStreamEvent) return
+              if (!activeAssistantIdRef.current) {
+                pendingStreamEvent = null
+                pendingStreamText = ''
+                return
+              }
               const event = pendingStreamEvent
               const text = pendingStreamText
               pendingStreamEvent = null
@@ -2999,13 +3015,18 @@ export default function AITerminal() {
                   assistantAccumulated = bufferedResultText
                   setConnections(prev =>
                     prev.map(conn => {
-                      if (conn.id !== activeConnectionId) return conn
+                      const connId = activeConnectionIdRef.current
+                      const msgId = activeAssistantIdRef.current
+                      if (!connId || !msgId || conn.id !== connId) return conn
                       return {
                         ...conn,
                         aiMessages: conn.aiMessages.map(m => {
-                          if (m.id !== assistantId) return m
+                          if (m.id !== msgId) return m
                           let updated = m
-                          updated = { ...updated, content: updated.content + bufferedResultText }
+                          updated = {
+                            ...updated,
+                            content: (updated.content ?? '') + bufferedResultText,
+                          }
                           updated = appendAssistantTextPart(updated, bufferedResultText)
                           return updated
                         }),
@@ -3071,7 +3092,7 @@ export default function AITerminal() {
                       aiMessages: conn.aiMessages.map(m => {
                         if (m.id !== assistantId) return m
                         let updated = finalizeAssistantTurn(m)
-                        if (event.error && !updated.content.trim()) {
+                        if (event.error && !(updated.content ?? '').trim()) {
                           updated = {
                             ...updated,
                             content: updated.content || `Claude Code 错误: ${event.error}`,
@@ -3081,7 +3102,7 @@ export default function AITerminal() {
                           !assistantAccumulated.trim() &&
                           !bufferedResultText?.trim() &&
                           !sawStreamingText &&
-                          !updated.content.trim() &&
+                          !(updated.content ?? '').trim() &&
                           !sawReasoning
                         ) {
                           updated = {
