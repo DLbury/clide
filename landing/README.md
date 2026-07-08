@@ -16,10 +16,11 @@ landing/
 
 ## Deploy to GitHub Pages
 
+**Current method:** GitHub Actions (`.github/workflows/pages.yml`).
+
 1. Go to repo **Settings → Pages**
-2. **Source:** Deploy from a branch
-3. **Branch:** `main`, folder: **`/landing`**
-4. Save
+2. **Source:** GitHub Actions
+3. Push changes under `landing/` (or re-run the workflow manually)
 
 The site will be available at:
 
