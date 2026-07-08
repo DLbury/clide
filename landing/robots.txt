@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://dlbury.github.io/clide/sitemap.xml

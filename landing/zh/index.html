@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clide — SSH 终端、SFTP 客户端与 AI 运维工作台 | Claude Code MCP 集成</title>
+<meta name="description" content="Clide 是一款免费开源的跨平台 SSH 终端与 DevOps 工作台。多标签远程 Shell、SFTP 文件管理、服务器监控，以及 Claude Code AI 排障——凭据留在终端，不进对话。适用于 SRE、运维与后端工程师。">
+<meta name="keywords" content="SSH 终端, SSH 客户端, 终端模拟器, SFTP 客户端, 远程终端, 运维终端, DevOps 终端, SRE 工具, 服务器管理, 跨平台终端, Windows SSH, Linux 终端, macOS 终端, AI 终端, AI 运维, Claude Code, MCP 服务器, 安全 sudo, 远程排障, 故障响应, 跳板机, 堡垒机, xterm, 多标签终端, Tauri, 开源终端, 智能运维, 服务器运维工具">
+<meta name="author" content="Clide">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://dlbury.github.io/clide/zh/">
+<link rel="alternate" hreflang="en" href="https://dlbury.github.io/clide/">
+<link rel="alternate" hreflang="zh-CN" href="https://dlbury.github.io/clide/zh/">
+<link rel="alternate" hreflang="x-default" href="https://dlbury.github.io/clide/">
+<meta name="theme-color" content="#0a0e14">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Clide">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:title" content="Clide — SSH 终端与 AI 运维工作台">
+<meta property="og:description" content="跨平台 SSH 终端：多标签 Shell、SFTP、监控与 Claude Code AI。密码留在终端，不进 AI 对话。免费开源。">
+<meta property="og:url" content="https://dlbury.github.io/clide/zh/">
+<meta property="og:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
+<meta property="og:image:alt" content="Clide 桌面应用界面：左侧 SSH 终端、中间文件与监控、右侧 Claude Code AI 助手">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Clide — SSH 终端与 AI 运维工作台">
+<meta name="twitter:description" content="用真实 SSH 终端、SFTP 和 Claude Code 管理服务器，无需把密码或密钥交给 AI。">
+<meta name="twitter:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
+<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/DLbury/clide/main/view/public/icon-rounded.png">
+<link rel="apple-touch-icon" href="https://raw.githubusercontent.com/DLbury/clide/main/view/public/icon-rounded.png">
+<link rel="stylesheet" href="../css/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://dlbury.github.io/clide/zh/#website",
+      "url": "https://dlbury.github.io/clide/zh/",
+      "name": "Clide",
+      "description": "跨平台 SSH 终端与 AI 运维工作台，面向 SRE 与 DevOps 工程师",
+      "inLanguage": "zh-CN",
+      "publisher": {"@id": "https://dlbury.github.io/clide/#organization"}
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://dlbury.github.io/clide/zh/#software",
+      "name": "Clide",
+      "alternateName": ["AITerm", "Clide SSH 终端", "Clide 运维工作台", "智能运维终端"],
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "SSH 客户端, 终端模拟器, SFTP 客户端",
+      "operatingSystem": "Windows 10+, macOS 11+, Linux",
+      "description": "桌面 SSH 终端：多标签 Shell、SFTP 文件管理、服务器资源监控，以及通过 MCP 集成本地 Claude Code AI。凭据永不离开本机。",
+      "url": "https://dlbury.github.io/clide/zh/",
+      "downloadUrl": "https://github.com/DLbury/clide/releases",
+      "softwareVersion": "0.1",
+      "license": "https://opensource.org/licenses/MIT",
+      "isAccessibleForFree": true,
+      "inLanguage": "zh-CN",
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "CNY"}
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://dlbury.github.io/clide/zh/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Clide 是什么？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Clide 是一款免费开源的桌面 SSH 终端与 DevOps 工作台，支持 Windows、macOS 和 Linux。它将多标签远程 Shell、SFTP 文件管理、服务器监控和 Claude Code AI 助手整合在同一窗口。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Claude Code 能看到我的 SSH 密码或 sudo 密码吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不能。SSH 密码、私钥和 sudo 密码只在桌面左侧终端面板输入，不会进入 Claude Code 对话或 MCP 路径。AI 仅读取命令输出文本。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "远程服务器需要安装软件吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不需要。Clide 使用标准 SSH 协议，无需在服务器上安装 agent、无需为 AI 配置额外公钥。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header class="site-header">
+<div class="container nav">
+<a class="logo" href="../" aria-label="Clide 首页">
+<img src="https://raw.githubusercontent.com/DLbury/clide/main/view/public/icon-rounded.png" alt="Clide 标志" width="36" height="36">
+<span>Clide</span>
+</a>
+<nav class="nav-links" aria-label="主导航">
+<a href="#features">功能</a>
+<a href="#security">安全</a>
+<a href="#compare">对比</a>
+<a href="#faq">常见问题</a>
+<a href="https://github.com/DLbury/clide">GitHub</a>
+<a class="btn btn-primary" style="padding:8px 16px;font-size:.85rem" href="https://github.com/DLbury/clide/releases">下载</a>
+<span class="lang-switch"><a href="../" hreflang="en">English</a></span>
+</nav>
+</div>
+</header>
+
+<main>
+<section class="hero" aria-labelledby="hero-title">
+<div class="container">
+<p class="hero-badge">开源 · MIT · Windows / macOS / Linux</p>
+<h1 id="hero-title">为现代服务器运维而生的<br>SSH 终端</h1>
+<p class="hero-lead">多标签远程 Shell、SFTP、资源监控与 Claude Code AI —— 一款跨平台桌面应用。让 AI 帮你排障生产环境，无需交出密码、私钥或 root 权限。</p>
+<p class="hero-sub">Clide 是面向 SRE、DevOps 与后端工程师的运维工作台 —— 日常泡在 SSH 终端里，又想在故障时获得 AI 帮助，同时不牺牲凭据安全。</p>
+<div class="btn-group">
+<a class="btn btn-primary" href="https://github.com/DLbury/clide/releases">免费下载</a>
+<a class="btn btn-secondary" href="https://github.com/DLbury/clide">GitHub 开源</a>
+</div>
+<p class="hero-keywords">SSH 客户端 · 终端模拟器 · SFTP 客户端 · 远程终端 · DevOps 工作台 · SRE 工具 · 服务器管理 · AI 终端 · Claude Code · 安全 sudo · 跳板机 · 跨平台终端</p>
+<figure class="hero-img">
+<img src="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png" alt="Clide SSH 终端界面：多面板布局，包含远程 Shell、SFTP 文件树、服务器监控和 Claude Code AI 助手" width="900" height="506" loading="eager">
+<figcaption class="sr-only">Clide 桌面界面：左侧 SSH Shell、中间文件与监控、右侧 Claude Code AI</figcaption>
+</figure>
+</div>
+</section>
+
+<section id="features" aria-labelledby="features-title">
+<div class="container">
+<h2 class="section-title" id="features-title">生产级 SSH 客户端该有的 —— 再加 AI</h2>
+<p class="section-desc">不只是终端模拟器。Clide 是完整的远程服务器管理工具包，原生集成 Claude Code。</p>
+<div class="grid">
+<article class="card">
+<div class="card-icon" aria-hidden="true">🖥️</div>
+<h3>多标签 SSH 终端</h3>
+<p>Dockview 分屏、会话分组、持久化 Profile。xterm.js 真实 PTY，本地 PowerShell 与远程 SSH —— 你手敲或 AI 跑命令，同一条 Shell。</p>
+</article>
+<article class="card">
+<div class="card-icon" aria-hidden="true">📁</div>
+<h3>SFTP 与远程文件编辑</h3>
+<p>浏览、上传、下载、拖拽批量操作。Monaco 编辑远程配置 —— nginx、systemd、k8s 清单，无需离开应用。</p>
+</article>
+<article class="card">
+<div class="card-icon" aria-hidden="true">📊</div>
+<h3>服务器资源监控</h3>
+<p>SSH 连接后查看 CPU、内存、GPU 显存与磁盘。独立 exec 通道 —— 监控不阻塞交互式 Shell。</p>
+</article>
+<article class="card">
+<div class="card-icon" aria-hidden="true">🤖</div>
+<h3>Claude Code + MCP</h3>
+<p>本机 Claude Code 通过 <code>runShellCommand</code> 驱动已打开的 PTY。AI 读取实时终端输出，辅助排障、日志分析与 runbook 执行。</p>
+</article>
+<article class="card">
+<div class="card-icon" aria-hidden="true">🔐</div>
+<h3>安全 Sudo 与二次验证</h3>
+<p>AI 需要 root 时，sudo 提示出现在你的终端 —— 密码由你亲手输入。MCP 不捕获、不转发、不记录。</p>
+</article>
+<article class="card">
+<div class="card-icon" aria-hidden="true">🌐</div>
+<h3>跳板机与隧道</h3>
+<p>SSH Jump / 堡垒机、SOCKS 代理、Telnet。经企业堡垒连接生产集群 —— 标准 SSH，服务器零安装。</p>
+</article>
+</div>
+<div class="badges" aria-label="技术栈">
+<span class="badge">Tauri 2</span>
+<span class="badge">Rust · russh</span>
+<span class="badge">xterm.js</span>
+<span class="badge">Monaco Editor</span>
+<span class="badge">Next.js + React</span>
+<span class="badge">Claude Code MCP</span>
+</div>
+</div>
+</section>
+
+<section id="security" aria-labelledby="security-title" style="background:var(--bg-elevated)">
+<div class="container">
+<div class="two-col">
+<div>
+<h2 class="section-title" style="text-align:left" id="security-title">AI 能操作服务器 —— 但不持有你的凭据</h2>
+<p class="section-desc" style="text-align:left;margin-left:0;margin-bottom:24px">多数 AI + SSH 方案的困境：要么给每台机器配 AI 公钥，要么把密码贴进对话。Clide 的本地中转架构保留传统 SSH 客户端的安全模型。</p>
+<ul class="check-list">
+<li>SSH 连接仅在本机桌面建立与维护</li>
+<li>密码与私钥不离开进程内存</li>
+<li>MCP 只能操作你已打开并登录的会话</li>
+<li>远程服务器无需 agent 或额外 SSH 公钥</li>
+<li>终端输出文本可能进入 Claude 上下文 —— 密码永远不会</li>
+</ul>
+</div>
+<div>
+<pre class="arch-diagram" aria-label="架构示意图">你的桌面（Clide）
+  ├─ SSH 连接 ← 仅本机，russh
+  ├─ 左侧 xterm ← 你登录、2FA、sudo
+  └─ IDE 桥接 + MCP aiterm
+        ↑
+本机 Claude Code（--ide）
+  └─ runShellCommand / getTerminalContext
+     readRemoteFile / ...</pre>
+</div>
+</div>
+</div>
+</section>
+
+<section id="use-cases" aria-labelledby="usecases-title">
+<div class="container">
+<h2 class="section-title" id="usecases-title">为真实运维场景设计</h2>
+<p class="section-desc">从日常 SSH 到凌晨三点故障响应 —— Clide 替代「终端 + SFTP + 聊天窗口」的组合。</p>
+<div>
+<article class="use-case">
+<span class="use-case-num" aria-hidden="true">01</span>
+<div>
+<h3>故障响应与排障</h3>
+<p>磁盘满了？服务挂了？AI 在你的 live Shell 里跑 <code>df -h</code>、<code>journalctl</code>、<code>sudo du</code> —— sudo 由你批准，每条命令、每行输出都看得见。</p>
+</div>
+</article>
+<article class="use-case">
+<span class="use-case-num" aria-hidden="true">02</span>
+<div>
+<h3>远程配置管理</h3>
+<p>SFTP 浏览生产配置，Monaco 编辑后保存。改 nginx、调 systemd、更新 env —— 无需 scp 来回。</p>
+</div>
+</article>
+<article class="use-case">
+<span class="use-case-num" aria-hidden="true">03</span>
+<div>
+<h3>多机群运维</h3>
+<p>标签页 SSH 会话、会话分组、经堡垒机跳转。跨机器监控 CPU 与磁盘，AI 辅助关联症状。</p>
+</div>
+</article>
+<article class="use-case">
+<span class="use-case-num" aria-hidden="true">04</span>
+<div>
+<h3>安全敏感团队</h3>
+<p>服务器上不装 AI 公钥。Claude 对话里不贴 root 密码。信任边界与 PuTTY、Tabby、iTerm2 相同 —— 加上 AI 上下文。</p>
+</div>
+</article>
+</div>
+</div>
+</section>
+
+<section id="compare" aria-labelledby="compare-title" style="background:var(--bg-elevated)">
+<div class="container">
+<h2 class="section-title" id="compare-title">Clide 与其他方案对比</h2>
+<p class="section-desc">终端模拟器 + 运维工具包 —— 其他 SSH 客户端没有的原生 AI 集成。</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th scope="col">能力</th>
+<th scope="col" class="highlight-col">Clide</th>
+<th scope="col">Tabby</th>
+<th scope="col">Warp</th>
+<th scope="col">iTerm2</th>
+<th scope="col">Cursor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">原生 SSH 客户端</th>
+<td class="highlight-col yes">是</td>
+<td class="yes">是</td>
+<td class="yes">是</td>
+<td class="yes">是</td>
+<td class="no">否</td>
+</tr>
+<tr>
+<th scope="row">多标签 / 分屏终端</th>
+<td class="highlight-col yes">是</td>
+<td class="yes">是</td>
+<td class="yes">是</td>
+<td class="yes">是</td>
+<td class="no">否</td>
+</tr>
+<tr>
+<th scope="row">SFTP 文件管理</th>
+<td class="highlight-col yes">是</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="no">否</td>
+</tr>
+<tr>
+<th scope="row">远程配置编辑</th>
+<td class="highlight-col yes">Monaco</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="yes">是</td>
+</tr>
+<tr>
+<th scope="row">服务器资源监控</th>
+<td class="highlight-col yes">是</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="no">否</td>
+</tr>
+<tr>
+<th scope="row">Claude Code MCP</th>
+<td class="highlight-col yes">原生</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="no">否</td>
+</tr>
+<tr>
+<th scope="row">AI 使用真实 PTY</th>
+<td class="highlight-col yes">同一条 Shell</td>
+<td class="no">—</td>
+<td class="no">—</td>
+<td class="no">—</td>
+<td class="no">—</td>
+</tr>
+<tr>
+<th scope="row">凭据留本机</th>
+<td class="highlight-col yes">是</td>
+<td class="yes">是</td>
+<td class="yes">是</td>
+<td class="yes">是</td>
+<td class="no">不适用</td>
+</tr>
+<tr>
+<th scope="row">开源</th>
+<td class="highlight-col yes">MIT</td>
+<td class="yes">是</td>
+<td class="no">否</td>
+<td class="no">否</td>
+<td class="no">否</td>
+</tr>
+<tr>
+<th scope="row">跨平台</th>
+<td class="highlight-col yes">Win/Mac/Linux</td>
+<td class="yes">是</td>
+<td class="no">仅 Mac</td>
+<td class="no">仅 Mac</td>
+<td class="yes">是</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</section>
+
+<section id="quickstart" aria-labelledby="quickstart-title">
+<div class="container">
+<h2 class="section-title" id="quickstart-title">四步上手</h2>
+<p class="section-desc">从下载到 AI 驱动排障，几分钟即可。</p>
+<div class="steps">
+<div class="step">
+<h3>下载安装</h3>
+<p>从 GitHub Releases 获取 Windows、macOS 或 Linux 安装包。无需注册。</p>
+</div>
+<div class="step">
+<h3>配置 SSH Profile</h3>
+<p>在侧边栏添加服务器 —— 主机、用户、密钥或密码。支持跳板机与 SOCKS。</p>
+</div>
+<div class="step">
+<h3>连接并登录</h3>
+<p>双击连接。在左侧终端登录 —— 密码、二次验证、sudo 均由你处理。</p>
+</div>
+<div class="step">
+<h3>向 Claude Code 提问</h3>
+<p>本机 Claude Code CLI 与 IDE 桥接就绪后，描述问题，AI 在你的 Shell 里跑命令。</p>
+</div>
+</div>
+</div>
+</section>
+
+<section id="faq" aria-labelledby="faq-title" style="background:var(--bg-elevated)">
+<div class="container">
+<h2 class="section-title" id="faq-title">常见问题</h2>
+<p class="section-desc">关于 Clide 作为 SSH 终端、SFTP 客户端与 AI 运维工具的常见疑问。</p>
+<div itemscope itemtype="https://schema.org/FAQPage">
+<article class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+<h3 itemprop="name">Clide 是 AI 终端还是普通 SSH 客户端？</h3>
+<div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+<p itemprop="text">两者都是。Clide 首先是功能完整的跨平台 SSH 终端与 SFTP 客户端 —— 多标签 Shell、远程文件编辑、服务器监控、跳板机。AI 层（Claude Code via MCP）可选：向已打开的 Shell 下发命令并读回输出，不替代或绕过 SSH 客户端。</p>
+</div>
+</article>
+<article class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+<h3 itemprop="name">终端输出会上传到 Anthropic 吗？</h3>
+<div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+<p itemprop="text">会 —— 你让 Claude 读取的输出文本会成为 Claude Code 对话的一部分，与任何 Claude Code 用法相同。永远不会上传的：SSH 密码、私钥、sudo 密码。不要把 secret 贴进 AI 面板，在 Shell 里输入敏感信息。</p>
+</div>
+</article>
+<article class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+<h3 itemprop="name">为什么不直接用 Tabby 或 iTerm2，另开 Claude 窗口？</h3>
+<div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+<p itemprop="text">可以，但 Claude 看不到你的实时终端，只能手工复制粘贴。Clide 的价值在于 AI 读取真实 PTY 输出并把命令写回同一条 Shell，加上 SFTP、Monaco 编辑与监控，全在一个窗口。</p>
+</div>
+</article>
+<article class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+<h3 itemprop="name">支持哪些平台？</h3>
+<div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+<p itemprop="text">Windows 10+、macOS 11+ 及主流 Linux 发行版。基于 Tauri 2 原生性能。GitHub Releases 提供预编译安装包。</p>
+</div>
+</article>
+<article class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
+<h3 itemprop="name">Clide 和 AITerm 是什么关系？</h3>
+<div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
+<p itemprop="text">Clide 的 MCP 服务器名为 <code>aiterm</code> —— 负责把 Claude Code 桥接到你的终端会话。桌面应用品牌是 Clide；仓库中 MCP 工具以 AITerm 命名。</p>
+</div>
+</article>
+</div>
+</div>
+</section>
+
+<section class="cta" aria-labelledby="cta-title">
+<div class="container">
+<h2 id="cta-title">准备好替换 SSH + SFTP + 聊天窗口的组合了吗？</h2>
+<p>免费、开源、MIT 协议。下载 Clide，用可信赖的终端管理服务器 —— AI 永远看不到你的凭据。</p>
+<div class="btn-group">
+<a class="btn btn-primary" href="https://github.com/DLbury/clide/releases">下载 Windows / macOS / Linux 版</a>
+<a class="btn btn-secondary" href="https://github.com/DLbury/clide">GitHub Star</a>
+</div>
+</div>
+</section>
+</main>
+
+<footer class="site-footer">
+<div class="container">
+<nav class="footer-links" aria-label="页脚链接">
+<a href="https://github.com/DLbury/clide">GitHub</a>
+<a href="https://github.com/DLbury/clide/releases">发布页</a>
+<a href="https://github.com/DLbury/clide/blob/main/SECURITY.md">安全说明</a>
+<a href="https://github.com/DLbury/clide/blob/main/README_ZH.md">文档</a>
+<a href="../" hreflang="en">English</a>
+</nav>
+<p>基于 Tauri 2、Rust 与 Next.js 构建 · MIT 协议</p>
+<p class="footer-keywords">Clide — 开源 SSH 终端模拟器、SFTP 客户端、远程服务器终端、DevOps 运维工作台、SRE 运维工具、Windows macOS Linux 跨平台终端、AI 辅助服务器管理、Claude Code MCP 终端、安全 sudo SSH 客户端、跳板机堡垒机终端、生产排障终端、xterm 多标签 SSH、Monaco 远程文件编辑、服务器监控面板、故障响应 SSH 工具、平台工程终端、后端开发 SSH 客户端、AITerm MCP 服务器、智能运维终端</p>
+</div>
+</footer>
+</body>
+</html>
