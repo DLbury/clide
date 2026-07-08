@@ -23,6 +23,7 @@ interface LayoutSnapshotSaveDialogProps {
   name: string
   onNameChange: (name: string) => void
   onConfirm: () => void
+  saving?: boolean
 }
 
 export function LayoutSnapshotSaveDialog({
@@ -31,6 +32,7 @@ export function LayoutSnapshotSaveDialog({
   name,
   onNameChange,
   onConfirm,
+  saving = false,
 }: LayoutSnapshotSaveDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -42,20 +44,22 @@ export function LayoutSnapshotSaveDialog({
           value={name}
           onChange={e => onNameChange(e.target.value)}
           placeholder="例如：开发四窗格"
+          disabled={saving}
           onKeyDown={e => {
-            if (e.key === 'Enter') onConfirm()
+            if (e.key === 'Enter' && !saving) onConfirm()
           }}
           autoFocus
         />
           <p className="text-xs text-muted-foreground">
             保存分屏、各 Shell/浏览器/编辑器标签、每个终端当前路径及文件树位置；同一服务器可保存多套。
+            {saving ? ' 正在读取各终端路径…' : ''}
           </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+          <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={saving}>
             取消
           </Button>
-          <Button onClick={onConfirm} disabled={!name.trim()}>
-            保存
+          <Button onClick={onConfirm} disabled={!name.trim() || saving}>
+            {saving ? '保存中…' : '保存'}
           </Button>
         </DialogFooter>
       </DialogContent>

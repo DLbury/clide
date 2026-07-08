@@ -35,6 +35,7 @@ import {
   syncAllEmbeddedWebviews,
 } from '@/lib/webview-layout-bridge'
 import { focusTerminalBySessionId } from '@/lib/terminal-focus-registry'
+import { computeSyncGroupTilePlacements } from '@/lib/sync-group-layout'
 import { editorModelToOpenFile } from '@/lib/editor-service'
 import type { TerminalLine, Session } from '@/lib/types'
 import type { EditorModel } from '@/lib/editor-service'
@@ -75,6 +76,7 @@ interface WorkbenchRuntimeContextValue {
   activeShellId: string
   shells: WorkbenchShell[]
   clearSignals: Record<string, number>
+  isSyncGroup?: boolean
 }
 
 const WorkbenchContext = createContext<WorkbenchContextValue>({
@@ -350,6 +352,7 @@ const WorkbenchTab = memo(function WorkbenchTab({
 
 function RightHeaderActions({ panels, activePanel }: IDockviewHeaderActionsProps) {
   const { onNewShell, onNewBrowser, onOpenMonitor } = useContext(WorkbenchContext)
+  const { isSyncGroup } = useContext(WorkbenchRuntimeContext)
   const hasTerminal = panels.some(p => p.id.startsWith('terminal-'))
 
   if (!hasTerminal) return null
@@ -386,6 +389,7 @@ function RightHeaderActions({ panels, activePanel }: IDockviewHeaderActionsProps
           <Globe className="w-4 h-4" />
         </button>
       )}
+      {!isSyncGroup && (
       <button
         onClick={() => onNewShell(referencePanelId)}
         className={cn(
@@ -397,6 +401,7 @@ function RightHeaderActions({ panels, activePanel }: IDockviewHeaderActionsProps
       >
         <Plus className="w-4 h-4" />
       </button>
+      )}
     </div>
   )
 }
@@ -425,6 +430,7 @@ export interface WorkbenchLayoutProps {
   activeBrowserTabId?: string
   monitorOpen?: boolean
   monitorHistory?: HostStatsSample[]
+  isSyncGroup?: boolean
   onShellChange: (shellId: string) => void
   onNewShell: () => void
   onCloseShell: (shellId: string) => void
@@ -445,7 +451,7 @@ export interface WorkbenchLayoutProps {
 
 export type ShellPanelPlacement = {
   referencePanelId: string
-  direction: 'within' | 'below'
+  direction: 'within' | 'below' | 'right'
 }
 
 export interface WorkbenchLayoutHandle {
@@ -472,6 +478,7 @@ export const WorkbenchLayout = memo(
   activeBrowserTabId,
   monitorOpen = false,
   monitorHistory = [],
+  isSyncGroup = false,
   onShellChange,
   onNewShell,
   onCloseShell,
@@ -588,9 +595,9 @@ export const WorkbenchLayout = memo(
       user: session.user,
       host: session.host,
       terminalLive,
-      canCloseTab: shells.length > 1,
+      canCloseTab: !isSyncGroup && shells.length > 1,
     }),
-    [shells, session.id, session.user, session.host, terminalLive]
+    [shells, session.id, session.user, session.host, terminalLive, isSyncGroup]
   )
 
   const terminalParamsKey = useCallback(
@@ -651,6 +658,32 @@ export const WorkbenchLayout = memo(
       const missing = shells.filter(s => !api.getPanel(`terminal-${s.id}`))
       if (missing.length === 0) return
 
+      if (isSyncGroup) {
+        const order = computeSyncGroupTilePlacements(shells.map(s => s.id))
+        for (const tile of order) {
+          if (!missing.some(s => s.id === tile.shellId)) continue
+          const shell = shells.find(s => s.id === tile.shellId)
+          if (!shell) continue
+          const panelId = `terminal-${shell.id}`
+          api.addPanel({
+            id: panelId,
+            component: 'terminal',
+            tabComponent: 'tab',
+            title: shell.name,
+            params: buildTerminalParams(shell.id),
+            ...(tile.referenceShellId
+              ? {
+                  position: {
+                    referencePanel: `terminal-${tile.referenceShellId}`,
+                    direction: tile.direction ?? 'right',
+                  },
+                }
+              : {}),
+          })
+        }
+        return
+      }
+
       missing.forEach((shell, index) => {
         const panelId = `terminal-${shell.id}`
         const placement = index === 0 ? undefined : resolveShellPanelPlacement(api, panelId)
@@ -671,7 +704,7 @@ export const WorkbenchLayout = memo(
         })
       })
     },
-    [shells, buildTerminalParams, resolveShellPanelPlacement]
+    [shells, buildTerminalParams, resolveShellPanelPlacement, isSyncGroup]
   )
 
   const onReady = useCallback(
@@ -757,42 +790,70 @@ export const WorkbenchLayout = memo(
       api.panels.filter(p => p.id.startsWith('terminal-')).map(p => p.id.replace('terminal-', ''))
     )
     const shellIds = new Set(shells.map(s => s.id))
+    const syncTileOrder = isSyncGroup
+      ? computeSyncGroupTilePlacements(shells.map(s => s.id))
+      : null
 
-    shells.forEach(shell => {
+    for (const shell of shells) {
       const panelId = `terminal-${shell.id}`
       const panel = api.getPanel(panelId)
       const params = buildTerminalParams(shell.id)
       const paramsKey = terminalParamsKey(shell.id)
 
-      if (panel) {
-        if (panel.api.title !== shell.name) {
-          panel.api.setTitle(shell.name)
-        }
-        if (terminalParamsCacheRef.current.get(panelId) !== paramsKey) {
-          panel.api.updateParameters(params)
-          terminalParamsCacheRef.current.set(panelId, paramsKey)
-        }
-      } else {
-        const placement = resolveShellPanelPlacement(api, panelId)
-        // 允许添加第一个面板（当没有参考面板且面板列表为空时）
-        api.addPanel({
-          id: panelId,
-          component: 'terminal',
-          tabComponent: 'tab',
-          title: shell.name,
-          params,
-          ...(placement
-            ? {
-                position: {
-                  referencePanel: placement.referencePanelId,
-                  direction: placement.direction,
-                },
-              }
-            : {}),
-        })
+      if (!panel) continue
+      if (panel.api.title !== shell.name) {
+        panel.api.setTitle(shell.name)
+      }
+      if (terminalParamsCacheRef.current.get(panelId) !== paramsKey) {
+        panel.api.updateParameters(params)
         terminalParamsCacheRef.current.set(panelId, paramsKey)
       }
-    })
+    }
+
+    const shellsToAdd = isSyncGroup && syncTileOrder
+      ? syncTileOrder
+          .map(tile => shells.find(s => s.id === tile.shellId))
+          .filter((shell): shell is (typeof shells)[number] => !!shell)
+          .filter(shell => !api.getPanel(`terminal-${shell.id}`))
+      : shells.filter(shell => !api.getPanel(`terminal-${shell.id}`))
+
+    for (const shell of shellsToAdd) {
+      const panelId = `terminal-${shell.id}`
+      const params = buildTerminalParams(shell.id)
+      const paramsKey = terminalParamsKey(shell.id)
+
+      let placement = resolveShellPanelPlacement(api, panelId)
+      if (isSyncGroup && syncTileOrder) {
+        const tile = syncTileOrder.find(t => t.shellId === shell.id)
+        if (tile?.referenceShellId && api.getPanel(`terminal-${tile.referenceShellId}`)) {
+          placement = {
+            referencePanelId: `terminal-${tile.referenceShellId}`,
+            direction: tile.direction ?? 'right',
+          }
+        } else if (tile && !tile.referenceShellId) {
+          placement = undefined
+        } else {
+          continue
+        }
+      }
+
+      api.addPanel({
+        id: panelId,
+        component: 'terminal',
+        tabComponent: 'tab',
+        title: shell.name,
+        params,
+        ...(placement
+          ? {
+              position: {
+                referencePanel: placement.referencePanelId,
+                direction: placement.direction,
+              },
+            }
+          : {}),
+      })
+      terminalParamsCacheRef.current.set(panelId, paramsKey)
+    }
 
     existingTerminalIds.forEach(id => {
       if (!shellIds.has(id)) {
@@ -802,7 +863,7 @@ export const WorkbenchLayout = memo(
         syncingRef.current = false
       }
     })
-  }, [shellsLayoutKey, connectionId, buildTerminalParams, terminalParamsKey, resolveShellPanelPlacement])
+  }, [shellsLayoutKey, connectionId, buildTerminalParams, terminalParamsKey, resolveShellPanelPlacement, isSyncGroup])
 
   const browserTabsKey = browserTabs.map(t => `${t.id}:${t.title}:${t.url}:${t.webviewLabel}`).join('|')
 
@@ -1270,8 +1331,9 @@ export const WorkbenchLayout = memo(
       activeShellId,
       shells,
       clearSignals,
+      isSyncGroup,
     }),
-    [activeShellId, shells, clearSignals]
+    [activeShellId, shells, clearSignals, isSyncGroup]
   )
 
   return (
@@ -1289,7 +1351,9 @@ export const WorkbenchLayout = memo(
         disableDnd={false}
         watermarkComponent={() => (
           <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-            拖拽标签页到边缘以分屏 · Shell 与文件可自由组合
+            {isSyncGroup
+              ? '多机同步：各终端输入会自动广播到所有 Shell'
+              : '拖拽标签页到边缘以分屏 · Shell 与文件可自由组合'}
           </div>
         )}
       />

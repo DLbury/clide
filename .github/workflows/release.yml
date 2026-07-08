@@ -86,23 +86,33 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.71
+            ## Clide v0.1.76
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **多 AI 后端**：新增 Codex / Cursor Agent / OpenCode 等持久化 ACP 后端支持，可在设置中切换
-            - **多跳跳板链**：SSH 支持多级 ProxyJump，逐跳独立凭据；MCP 远程文件工具同样走跳板链
-            - **命令审批与审计**：AI 执行高危命令前需人工确认，全量命令留存审计记录
-            - **服务器监控**：主机 CPU/内存/磁盘实时面板与历史曲线、远程进程列表、多服务器命令同步
-            - **会话增强**：Agent 多线程对话、终端录制回放、命令历史、远程文件管理器 Windows 主机支持
-            - **修复**：AI 正文偶发不显示、远程新建文件夹落错主目录、mcp.json 解析失败时误清空既有配置、Windows 远程搜索忽略深度限制
+            - **布局快照**：保存前探测各 shell 真实工作目录；加载时自动连接服务器并恢复布局
+            - **AI 启动**：若上次对话非空，启动时自动新建空对话线程
+            - **多机同步输入**：选择多台服务器一键开 tab，终端按键/粘贴同步广播到全部 shell
+            - **同步组布局**：创建同步组时自动平铺各 shell 窗口
+            - **面板记忆**：服务器列表、文件树、AI 面板折叠/展开状态跨重启保留
+            - **Windows 免安装版**：新增 `*-portable.zip`，解压后双击 `clide.exe` 即可运行
 
             ### 平台说明
-            - **Windows**: `.msi` / `.exe`（支持应用内更新）
+            - **Windows**: `.exe` 安装包 / `*-portable.zip` 免安装版（支持应用内更新）
             - **macOS**: `.dmg`（含 Apple Silicon 与 Intel 两个构建）
             - **Linux**: `.deb` / `.AppImage`
           releaseDraft: false
           prerelease: false
           projectPath: src-tauri
           args: ${{ matrix.args }}
+
+      - name: Package Windows portable zip
+        if: matrix.platform == 'windows-latest'
+        run: node scripts/package-windows-portable.mjs
+
+      - name: Upload Windows portable zip
+        if: matrix.platform == 'windows-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" "src-tauri/target/release/bundle/Clide_*_x64-portable.zip" --clobber

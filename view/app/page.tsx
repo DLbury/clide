@@ -5,7 +5,7 @@ import { Sidebar } from '@/components/terminal/sidebar'
 import { ServerTabs } from '@/components/terminal/server-tabs'
 import { StatusBar } from '@/components/terminal/status-bar'
 import { CommandHistoryDialog } from '@/components/terminal/command-history-dialog'
-import { MultiServerSyncDialog, type SyncTerminalTarget } from '@/components/terminal/multi-server-sync-dialog'
+import { MultiServerSyncDialog, type SyncServerTarget } from '@/components/terminal/multi-server-sync-dialog'
 import { NewSessionModal, DEFAULT_FOLDER_PLACEHOLDER } from '@/components/terminal/new-session-modal'
 import { SettingsModal } from '@/components/settings/settings-modal'
 import { useAiSettings, getActiveCliPath, withActiveCliPath } from '@/lib/ai-settings'
@@ -60,6 +60,7 @@ import {
   ensureTerminalOutputListener,
 } from '@/lib/terminal-stream'
 import { updateIdeContext } from '@/lib/claude-client'
+import { registerSyncGroup, unregisterSyncGroup } from '@/lib/terminal-sync-group'
 import { makeTerminalSessionId, parseTerminalSessionId } from '@/lib/terminal-session'
 import {
   remoteEntriesToFileTree,
@@ -77,6 +78,14 @@ import {
   loadFileRootMode,
   saveFileRootMode,
 } from '@/lib/file-explorer-settings'
+import {
+  loadSidebarVisible,
+  saveSidebarVisible,
+  loadFileTreeVisible,
+  saveFileTreeVisible,
+  loadAiPaneVisible,
+  saveAiPaneVisible,
+} from '@/lib/panel-layout-settings'
 import {
   defaultRemoteHome,
   extractCwdFromTerminalChunk,
@@ -108,7 +117,8 @@ import {
   listLayoutSnapshots,
   saveLayoutSnapshot,
   deleteLayoutSnapshot,
-  resolveShellSnapshotCwd,
+  resolveShellCwdForSnapshot,
+  probeShellCwds,
   resolveSnapshotFileTreePath,
   snapshotPathForFileTreeLoad,
   dockviewHasMonitorPanel,
@@ -249,6 +259,11 @@ interface BrowserTab {
   tunnelId?: string
 }
 
+interface SyncGroupMember {
+  sourceConnectionId: string
+  session: Session
+}
+
 interface ServerConnection {
   id: string
   session: Session
@@ -270,6 +285,9 @@ interface ServerConnection {
   browserTabs?: BrowserTab[]
   activeBrowserTabId?: string | null
   monitorOpen?: boolean
+  /** 多机同步输入虚拟标签 */
+  isSyncGroup?: boolean
+  syncMembers?: SyncGroupMember[]
 }
 
 const MAX_HISTORY_LINES = 200
@@ -302,7 +320,9 @@ function buildConnectedServerBriefs(
   connections: ServerConnection[],
   activeConnectionId: string | null
 ): ConnectedServerBrief[] {
-  return connections.map(conn => ({
+  return connections
+    .filter(c => !c.isSyncGroup)
+    .map(conn => ({
     profileId: conn.session.id,
     name: conn.session.name,
     host: formatSessionHost(conn.session),
@@ -439,9 +459,9 @@ export default function AITerminal() {
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('ai')
-  const [showSidebar, setShowSidebar] = useState(true)
-  const [showFileTree, setShowFileTree] = useState(true)
-  const [showAiPane, setShowAiPane] = useState(true)
+  const [showSidebar, setShowSidebar] = useState(loadSidebarVisible)
+  const [showFileTree, setShowFileTree] = useState(loadFileTreeVisible)
+  const [showAiPane, setShowAiPane] = useState(loadAiPaneVisible)
   const [threadsDrawerOpen, setThreadsDrawerOpen] = useState(false)
   const [commandApprovalPending, setCommandApprovalPending] =
     useState<PendingCommandApproval | null>(null)
@@ -486,6 +506,7 @@ export default function AITerminal() {
   const fileRootModeRef = useRef(fileRootMode)
   fileRootModeRef.current = fileRootMode
   const pendingLayoutShellCwdRef = useRef(new Map<string, string>())
+  const layoutRestorePendingRef = useRef(false)
   const cwdPollTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const cwdFileTreeLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastFileTreeLoadRef = useRef({ connectionId: '', path: '' })
@@ -635,6 +656,18 @@ export default function AITerminal() {
       // PTY 连接在终端监听器就绪后由下方 AutoConnect effect 发起，避免首包丢失
     }
   }, [])
+
+  useEffect(() => {
+    saveSidebarVisible(showSidebar)
+  }, [showSidebar])
+
+  useEffect(() => {
+    saveFileTreeVisible(showFileTree)
+  }, [showFileTree])
+
+  useEffect(() => {
+    saveAiPaneVisible(showAiPane)
+  }, [showAiPane])
 
   const activeConnection = connections.find(c => c.id === activeConnectionId)
   const activeSession = activeConnection?.session
@@ -1252,47 +1285,44 @@ export default function AITerminal() {
     []
   )
 
-  const syncTerminalTargets = useMemo((): SyncTerminalTarget[] => {
-    const out: SyncTerminalTarget[] = []
-    for (const conn of connections) {
-      const t = conn.session.type
-      if (t !== 'ssh' && t !== 'local' && t !== 'wsl') continue
-      if (conn.session.status !== 'connected') continue
-      for (const shell of conn.shells) {
-        if (shell.terminalStatus !== 'connected') continue
-        out.push({
-          connectionId: conn.id,
-          connectionName: conn.session.name,
-          session: conn.session,
-          shellId: shell.id,
-          shellTitle: shell.name,
-          terminalSessionId: shell.terminalSessionId,
-        })
-      }
-    }
-    return out
+  const syncServerTargets = useMemo((): SyncServerTarget[] => {
+    return connections
+      .filter(
+        c =>
+          !c.isSyncGroup &&
+          connectionTerminalConnected(c) &&
+          (c.session.type === 'ssh' ||
+            c.session.type === 'local' ||
+            c.session.type === 'wsl')
+      )
+      .map(c => ({
+        connectionId: c.id,
+        name: c.session.name,
+        hostLabel: formatSessionHost(c.session),
+        session: c.session,
+      }))
   }, [connections])
 
   useEffect(() => {
-    if (!isTauriRuntime() || !followTerminalCwd) return
+    if (!isTauriRuntime()) return
     return subscribeAllTerminalOutput(event => {
       const cwd = extractCwdFromTerminalChunk(event.data)
       if (!cwd) return
       const conn = connectionsRef.current.find(c =>
         c.shells.some(s => s.terminalSessionId === event.sessionId)
       )
-      if (!conn || conn.id !== activeConnectionIdRef.current) return
+      if (!conn) return
       applyShellCwd(conn.id, event.sessionId, cwd)
     })
-  }, [followTerminalCwd, applyShellCwd])
+  }, [applyShellCwd])
 
   useEffect(() => {
-    if (!isTauriRuntime() || !followTerminalCwd) return
+    if (!isTauriRuntime()) return
     return onTerminalWrite((terminalSessionId, data) => {
       const conn = connectionsRef.current.find(c =>
         c.shells.some(s => s.terminalSessionId === terminalSessionId)
       )
-      if (!conn || conn.id !== activeConnectionIdRef.current) return
+      if (!conn) return
       const sessionType = conn.session.type
       if (sessionType !== 'ssh' && sessionType !== 'local' && sessionType !== 'wsl') {
         return
@@ -1318,11 +1348,11 @@ export default function AITerminal() {
       const next = parseCdTargetFromCommand(trimmed, current, home)
       if (next) {
         applyShellCwd(conn.id, terminalSessionId, next)
-      } else if (shell.id === conn.activeShellId) {
+      } else if (shell.id === conn.activeShellId && followTerminalCwdRef.current) {
         scheduleCwdPoll(conn.id, terminalSessionId)
       }
     })
-  }, [followTerminalCwd, applyShellCwd, scheduleCwdPoll])
+  }, [applyShellCwd, scheduleCwdPoll])
 
   const handleRemoteDirectoryExpand = useCallback(
     (item: FileItem) => {
@@ -1532,7 +1562,8 @@ export default function AITerminal() {
                 (updated.session.type === 'ssh' ||
                   updated.session.type === 'local' ||
                   updated.session.type === 'wsl') &&
-                !updated.remoteFiles?.length
+                !updated.remoteFiles?.length &&
+                !layoutRestorePendingRef.current
               return { ...updated, terminalLive: true }
             })
           )
@@ -1818,21 +1849,144 @@ export default function AITerminal() {
     [setFolders, offerPasswordRetryAfterAuthFailure]
   )
 
-  const handleSaveLayoutSnapshot = useCallback((sessionId: string, name: string) => {
+  const handleStartMultiServerSync = useCallback(
+    (sourceConnectionIds: string[]) => {
+      if (sourceConnectionIds.length < 2) return
+
+      const members = sourceConnectionIds
+        .map(id => connectionsRef.current.find(c => c.id === id))
+        .filter(
+          (c): c is ServerConnection =>
+            !!c &&
+            !c.isSyncGroup &&
+            connectionTerminalConnected(c) &&
+            (c.session.type === 'ssh' ||
+              c.session.type === 'local' ||
+              c.session.type === 'wsl')
+        )
+      if (members.length < 2) return
+
+      const syncConnectionId = `sync-${Date.now()}`
+      const syncProfileId = `sync-profile-${syncConnectionId}`
+      const syncMembers: SyncGroupMember[] = members.map(m => ({
+        sourceConnectionId: m.id,
+        session: m.session,
+      }))
+
+      const shells: Shell[] = members.map((member, index) => {
+        const shellId = `sync-shell-${index}-${Date.now()}`
+        return {
+          id: shellId,
+          name: member.session.name,
+          history: [
+            {
+              id: `sync-${Date.now()}-${index}`,
+              type: 'system' as const,
+              content: `同步终端 → ${member.session.name}`,
+              timestamp: new Date(),
+            },
+          ],
+          terminalSessionId: makeTerminalSessionId(syncProfileId, shellId),
+          terminalStatus: 'connecting' as const,
+        }
+      })
+
+      registerSyncGroup(
+        syncConnectionId,
+        shells.map(s => s.terminalSessionId)
+      )
+
+      const newConnection: ServerConnection = {
+        id: syncConnectionId,
+        session: {
+          id: syncProfileId,
+          name: `多机同步 (${members.length})`,
+          host: 'sync',
+          type: 'local',
+          status: 'connecting',
+          lastActive: new Date(),
+        },
+        shells,
+        activeShellId: shells[0].id,
+        openFiles: [],
+        activeFileId: null,
+        selectedFilePath: null,
+        aiMessages: [],
+        aiThinking: false,
+        terminalLive: true,
+        browserTabs: [],
+        activeBrowserTabId: null,
+        monitorOpen: false,
+        isSyncGroup: true,
+        syncMembers,
+      }
+
+      setConnections(prev => [...prev, newConnection])
+      setActiveConnectionId(syncConnectionId)
+
+      for (let i = 0; i < shells.length; i++) {
+        runBackendConnect(
+          syncMembers[i].session,
+          syncConnectionId,
+          shells[i].id,
+          shells[i].terminalSessionId
+        )
+      }
+    },
+    [runBackendConnect]
+  )
+
+  const handleSaveLayoutSnapshot = useCallback(async (sessionId: string, name: string) => {
     const conn = connectionsRef.current.find(
       c => c.session.id === sessionId && c.id === activeConnectionIdRef.current
     )
     if (!conn) return
     const dockview = workbenchRef.current?.captureLayout()
     if (!dockview) return
-    const activeShell = conn.shells.find(s => s.id === conn.activeShellId)
-    const activeCwd = activeShell
-      ? resolveShellSnapshotCwd(activeShell, conn.activeShellId, conn.remotePath)
-      : undefined
+
+    const probed = await probeShellCwds(
+      conn.shells.map(s => ({
+        id: s.id,
+        terminalSessionId: s.terminalSessionId,
+        terminalStatus: s.terminalStatus,
+        shellCwd: s.shellCwd,
+      })),
+      conn.session.type,
+      writeTerminal
+    )
+
+    // 探测结果写回，便于后续切换 Shell / 文件树跟随使用
+    if (probed.size > 0) {
+      setConnections(prev =>
+        prev.map(c => {
+          if (c.id !== conn.id) return c
+          return {
+            ...c,
+            shells: c.shells.map(s => {
+              const cwd = probed.get(s.id)
+              return cwd ? { ...s, shellCwd: cwd } : s
+            }),
+          }
+        })
+      )
+    }
+
+    const fresh = connectionsRef.current.find(c => c.id === conn.id) ?? conn
+    const shellCwds = new Map<string, string | undefined>()
+    for (const s of fresh.shells) {
+      shellCwds.set(
+        s.id,
+        probed.get(s.id) ??
+          resolveShellCwdForSnapshot(s, { terminalLive: fresh.terminalLive })
+      )
+    }
+
+    const activeShellId = fresh.activeShellId
+    const activeCwd = shellCwds.get(activeShellId)
     const snapshotRemotePath = resolveSnapshotFileTreePath(
-      conn.session,
+      fresh.session,
       activeCwd,
-      conn.remotePath
+      fresh.remotePath
     )
     const snapshot: ServerLayoutSnapshot = {
       id: `layout-${Date.now()}`,
@@ -1840,22 +1994,22 @@ export default function AITerminal() {
       profileId: sessionId,
       savedAt: new Date().toISOString(),
       remotePath: snapshotRemotePath,
-      activeShellId: conn.activeShellId,
-      activeFileId: conn.activeFileId,
-      activeBrowserTabId: conn.activeBrowserTabId ?? null,
-      shells: conn.shells.map(s => ({
+      activeShellId: fresh.activeShellId,
+      activeFileId: fresh.activeFileId,
+      activeBrowserTabId: fresh.activeBrowserTabId ?? null,
+      shells: fresh.shells.map(s => ({
         id: s.id,
         name: s.name,
-        cwd: resolveShellSnapshotCwd(s, conn.activeShellId, conn.remotePath),
+        cwd: shellCwds.get(s.id),
       })),
-      openFiles: conn.openFiles.map(f => ({ id: f.id, path: f.path })),
-      browserTabs: (conn.browserTabs ?? []).map(t => ({
+      openFiles: fresh.openFiles.map(f => ({ id: f.id, path: f.path })),
+      browserTabs: (fresh.browserTabs ?? []).map(t => ({
         id: t.id,
         title: t.title,
         url: t.url,
         webviewLabel: t.webviewLabel,
       })),
-      monitorOpen: conn.monitorOpen ?? false,
+      monitorOpen: fresh.monitorOpen ?? false,
       dockview,
     }
     saveLayoutSnapshot(snapshot)
@@ -1863,7 +2017,15 @@ export default function AITerminal() {
   }, [])
 
   const applyLayoutSnapshotToConnection = useCallback(
-    (conn: ServerConnection, snapshot: ServerLayoutSnapshot) => {
+    (
+      conn: ServerConnection,
+      snapshot: ServerLayoutSnapshot,
+      options?: { connect?: boolean }
+    ) => {
+      const useBackend = isTerminalBackendSupported(conn.session.type)
+      const shouldConnect = (options?.connect ?? conn.terminalLive) && useBackend
+
+      layoutRestorePendingRef.current = true
       pendingLayoutShellCwdRef.current.clear()
       for (const s of snapshot.shells) {
         if (s.cwd) {
@@ -1875,8 +2037,20 @@ export default function AITerminal() {
       }
 
       for (const oldShell of conn.shells) {
-        if (!snapshot.shells.some(s => s.id === oldShell.id) && conn.terminalLive) {
+        const kept = snapshot.shells.some(s => s.id === oldShell.id)
+        if (!kept && (shouldConnect || conn.terminalLive)) {
           void disconnectTerminal(oldShell.terminalSessionId).catch(() => {})
+          clearTerminalOutputBuffer(oldShell.terminalSessionId)
+        }
+      }
+
+      if (shouldConnect) {
+        for (const s of snapshot.shells) {
+          const oldShell = conn.shells.find(o => o.id === s.id)
+          if (oldShell?.terminalStatus === 'connected') {
+            void disconnectTerminal(oldShell.terminalSessionId).catch(() => {})
+            clearTerminalOutputBuffer(oldShell.terminalSessionId)
+          }
         }
       }
 
@@ -1885,7 +2059,7 @@ export default function AITerminal() {
         name: s.name,
         history: [],
         terminalSessionId: makeTerminalSessionId(conn.session.id, s.id),
-        terminalStatus: conn.terminalLive ? 'connecting' : undefined,
+        terminalStatus: shouldConnect ? 'connecting' : undefined,
         shellCwd: s.cwd,
       }))
 
@@ -1923,13 +2097,22 @@ export default function AITerminal() {
                   snapshot.monitorOpen ??
                   dockviewHasMonitorPanel(snapshot.dockview),
                 remotePath: restoredRemotePath ?? c.remotePath,
+                terminalLive: shouldConnect ? true : c.terminalLive,
+                session: {
+                  ...c.session,
+                  status: shouldConnect ? 'connecting' : c.session.status,
+                },
               }
         )
       )
 
+      if (shouldConnect) {
+        setFolders(prev => setSessionStatusInFolders(prev, conn.session.id, 'connecting'))
+      }
+
       setPendingLayoutRestore({ token: Date.now(), dockview: snapshot.dockview })
 
-      if (conn.terminalLive) {
+      if (shouldConnect) {
         for (const s of restoredShells) {
           runBackendConnect(conn.session, conn.id, s.id, s.terminalSessionId)
         }
@@ -1967,31 +2150,59 @@ export default function AITerminal() {
           .catch(() => {})
       }
     },
-    [loadRemoteFiles, remoteFileOpts, runBackendConnect]
+    [loadRemoteFiles, remoteFileOpts, runBackendConnect, setFolders]
   )
 
   const handleLoadLayoutSnapshot = useCallback(
     (sessionId: string, snapshot: ServerLayoutSnapshot) => {
       if (snapshot.profileId !== sessionId) return
-      const conn = connectionsRef.current.find(c => c.session.id === sessionId)
-      if (!conn) return
+      const folderSession = foldersRef.current
+        .flatMap(f => f.sessions)
+        .find(s => s.id === sessionId)
+      if (!folderSession) return
 
-      const run = () => {
-        const current = connectionsRef.current.find(
-          c => c.session.id === sessionId && c.id === activeConnectionIdRef.current
-        )
+      let conn = connectionsRef.current.find(c => c.session.id === sessionId)
+      if (!conn) {
+        if (!isTerminalBackendSupported(folderSession.type)) return
+        const placeholderShellId = `shell-${Date.now()}`
+        const connectionId = `conn-${Date.now()}`
+        conn = {
+          id: connectionId,
+          session: { ...folderSession, status: 'connecting' },
+          shells: [
+            {
+              id: placeholderShellId,
+              name: 'Shell 1',
+              history: [],
+              terminalSessionId: makeTerminalSessionId(folderSession.id, placeholderShellId),
+              terminalStatus: 'connecting',
+            },
+          ],
+          activeShellId: placeholderShellId,
+          openFiles: [],
+          activeFileId: null,
+          selectedFilePath: null,
+          aiMessages: [],
+          aiThinking: false,
+          terminalLive: true,
+          browserTabs: [],
+          activeBrowserTabId: null,
+          monitorOpen: false,
+        }
+        setConnections(prev => [...prev, conn!])
+        setFolders(prev => setSessionStatusInFolders(prev, sessionId, 'connecting'))
+      }
+
+      const connId = conn.id
+      setActiveConnectionId(connId)
+
+      requestAnimationFrame(() => {
+        const current = connectionsRef.current.find(c => c.id === connId)
         if (!current) return
-        applyLayoutSnapshotToConnection(current, snapshot)
-      }
-
-      if (conn.id !== activeConnectionIdRef.current) {
-        setActiveConnectionId(conn.id)
-        requestAnimationFrame(() => requestAnimationFrame(run))
-      } else {
-        run()
-      }
+        applyLayoutSnapshotToConnection(current, snapshot, { connect: true })
+      })
     },
-    [applyLayoutSnapshotToConnection]
+    [applyLayoutSnapshotToConnection, setFolders]
   )
 
   const handleDeleteLayoutSnapshot = useCallback((sessionId: string, snapshotId: string) => {
@@ -2232,11 +2443,14 @@ export default function AITerminal() {
     if (!isTauriRuntime()) return
     const folderProfiles = folders.flatMap(f => f.sessions)
     const connProfiles = connections
+      .filter(c => !c.isSyncGroup)
       .map(c => c.session)
       .filter(s => !folderProfiles.some(p => p.id === s.id))
     const snapshot = buildRuntimeSnapshot({
       folders: [{ sessions: [...folderProfiles, ...connProfiles] }],
-      connections: connections.map(c => ({
+      connections: connections
+        .filter(c => !c.isSyncGroup)
+        .map(c => ({
         id: c.id,
         session: c.session,
         activeShellId: c.activeShellId,
@@ -2408,6 +2622,10 @@ export default function AITerminal() {
   const handleConnectionClose = useCallback((connectionId: string) => {
     const conn = connections.find(c => c.id === connectionId)
 
+    if (conn?.isSyncGroup) {
+      unregisterSyncGroup(connectionId)
+    }
+
     void resetConnectionClaudeSession(connectionId, { clearChat: true })
 
     if (conn?.terminalLive) {
@@ -2417,7 +2635,7 @@ export default function AITerminal() {
       }
     }
 
-    if (conn && isTauriRuntime()) {
+    if (conn && isTauriRuntime() && !conn.isSyncGroup) {
       for (const tab of conn.browserTabs ?? []) {
         if (tab.tunnelId) void stopTunnel(tab.tunnelId).catch(() => {})
       }
@@ -2434,7 +2652,7 @@ export default function AITerminal() {
       setActiveConnectionId(remaining.length > 0 ? remaining[0].id : null)
     }
 
-    if (conn) {
+    if (conn && !conn.isSyncGroup) {
       setFolders(prev =>
         setSessionStatusInFolders(prev, conn.session.id, 'disconnected')
       )
@@ -2574,7 +2792,7 @@ export default function AITerminal() {
     if (!activeConnectionId) return
 
     const conn = connections.find(c => c.id === activeConnectionId)
-    if (!conn) return
+    if (!conn || conn.isSyncGroup) return
       
     const shellId = `shell-${Date.now()}`
       const shellNum = conn.shells.length + 1
@@ -4344,13 +4562,20 @@ export default function AITerminal() {
           }
         })
       )
-      setFolders(prev => setSessionStatusInFolders(prev, conn.session.id, 'connecting'))
+      if (!conn.isSyncGroup) {
+        setFolders(prev => setSessionStatusInFolders(prev, conn.session.id, 'connecting'))
+      }
 
-      for (const shell of conn.shells) {
-        runBackendConnect(conn.session, connectionId, shell.id, shell.terminalSessionId)
+      for (let i = 0; i < conn.shells.length; i++) {
+        const shell = conn.shells[i]
+        const memberSession =
+          conn.isSyncGroup && conn.syncMembers?.[i]
+            ? conn.syncMembers[i].session
+            : conn.session
+        runBackendConnect(memberSession, connectionId, shell.id, shell.terminalSessionId)
       }
     },
-    [connections, runBackendConnect]
+    [connections, runBackendConnect, setFolders]
   )
 
   const workbenchShells = useMemo(() => {
@@ -4433,7 +4658,7 @@ export default function AITerminal() {
         {/* Center + Right Content */}
         {activeConnection ? (
           <div className="flex-1 flex min-w-0 overflow-hidden">
-            {!showFileTree && (
+            {!showFileTree && !activeConnection.isSyncGroup && (
               <CollapsiblePanelRail
                 label="文件"
                 icon={FolderTree}
@@ -4452,9 +4677,12 @@ export default function AITerminal() {
                 direction="horizontal"
               defaultSizes={[28, 72]}
               minSizes={[24, 40]}
-                panelVisible={[showFileTree, true]}
+                panelVisible={[showFileTree && !activeConnection.isSyncGroup, true]}
                 className="min-w-0 h-full"
               >
+                {activeConnection.isSyncGroup ? (
+                  <div className="h-full min-w-0 bg-sidebar border-r border-sidebar-border" aria-hidden />
+                ) : (
                 <FileTree
                   key={activeConnection.id}
                   onCollapse={() => setShowFileTree(false)}
@@ -4529,6 +4757,7 @@ export default function AITerminal() {
                   }
                 }}
               />
+                )}
               <WorkbenchLayout
                 ref={workbenchRef}
                 connectionId={activeConnection.id}
@@ -4543,18 +4772,21 @@ export default function AITerminal() {
                 activeBrowserTabId={activeConnection.activeBrowserTabId ?? undefined}
                 monitorOpen={activeConnection.monitorOpen ?? false}
                 monitorHistory={hostStatsHistory}
+                isSyncGroup={activeConnection.isSyncGroup}
                   onShellChange={handleShellChange}
-                  onNewShell={handleNewShell}
-                  onCloseShell={handleCloseShell}
+                  onNewShell={activeConnection.isSyncGroup ? () => {} : handleNewShell}
+                  onCloseShell={activeConnection.isSyncGroup ? () => {} : handleCloseShell}
                   onCloseBrowser={handleCloseBrowserTab}
                   onBrowserUrlChange={handleBrowserUrlChange}
                   onNewBrowser={
+                    !activeConnection.isSyncGroup &&
                     isTauriRuntime() &&
                     activeConnection.shells.some(s => s.terminalStatus === 'connected')
                       ? handleNewBrowser
                       : undefined
                   }
                   onOpenMonitor={
+                    !activeConnection.isSyncGroup &&
                     activeConnection.session.type === 'ssh' &&
                     activeConnection.session.status === 'connected'
                       ? handleOpenMonitor
@@ -4573,7 +4805,10 @@ export default function AITerminal() {
                 onFileClose={handleFileClose}
                 onActiveFileChange={handleActiveFileChange}
                 layoutRestore={pendingLayoutRestore}
-                onLayoutRestoreDone={() => setPendingLayoutRestore(null)}
+                onLayoutRestoreDone={() => {
+                  setPendingLayoutRestore(null)
+                  layoutRestorePendingRef.current = false
+                }}
               />
               </ResizablePanel>
               <ThreadsDrawer
@@ -4659,8 +4894,9 @@ export default function AITerminal() {
         aiThinking={activeThread?.status === 'running'}
         onAiSidebarToggle={handleAiSidebarToggle}
         onOpenMonitor={handleOpenMonitor}
-        connectedTerminalCount={syncTerminalTargets.length}
+        connectedTerminalCount={syncServerTargets.length}
         onOpenMultiServerSync={() => setMultiServerSyncOpen(true)}
+        isSyncGroup={activeConnection?.isSyncGroup}
       />
 
       <NewSessionModal
@@ -4737,7 +4973,8 @@ export default function AITerminal() {
       <MultiServerSyncDialog
         open={multiServerSyncOpen}
         onOpenChange={setMultiServerSyncOpen}
-        targets={syncTerminalTargets}
+        servers={syncServerTargets}
+        onStart={handleStartMultiServerSync}
       />
     </div>
   )

@@ -7,15 +7,14 @@ import {
   type AgentThreadStatus,
   createAgentThread,
   deriveThreadTitle,
-  loadAgentThreads,
+  initializeAgentThreadsOnStartup,
   saveAgentThreads,
 } from '@/lib/agent-thread-store'
 
 export function useAgentThreads() {
-  const [threads, setThreads] = useState<AgentThread[]>(() => loadAgentThreads())
-  const [activeThreadId, setActiveThreadId] = useState<string>(
-    () => loadAgentThreads()[0]?.id ?? ''
-  )
+  const [startup] = useState(() => initializeAgentThreadsOnStartup())
+  const [threads, setThreads] = useState<AgentThread[]>(() => startup.threads)
+  const [activeThreadId, setActiveThreadId] = useState<string>(() => startup.activeThreadId)
   const threadsRef = useRef(threads)
   threadsRef.current = threads
   const activeThreadIdRef = useRef(activeThreadId)

@@ -25,6 +25,7 @@ interface StatusBarProps {
   onOpenMonitor?: () => void
   connectedTerminalCount?: number
   onOpenMultiServerSync?: () => void
+  isSyncGroup?: boolean
 }
 
 function formatSessionHost(session: Session): string {
@@ -103,9 +104,10 @@ export function StatusBar({
   onOpenMonitor,
   connectedTerminalCount = 0,
   onOpenMultiServerSync,
+  isSyncGroup = false,
 }: StatusBarProps) {
   const isConnected = session?.status === 'connected'
-  const showRemoteMonitor = isConnected && session?.type === 'ssh'
+  const showRemoteMonitor = isConnected && session?.type === 'ssh' && !isSyncGroup
   const metricsTitle = hostStats
     ? [
         `CPU ${hostStats.cpuPercent.toFixed(1)}%`,
@@ -138,7 +140,11 @@ export function StatusBar({
               isConnected ? 'text-foreground/90' : 'text-muted-foreground'
             )}
           >
-            {session ? formatSessionHost(session) : '无会话'}
+            {session
+              ? isSyncGroup
+                ? session.name
+                : formatSessionHost(session)
+              : '无会话'}
           </span>
         </div>
       </div>
@@ -169,9 +175,9 @@ export function StatusBar({
           </button>
         )}
 
-        {onOpenMultiServerSync && connectedTerminalCount >= 2 && (
+        {onOpenMultiServerSync && connectedTerminalCount >= 2 && !isSyncGroup && (
           <IconAction
-            title={`多服务器同步 (${connectedTerminalCount} 个终端)`}
+            title={`多服务器同步输入 (${connectedTerminalCount} 台已连接)`}
             onClick={onOpenMultiServerSync}
           >
             <Server className="w-3.5 h-3.5" />

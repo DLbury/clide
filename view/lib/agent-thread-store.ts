@@ -99,6 +99,22 @@ export function loadAgentThreads(): AgentThread[] {
   return threads
 }
 
+/** 应用启动时加载对话；若上次对话非空则自动新建空白对话并选中 */
+export function initializeAgentThreadsOnStartup(): {
+  threads: AgentThread[]
+  activeThreadId: string
+} {
+  const loaded = loadAgentThreads()
+  const latest = loaded[0]
+  if (latest && latest.messages.length > 0) {
+    const fresh = createAgentThread()
+    const threads = [fresh, ...loaded]
+    writeRaw(threads)
+    return { threads, activeThreadId: fresh.id }
+  }
+  return { threads: loaded, activeThreadId: latest?.id ?? '' }
+}
+
 export function saveAgentThreads(threads: AgentThread[]): void {
   writeRaw(
     threads.map(t => ({

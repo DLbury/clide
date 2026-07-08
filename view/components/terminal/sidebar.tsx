@@ -68,7 +68,7 @@ interface SidebarProps {
   onDeleteSession: (sessionId: string) => void
   onDisconnectSession: (sessionId: string) => void
   activeSessionId?: string
-  onSaveLayoutSnapshot?: (sessionId: string, name: string) => void
+  onSaveLayoutSnapshot?: (sessionId: string, name: string) => void | Promise<void>
   onLoadLayoutSnapshot?: (sessionId: string, snapshot: ServerLayoutSnapshot) => void
   onDeleteLayoutSnapshot?: (sessionId: string, snapshotId: string) => void
   canSaveLayoutSnapshot?: (sessionId: string) => boolean
@@ -256,6 +256,7 @@ export function Sidebar({
   const [saveLayoutOpen, setSaveLayoutOpen] = useState(false)
   const [saveLayoutSessionId, setSaveLayoutSessionId] = useState<string | null>(null)
   const [saveLayoutName, setSaveLayoutName] = useState('')
+  const [saveLayoutBusy, setSaveLayoutBusy] = useState(false)
   const saveLayoutOpenRef = useRef(false)
 
   useEffect(() => {
@@ -347,15 +348,22 @@ export function Sidebar({
     [layoutSnapshotsVersion]
   )
 
-  const confirmSaveLayout = useCallback(() => {
+  const confirmSaveLayout = useCallback(async () => {
     const trimmed = saveLayoutName.trim()
-    if (!trimmed || !saveLayoutSessionId || !onSaveLayoutSnapshot) return
-    onSaveLayoutSnapshot(saveLayoutSessionId, trimmed)
-    saveLayoutOpenRef.current = false
-    setSaveLayoutOpen(false)
-    setSaveLayoutSessionId(null)
-    showAllEmbeddedWebviews()
-  }, [saveLayoutName, saveLayoutSessionId, onSaveLayoutSnapshot])
+    if (!trimmed || !saveLayoutSessionId || !onSaveLayoutSnapshot || saveLayoutBusy) {
+      return
+    }
+    setSaveLayoutBusy(true)
+    try {
+      await onSaveLayoutSnapshot(saveLayoutSessionId, trimmed)
+      saveLayoutOpenRef.current = false
+      setSaveLayoutOpen(false)
+      setSaveLayoutSessionId(null)
+      showAllEmbeddedWebviews()
+    } finally {
+      setSaveLayoutBusy(false)
+    }
+  }, [saveLayoutName, saveLayoutSessionId, onSaveLayoutSnapshot, saveLayoutBusy])
 
   return (
     <div className="w-64 h-full bg-sidebar border-r border-sidebar-border flex flex-col">
@@ -367,6 +375,7 @@ export function Sidebar({
       <LayoutSnapshotSaveDialog
         open={saveLayoutOpen}
         onOpenChange={open => {
+          if (saveLayoutBusy) return
           saveLayoutOpenRef.current = open
           setSaveLayoutOpen(open)
           if (!open) {
@@ -377,6 +386,7 @@ export function Sidebar({
         name={saveLayoutName}
         onNameChange={setSaveLayoutName}
         onConfirm={confirmSaveLayout}
+        saving={saveLayoutBusy}
       />
       <div className="p-4 border-b border-sidebar-border">
         <div className="flex items-center gap-2 mb-4">

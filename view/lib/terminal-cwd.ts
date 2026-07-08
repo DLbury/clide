@@ -20,6 +20,13 @@ export function defaultRemoteHome(user?: string): string {
   return user ? `/home/${user}` : '~'
 }
 
+function stripAnsi(text: string): string {
+  return text
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b./g, '')
+}
+
 /** 解析终端输出片段中的 cwd（取最后一次 OSC7） */
 export function extractCwdFromTerminalChunk(chunk: string): string | null {
   let last: string | null = null
@@ -37,9 +44,54 @@ export function extractCwdFromTerminalChunk(chunk: string): string | null {
 
   const pwdMatches = [...chunk.matchAll(PWD_PROMPT_RE)]
   if (pwdMatches.length > 0) {
-    return pwdMatches[pwdMatches.length - 1][1]
+    return normalizeRemoteCwd(pwdMatches[pwdMatches.length - 1][1])
   }
   return null
+}
+
+/** 从带标记的 pwd 探测输出中提取绝对路径 */
+export function extractCwdFromProbeOutput(
+  chunk: string,
+  marker: string
+): string | null {
+  const plain = stripAnsi(chunk).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const start = plain.lastIndexOf(marker)
+  if (start < 0) return null
+  const afterStart = plain.slice(start + marker.length)
+  const end = afterStart.indexOf(marker)
+  const body = end >= 0 ? afterStart.slice(0, end) : afterStart
+  const lines = body
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+
+  for (const line of lines) {
+    if (line === marker) continue
+    if (line === 'pwd' || line === 'Get-Location' || /ProviderPath/i.test(line)) {
+      continue
+    }
+    if (line.startsWith('/') || isWindowsShellPath(line)) {
+      return normalizeRemoteCwd(line.replace(/\\/g, '/'))
+    }
+  }
+  return null
+}
+
+/** 向 PTY 写入以探测当前 cwd 的命令（带唯一标记） */
+export function formatShellPwdProbeCommand(
+  marker: string,
+  sessionType?: string
+): string {
+  const safe = marker.replace(/'/g, "''")
+  if (sessionType === 'local') {
+    return (
+      `Write-Output '${safe}'; ` +
+      `(Get-Location).ProviderPath; ` +
+      `Write-Output '${safe}'\n`
+    )
+  }
+  const unixSafe = marker.replace(/'/g, `'\\''`)
+  return `printf '%s\\n' '${unixSafe}'; pwd; printf '%s\\n' '${unixSafe}'\n`
 }
 
 function normalizeRemoteCwd(path: string): string {

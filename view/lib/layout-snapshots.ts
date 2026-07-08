@@ -1,7 +1,13 @@
 /** 按服务器（profile/session.id）保存多套工作台布局快照 */
 
 import { resolveRemoteDisplayPath } from '@/lib/remote-file-tree'
-import { remotePathForListApi } from '@/lib/terminal-cwd'
+import {
+  extractCwdFromTerminalChunk,
+  extractCwdFromProbeOutput,
+  formatShellPwdProbeCommand,
+  remotePathForListApi,
+} from '@/lib/terminal-cwd'
+import { getTerminalOutputBuffer } from '@/lib/terminal-stream'
 import type { Session } from '@/lib/types'
 
 export interface LayoutSnapshotShell {
@@ -90,14 +96,99 @@ export function renameLayoutSnapshot(
   writeStore(store)
 }
 
-export function resolveShellSnapshotCwd(
-  shell: { id: string; shellCwd?: string },
-  activeShellId: string,
-  remotePath?: string
+/** 解析单个 Shell 保存时应记录的 cwd（绝对路径，不用文件树 remotePath 代替） */
+export function resolveShellCwdForSnapshot(
+  shell: {
+    shellCwd?: string
+    terminalSessionId?: string
+    terminalStatus?: string
+  },
+  options?: { terminalLive?: boolean }
 ): string | undefined {
-  if (shell.shellCwd) return shell.shellCwd
-  if (shell.id === activeShellId && remotePath) return remotePath
+  if (shell.shellCwd) return shell.shellCwd.replace(/\\/g, '/')
+  if (
+    options?.terminalLive &&
+    shell.terminalStatus === 'connected' &&
+    shell.terminalSessionId
+  ) {
+    const buf = getTerminalOutputBuffer(shell.terminalSessionId)
+    const fromTerminal = extractCwdFromTerminalChunk(buf.slice(-8192))
+    if (fromTerminal) return fromTerminal.replace(/\\/g, '/')
+  }
   return undefined
+}
+
+/**
+ * 主动向每个已连接的 Shell 探测 cwd，返回 shellId → cwd。
+ * 通过写入带标记的 pwd，并从该 PTY 输出缓冲解析，保证各 Shell 路径独立。
+ */
+export async function probeShellCwds(
+  shells: Array<{
+    id: string
+    terminalSessionId: string
+    terminalStatus?: string
+    shellCwd?: string
+  }>,
+  sessionType: Session['type'],
+  write: (terminalSessionId: string, data: string) => Promise<void>
+): Promise<Map<string, string>> {
+  const results = new Map<string, string>()
+  const connected = shells.filter(s => s.terminalStatus === 'connected')
+  if (connected.length === 0) return results
+
+  await Promise.all(
+    connected.map(async shell => {
+      const marker = `__CLIDE_CWD_${shell.id.replace(/[^a-zA-Z0-9_-]/g, '')}_${Date.now()}__`
+      const beforeLen = getTerminalOutputBuffer(shell.terminalSessionId).length
+      try {
+        await write(
+          shell.terminalSessionId,
+          formatShellPwdProbeCommand(marker, sessionType)
+        )
+      } catch {
+        if (shell.shellCwd) results.set(shell.id, shell.shellCwd.replace(/\\/g, '/'))
+        return
+      }
+
+      const deadline = Date.now() + 2500
+      while (Date.now() < deadline) {
+        const buf = getTerminalOutputBuffer(shell.terminalSessionId)
+        const delta = buf.slice(Math.max(0, beforeLen - 64))
+        const probed = extractCwdFromProbeOutput(delta, marker)
+        if (probed) {
+          results.set(shell.id, probed)
+          return
+        }
+        // 有些环境可能回显不全，回退扫整段尾部
+        const fromTail = extractCwdFromProbeOutput(buf.slice(-4096), marker)
+        if (fromTail) {
+          results.set(shell.id, fromTail)
+          return
+        }
+        await new Promise(r => setTimeout(r, 80))
+      }
+
+      const fallback =
+        shell.shellCwd?.replace(/\\/g, '/') ||
+        extractCwdFromTerminalChunk(
+          getTerminalOutputBuffer(shell.terminalSessionId).slice(-8192)
+        ) ||
+        undefined
+      if (fallback) results.set(shell.id, fallback)
+    })
+  )
+
+  return results
+}
+
+/** @deprecated 使用 resolveShellCwdForSnapshot */
+export function resolveShellSnapshotCwd(
+  shell: { id: string; shellCwd?: string; terminalSessionId?: string; terminalStatus?: string },
+  _activeShellId: string,
+  _remotePath?: string,
+  terminalLive?: boolean
+): string | undefined {
+  return resolveShellCwdForSnapshot(shell, { terminalLive })
 }
 
 export function resolveSnapshotFileTreePath(

@@ -24,6 +24,7 @@ import {
 } from '@/lib/command-history-store'
 import { appendCommandAudit } from '@/lib/command-audit-store'
 import { registerTerminalInputHandler } from '@/lib/terminal-input-registry'
+import { getSyncPeerSessionIds } from '@/lib/terminal-sync-group'
 import {
   isAnyXtermFocused,
   registerTerminalFocusHandler,
@@ -98,6 +99,13 @@ export function LiveTerminal({
   connectedRef.current = connected
   inputEnabledRef.current = inputEnabled
   onInputFocusRef.current = onInputFocus
+
+  const writeWithSync = useCallback((data: string) => {
+    void writeTerminal(sessionIdRef.current, data).catch(() => {})
+    for (const peerId of getSyncPeerSessionIds(sessionIdRef.current)) {
+      void writeTerminal(peerId, data).catch(() => {})
+    }
+  }, [])
 
   useEffect(() => {
     bufferSyncedRef.current = 0
@@ -194,10 +202,10 @@ export function LiveTerminal({
       .readText()
       .then(text => {
         if (!text) return
-        void writeTerminal(sessionIdRef.current, text).catch(() => {})
+        writeWithSync(text)
       })
       .catch(() => {})
-  }, [])
+  }, [writeWithSync])
 
   const exportLog = useCallback(async () => {
     try {
@@ -297,7 +305,7 @@ export function LiveTerminal({
             : Math.max(0, historyIndexRef.current - 1)
         historyIndexRef.current = nextIndex
         const cmd = history[nextIndex]
-        void writeTerminal(sessionIdRef.current, `\x15${cmd}`).catch(() => {})
+        void writeWithSync(`\x15${cmd}`)
         commandTrackerRef.current.reset()
         for (const ch of cmd) commandTrackerRef.current.feed(ch)
         return false
@@ -309,13 +317,13 @@ export function LiveTerminal({
         const nextIndex = historyIndexRef.current + 1
         if (nextIndex >= history.length) {
           historyIndexRef.current = -1
-          void writeTerminal(sessionIdRef.current, `\x15${historyDraftRef.current}`).catch(() => {})
+          void writeWithSync(`\x15${historyDraftRef.current}`)
           commandTrackerRef.current.reset()
           for (const ch of historyDraftRef.current) commandTrackerRef.current.feed(ch)
         } else {
           historyIndexRef.current = nextIndex
           const cmd = history[nextIndex]
-          void writeTerminal(sessionIdRef.current, `\x15${cmd}`).catch(() => {})
+          void writeWithSync(`\x15${cmd}`)
           commandTrackerRef.current.reset()
           for (const ch of cmd) commandTrackerRef.current.feed(ch)
         }
@@ -334,7 +342,7 @@ export function LiveTerminal({
         historyIndexRef.current = -1
         historyDraftRef.current = ''
       }
-      void writeTerminal(sessionIdRef.current, data).catch(() => {})
+      writeWithSync(data)
     })
 
     resizeDisposableRef.current = term.onResize(({ cols, rows }) => {
