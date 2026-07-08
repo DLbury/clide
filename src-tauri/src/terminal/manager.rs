@@ -3,6 +3,7 @@ use super::output_buffer;
 use super::output_emit::{self};
 use super::{local, serial, ssh, telnet, ConnectRequest};
 use parking_lot::Mutex;
+use portable_pty::ChildKiller;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -27,6 +28,7 @@ struct ActiveTerminal {
     write_tx: Sender<Vec<u8>>,
     resize_tx: Sender<(u16, u16)>,
     abort: Arc<AtomicBool>,
+    child_killer: Option<Box<dyn ChildKiller + Send + Sync>>,
 }
 
 pub struct TerminalManager {
@@ -41,7 +43,12 @@ impl TerminalManager {
     }
 
     pub fn remove_session(&self, session_id: &str) {
-        self.sessions.lock().remove(session_id);
+        if let Some(mut active) = self.sessions.lock().remove(session_id) {
+            active.abort.store(true, Ordering::Relaxed);
+            if let Some(mut killer) = active.child_killer.take() {
+                let _ = killer.kill();
+            }
+        }
     }
 
     pub fn connect(&self, app: AppHandle, request: ConnectRequest) -> Result<(), String> {
@@ -63,9 +70,12 @@ impl TerminalManager {
         );
 
         // 旧会话若仍留在 map（SSH 自然断开时常见），先终止再重连，避免误报 connected。
-        if let Some(stale) = self.sessions.lock().remove(&session_id) {
+        if let Some(mut stale) = self.sessions.lock().remove(&session_id) {
             tracing::warn!("Replacing stale terminal session: {session_id}");
             stale.abort.store(true, Ordering::Relaxed);
+            if let Some(mut killer) = stale.child_killer.take() {
+                let _ = killer.kill();
+            }
         }
 
         let abort = Arc::new(AtomicBool::new(false));
@@ -73,6 +83,7 @@ impl TerminalManager {
         let TerminalChannels {
             write_tx,
             resize_tx,
+            child_killer,
         } = match request.session_type.as_str() {
             "ssh" => ssh::spawn_ssh(app.clone(), request, abort.clone())?,
             "telnet" => telnet::spawn_telnet(app.clone(), request, abort.clone())?,
@@ -91,6 +102,7 @@ impl TerminalManager {
                 write_tx,
                 resize_tx,
                 abort,
+                child_killer,
             },
         );
 
@@ -124,8 +136,11 @@ impl TerminalManager {
 
     pub fn disconnect(&self, app: &AppHandle, session_id: &str) -> Result<(), String> {
         let removed = self.sessions.lock().remove(session_id);
-        if let Some(active) = removed {
+        if let Some(mut active) = removed {
             active.abort.store(true, Ordering::Relaxed);
+            if let Some(mut killer) = active.child_killer.take() {
+                let _ = killer.kill();
+            }
             output_emit::flush_session(app, session_id);
             let _ = app.emit(
                 "terminal:status",
@@ -137,6 +152,14 @@ impl TerminalManager {
             );
         }
         Ok(())
+    }
+
+    /// Abort every terminal session and kill local/WSL PTY shell children.
+    pub fn disconnect_all(&self, app: &AppHandle) {
+        let ids: Vec<String> = self.sessions.lock().keys().cloned().collect();
+        for id in ids {
+            let _ = self.disconnect(app, &id);
+        }
     }
 
     pub fn is_connected(&self, session_id: &str) -> bool {

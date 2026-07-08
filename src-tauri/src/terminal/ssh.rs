@@ -44,6 +44,7 @@ pub fn spawn_ssh(
     Ok(TerminalChannels {
         write_tx,
         resize_tx,
+        child_killer: None,
     })
 }
 

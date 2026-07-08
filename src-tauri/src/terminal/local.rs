@@ -116,10 +116,14 @@ pub fn spawn_local_pty(
         }
     };
 
-    let _child = pair
+    let mut child = pair
         .slave
         .spawn_command(cmd)
         .map_err(|e| format!("无法启动本地 Shell: {e}"))?;
+    // Keep an independent killer so we can terminate the shell after
+    // disconnect / app exit without waiting on the reader thread.
+    let child_killer = child.clone_killer();
+    let mut waiter_killer = child.clone_killer();
 
     let reader = master
         .lock()
@@ -136,6 +140,7 @@ pub fn spawn_local_pty(
     let abort_reader = abort.clone();
     let abort_writer = abort.clone();
     let abort_resize = abort.clone();
+    let abort_waiter = abort.clone();
     let master_resize = master.clone();
 
     std::thread::spawn(move || {
@@ -170,6 +175,20 @@ pub fn spawn_local_pty(
         }
     });
 
+    // Reap the child so it does not become a zombie after kill/EOF.
+    std::thread::spawn(move || loop {
+        if abort_waiter.load(Ordering::Relaxed) {
+            let _ = waiter_killer.kill();
+            let _ = child.wait();
+            break;
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => std::thread::sleep(Duration::from_millis(200)),
+            Err(_) => break,
+        }
+    });
+
     std::thread::spawn(move || {
         run_pty_reader(app, session_id, reader, abort_reader);
     });
@@ -180,6 +199,7 @@ pub fn spawn_local_pty(
     Ok(TerminalChannels {
         write_tx,
         resize_tx,
+        child_killer: Some(child_killer),
     })
 }
 

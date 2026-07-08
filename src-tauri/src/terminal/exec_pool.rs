@@ -255,3 +255,9 @@ pub fn global_exec_pool() -> &'static ExecPool {
 pub fn init_exec_pool() {
     let _ = global_exec_pool();
 }
+
+/// Drop pooled SSH exec handles so remote sessions do not linger after app exit.
+pub async fn clear_exec_pool() {
+    let mut guard = global_exec_pool().entries.lock().await;
+    guard.clear();
+}

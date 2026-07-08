@@ -24,7 +24,7 @@ use runtime::RuntimeStore;
 use shell_tool::ShellToolCoordinator;
 use state::IdeContext;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use terminal::{
     ConnectRequest, SocksInfo, SocksManager, TerminalManager, TunnelInfo, TunnelManager,
 };
@@ -944,6 +944,36 @@ fn claude_log_file_path(app: AppHandle) -> Option<String> {
     app_logging::log_file_path(&app)
 }
 
+fn shutdown_app_resources(app: &AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    tracing::info!("Shutting down Clide background resources");
+
+    state.claude_auto_detect.stop_auto_detect();
+    state.sessions.shutdown_all();
+    state.generic_sessions.cancel_all();
+    state.terminals.disconnect_all(app);
+    state.tunnels.stop_all();
+    state.socks.stop_all();
+
+    {
+        let mut bridge_guard = state.bridge.lock();
+        if let Some(bridge) = bridge_guard.take() {
+            bridge.stop();
+        }
+    }
+
+    // Best-effort: drop pooled SSH exec handles without blocking exit too long.
+    let _ = tauri::async_runtime::block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(800),
+            terminal::clear_exec_pool(),
+        )
+        .await
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1067,10 +1097,24 @@ pub fn run() {
             terminal_list_ports,
             terminal_kill_port,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .map_err(|e| {
-            eprintln!("Clide failed to run: {e}");
+            eprintln!("Clide failed to build: {e}");
             e
         })
-        .expect("error while running tauri application");
+        .expect("error while building tauri application")
+        .run(|app_handle, event| match event {
+            RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+                shutdown_app_resources(app_handle);
+            }
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { .. },
+                ..
+            } if label == "main" => {
+                // Prefetch cleanup before the window/process tears down.
+                shutdown_app_resources(app_handle);
+            }
+            _ => {}
+        });
 }

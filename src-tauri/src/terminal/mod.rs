@@ -26,7 +26,7 @@ pub use local_fs::{
 pub use manager::{push_terminal_display, TerminalManager};
 pub use output_buffer::{buffer_len, export_buffer, read_since, tail_snippet};
 pub use output_emit::TerminalOutputEvent;
-pub use exec_pool::init_exec_pool;
+pub use exec_pool::{clear_exec_pool, init_exec_pool};
 pub use remote_fs::{
     chmod_path as chmod_remote_path, create_directory as create_remote_directory,
     delete_path as delete_remote_path, get_cwd as get_remote_cwd,

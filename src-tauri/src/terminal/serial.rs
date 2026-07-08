@@ -45,6 +45,7 @@ pub fn spawn_serial(
     Ok(TerminalChannels {
         write_tx,
         resize_tx,
+        child_killer: None,
     })
 }
 

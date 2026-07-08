@@ -1106,6 +1106,12 @@ impl ClaudeSessionManager {
         }
     }
 
+    /// Kill every Claude CLI child and drop thread slots (app exit path).
+    pub fn shutdown_all(&self) {
+        self.cancel_all();
+        self.threads.lock().clear();
+    }
+
     fn kill_runtime(&self, runtime: &ThreadRuntime, request_id: Option<&str>) {
         runtime.release_process();
         *runtime.current_request.lock() = None;
