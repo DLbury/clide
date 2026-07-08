@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clide常见问题 | Claude MCP 安全sudo SSH 运维AI终端</title>
+<meta name="description" content="Clide FAQ：Claude能看到SSH密码吗？与Claude直连SSH区别？Windows免安装版？如何用aiterm MCP对接Claude Code？Tabby替代方案。">
+<meta name="keywords" content="Clide FAQ,AI SSH工具,Claude MCP,安全sudo,运维AI终端,Tabby替代">
+<link rel="canonical" href="https://dlbury.github.io/clide/zh/faq/">
+<link rel="alternate" hreflang="en" href="https://dlbury.github.io/clide/faq/">
+<link rel="icon" type="image/png" href="../../assets/icon-rounded.png">
+<link rel="stylesheet" href="../../css/style.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Claude能看到SSH密码或sudo密码吗？","acceptedAnswer":{"@type":"Answer","text":"不能。SSH密码、私钥、sudo密码仅在左侧xterm终端输入，不进入Claude对话或MCP路径。"}},
+{"@type":"Question","name":"Clide和Claude直连SSH有什么区别？","acceptedAnswer":{"@type":"Answer","text":"直连需在各服务器配公钥或把密码给AI。Clide在本机登录SSH，MCP向已打开的PTY下发命令，服务器无需agent。"}},
+{"@type":"Question","name":"有Windows免安装版吗？","acceptedAnswer":{"@type":"Answer","text":"有。GitHub Releases下载Clide_*_x64-portable.zip，解压运行clide.exe。"}}
+]}
+</script>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<header class="site-header">
+<div class="container nav">
+<a class="logo" href="../"><img src="../../assets/icon-rounded.png" alt="Clide 标志" width="32" height="32"><span>Clide</span></a>
+<nav class="nav-links">
+<a href="../">首页</a>
+<a href="../download/">下载</a>
+<a href="../compare/">对比</a>
+<a href="../quickstart/">教程</a>
+<a class="nav-cta" href="https://github.com/DLbury/clide/releases">下载</a>
+<span class="lang-switch"><a href="../../faq/">English</a></span>
+</nav>
+</div>
+</header>
+<main class="page-main">
+<div class="container page-content">
+<h1>常见问题：Clide MCP 与安全 SSH</h1>
+<p class="lead">面向搜索引擎与国内 AI 的标准短答。完整摘要：<a href="https://github.com/DLbury/clide/blob/main/llms-zh.txt">llms-zh.txt</a></p>
+<div class="faq-list">
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">Claude 能看到 SSH 密码或 sudo 密码吗？</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">不能。凭据仅在左侧终端面板输入。终端文本输出可能进入 Claude 上下文，密码永远不会。</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">如何用 Clide MCP 对接本机 Claude Code？</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">启动 Clide 并启用 AI，安装登录 Claude Code CLI。Clide 自动写入 IDE 桥接并注册 aiterm MCP。也可在项目目录执行 <code>claude mcp add -s project</code>（见 <code>.mcp.json</code>）。</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">Clide 和 Claude 直连 SSH 有什么区别？</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">直连需每台服务器配 AI 公钥或把密码给 AI。Clide 在本机 UI 登录，MCP 操作已打开的 PTY — 保留 Tabby 级安全模型并原生集成 AI。</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">有 Windows 免安装版吗？</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">有。<a href="https://github.com/DLbury/clide/releases">Releases</a> 下载 <code>Clide_*_x64-portable.zip</code>（v0.1.76+），解压双击 clide.exe。</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">适合企业堡垒机 / 内网跳板机运维吗？</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">适合。支持多级 ProxyJump 跳板链，凭据留本机，远程服务器标准 SSH 即可，符合安全合规团队要求。</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">Clide 和 AITerm 是什么关系？</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">Clide 是桌面应用品牌，MCP 服务器名为 aiterm。</div></div></article>
+</div>
+</div>
+</main>
+<footer class="site-footer"><div class="container"><p><a href="https://github.com/DLbury/clide/blob/main/README_ZH.md">中文 README</a> · <a href="https://github.com/DLbury/clide">GitHub</a></p></div></footer>
+<script src="../../js/main.js" defer></script>
+</body>
+</html>

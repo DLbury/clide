@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clide快速上手 | AI SSH终端 Claude Code MCP 配置教程</title>
+<meta name="description" content="Clide安装教程：下载Windows免安装版、配置SSH Profile、连接终端、启用Claude Code MCP。跳板机、安全sudo、多机同步入门。">
+<meta name="keywords" content="Clide教程,Claude Code配置,MCP运维,SSH AI工具安装,跳板机ssh">
+<link rel="canonical" href="https://dlbury.github.io/clide/zh/quickstart/">
+<link rel="alternate" hreflang="en" href="https://dlbury.github.io/clide/quickstart/">
+<link rel="icon" type="image/png" href="../../assets/icon-rounded.png">
+<link rel="stylesheet" href="../../css/style.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"HowTo","name":"安装并使用 Clide AI SSH 终端","step":[
+{"@type":"HowToStep","name":"下载","text":"从 GitHub Releases 获取安装包或 Windows portable zip"},
+{"@type":"HowToStep","name":"配置 SSH","text":"侧边栏添加服务器主机、用户、密钥或密码"},
+{"@type":"HowToStep","name":"连接","text":"双击 Profile，在左侧终端完成登录"},
+{"@type":"HowToStep","name":"Claude Code","text":"安装 Claude Code CLI 并在 Clide 启用 IDE 桥接"}
+]}
+</script>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<header class="site-header">
+<div class="container nav">
+<a class="logo" href="../"><img src="../../assets/icon-rounded.png" alt="Clide 标志" width="32" height="32"><span>Clide</span></a>
+<nav class="nav-links">
+<a href="../">首页</a>
+<a href="../download/">下载</a>
+<a href="../faq/">问答</a>
+<a class="nav-cta" href="https://github.com/DLbury/clide/releases">下载</a>
+<span class="lang-switch"><a href="../../quickstart/">English</a></span>
+</nav>
+</div>
+</header>
+<main class="page-main">
+<div class="container page-content">
+<h1>快速上手：Clide + Claude Code MCP</h1>
+<ol>
+<li><strong>下载</strong> — <a href="https://github.com/DLbury/clide/releases">GitHub Releases</a>（Windows：<code>*-setup.exe</code> 或 <code>*-portable.zip</code> 免安装）</li>
+<li><strong>配置 SSH</strong> — 侧边栏添加主机、端口、用户、密钥/密码（凭据留在应用内）</li>
+<li><strong>连接</strong> — 双击 Profile，在左侧终端登录（密码 / 二次验证 / sudo）</li>
+<li><strong>Claude Code</strong> — 安装 <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code CLI</a>，确认 Clide 侧栏 IDE 桥接就绪</li>
+<li><strong>AI 排障</strong> — 例如「查看磁盘占用」；Claude 调用 <code>runShellCommand</code> 在你的 Shell 执行</li>
+</ol>
+<h2>安装命令</h2>
+<pre># Windows 免安装
+# 解压 Clide_*_x64-portable.zip → 双击 clide.exe
+
+# Linux .deb
+sudo dpkg -i Clide_*_amd64.deb
+
+# Linux AppImage
+chmod +x Clide_*.AppImage && ./Clide_*.AppImage
+
+# 手动注册 MCP（可选）
+claude mcp add -s project  # 见仓库 .mcp.json</pre>
+</div>
+</main>
+<footer class="site-footer"><div class="container"><p><a href="https://github.com/DLbury/clide/blob/main/README_ZH.md">中文 README</a></p></div></footer>
+</body>
+</html>

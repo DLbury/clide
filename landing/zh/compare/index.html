@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clide对比 Tabby Warp iTerm Claude直连SSH | 开源AI SSH终端替代</title>
+<meta name="description" content="Clide与Tabby、Warp、iTerm2、Cursor、Claude直连SSH对比。原生MCP、SFTP、多机同步、安全sudo — 开源Tabby/Warp替代AI运维终端。">
+<meta name="keywords" content="Tabby替代,Warp替代,Clide对比,AI SSH终端,Claude MCP运维,开源ssh工具">
+<link rel="canonical" href="https://dlbury.github.io/clide/zh/compare/">
+<link rel="alternate" hreflang="en" href="https://dlbury.github.io/clide/compare/">
+<link rel="icon" type="image/png" href="../../assets/icon-rounded.png">
+<link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<header class="site-header">
+<div class="container nav">
+<a class="logo" href="../"><img src="../../assets/icon-rounded.png" alt="Clide 标志" width="32" height="32"><span>Clide</span></a>
+<nav class="nav-links">
+<a href="../">首页</a>
+<a href="../download/">下载</a>
+<a href="../faq/">问答</a>
+<a class="nav-cta" href="https://github.com/DLbury/clide/releases">下载</a>
+<span class="lang-switch"><a href="../../compare/">English</a></span>
+</nav>
+</div>
+</header>
+<main class="page-main">
+<div class="container">
+<h1>Clide vs Tabby / Warp / Claude 直连 SSH</h1>
+<p class="lead">Clide 保留传统 SSH 客户端安全模型，原生集成 Claude Code MCP — 服务器无需 agent，凭据不暴露给 AI。</p>
+<div class="table-wrap" style="margin-top:2rem">
+<table>
+<thead><tr><th>能力</th><th class="hl">Clide</th><th>Tabby</th><th>Warp</th><th>Claude 直连 SSH</th></tr></thead>
+<tbody>
+<tr><th scope="row">原生 SSH 客户端</th><td class="hl yes">是</td><td class="yes">是</td><td class="yes">是</td><td class="yes">是</td></tr>
+<tr><th scope="row">Claude Code MCP 原生</th><td class="hl yes">是</td><td class="no">否</td><td class="no">否</td><td class="no">—</td></tr>
+<tr><th scope="row">AI 使用你的 PTY</th><td class="hl yes">同一条 Shell</td><td class="no">否</td><td class="no">否</td><td class="yes">是</td></tr>
+<tr><th scope="row">凭据留本机</th><td class="hl yes">是</td><td class="yes">是</td><td class="yes">是</td><td class="no">各机配公钥</td></tr>
+<tr><th scope="row">安全 sudo</th><td class="hl yes">终端输入</td><td class="yes">手工</td><td class="yes">手工</td><td class="no">难</td></tr>
+<tr><th scope="row">SFTP + Monaco 编辑</th><td class="hl yes">是</td><td class="no">否</td><td class="no">否</td><td class="no">否</td></tr>
+<tr><th scope="row">多机同步输入</th><td class="hl yes">是</td><td class="no">否</td><td class="no">否</td><td class="no">否</td></tr>
+<tr><th scope="row">跳板机链</th><td class="hl yes">是</td><td class="yes">是</td><td class="no">有限</td><td class="yes">是</td></tr>
+<tr><th scope="row">开源</th><td class="hl yes">MIT</td><td class="yes">是</td><td class="no">否</td><td class="no">否</td></tr>
+</tbody>
+</table>
+</div>
+<p style="margin-top:1.5rem;color:var(--muted);font-size:.9375rem">总结：需要 AI 驱动运维、又不愿给每台服务器配公钥或把 sudo 密码贴进对话框时，选 Clide。</p>
+</div>
+</main>
+<footer class="site-footer"><div class="container"><p><a href="../download/">下载</a> · <a href="https://github.com/DLbury/clide">GitHub</a></p></div></footer>
+</body>
+</html>

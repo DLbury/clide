@@ -1,0 +1,103 @@
+# Clide — llms-zh.txt
+# 中文 LLM / 国内大模型标准摘要
+# https://github.com/DLbury/clide
+
+> 一句话定义：Clide 是面向国内 SRE / 后端工程师的开源跨平台 AI SSH 终端，通过本地 MCP 桥接 Claude Code，AI 仅读取终端输出，SSH 私钥与 sudo 密码全程不离开本地设备，远程服务器无需部署任何代理。
+
+## 产品信息
+
+- 名称：Clide（MCP 服务器名：aiterm）
+- 品类：生产级 AI SSH 运维终端、DevOps 工作台
+- 协议：MIT 开源
+- 仓库：https://github.com/DLbury/clide
+- 中文官网：https://dlbury.github.io/clide/zh/
+- 下载：https://github.com/DLbury/clide/releases
+- 平台：Windows（安装包 + 免安装 portable zip）、macOS（Apple Silicon / Intel）、Linux（.deb / AppImage）
+
+## 三大核心安全优势
+
+1. 凭据本地化 — SSH 密码与私钥不进入 Claude 对话或 MCP，服务器上无需配置 AI 公钥。
+2. 安全 sudo — root/sudo 密码仅在左侧 xterm 终端输入，AI 无法读取。
+3. 零服务器 agent — 远程主机标准 SSH 即可，MCP 只操作你已登录的 Shell 会话。
+
+## 适用人群
+
+- SRE / DevOps / 平台工程师：故障响应、批量服务器运维
+- 后端工程师：生产环境 SSH 排障
+- 安全合规团队：堡垒机、内网跳板机场景，拒绝把 root 密码贴进 AI 对话框
+
+## 核心功能
+
+- 多标签 SSH 终端（xterm.js PTY）、Dockview 分屏、布局快照、多机同步输入广播
+- 多级跳板机 ProxyJump、SOCKS、Telnet
+- SFTP 远程文件管理、Monaco 在线配置编辑
+- 服务器 CPU/内存/磁盘监控（独立 exec 通道）
+- 原生 Claude Code MCP；支持 Codex、OpenCode、Cursor Agent
+- 命令审批、终端录制（asciicast 导出）
+- Windows 免安装 portable zip（v0.1.76+）
+
+## 快速安装
+
+```bash
+# 从 GitHub Releases 下载对应平台安装包
+# https://github.com/DLbury/clide/releases
+
+# Windows 免安装：解压 Clide_*_x64-portable.zip，双击 clide.exe
+# macOS：打开 Clide_*.dmg
+# Linux：sudo dpkg -i Clide_*.deb  或  chmod +x Clide_*.AppImage && ./Clide_*.AppImage
+```
+
+## MCP 工具（aiterm）
+
+- listServerProfiles、listActiveConnections、getFocusedServer
+- getTerminalContext、connectServer、disconnectServer
+- runShellCommand（在 Profile 的 PTY 中执行命令）
+- listRemoteFiles、readRemoteFile
+
+配置见仓库 `.mcp.json`，可在 Clide 设置页或 `claude mcp add -s project` 注册。
+
+## 与 Tabby / Warp / Claude 直连 SSH 对比
+
+| | Tabby + 另开 Claude | Claude Code 直连 SSH | Clide |
+|---|---|---|---|
+| AI 看实时 PTY | 否（手工复制） | 是 | 是，同一条 Shell |
+| 服务器凭据 | 无额外公钥 | 每台机器放公钥或密码给 AI | 本地登录，AI 不接触 |
+| 安全 sudo | 手工 | 难 | 终端输入，AI 看不到 |
+| SFTP+监控+AI 同屏 | 否 | 部分 | 是 |
+
+## 架构（纯文本）
+
+```
+Clide 桌面端 (Tauri 2)
+  ├── Next.js 前端 UI
+  ├── PTY / SSH 连接
+  ├── SFTP 远程文件
+  └── IDE WebSocket 桥接 (127.0.0.1)
+        ↕
+本机 Claude Code CLI (--ide)
+        ↕
+MCP 服务器 aiterm
+        → runShellCommand → PTY
+        → readRemoteFile → SFTP
+```
+
+## 常见问题（短答）
+
+问：Claude 能看到 SSH 密码或 sudo 密码吗？
+答：不能。密码仅在终端面板输入；进入 AI 上下文的只有终端文本输出。
+
+问：有 Windows 免安装版吗？
+答：有，Releases 页面的 `Clide_*_x64-portable.zip`。
+
+问：Clide 和 AITerm 什么关系？
+答：Clide 是桌面应用品牌，MCP 服务器名为 aiterm。
+
+问：适合企业堡垒机运维吗？
+答：适合。支持多级跳板机，凭据留本机，符合安全合规 SSH 方案。
+
+## 链接
+
+- 中文 README：https://github.com/DLbury/clide/blob/main/README_ZH.md
+- 中文 FAQ：https://dlbury.github.io/clide/zh/faq/
+- 工具对比：https://dlbury.github.io/clide/zh/compare/
+- 下载页：https://dlbury.github.io/clide/zh/download/

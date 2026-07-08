@@ -1,0 +1,28 @@
+# GitHub repository SEO settings (apply manually in repo Settings)
+
+## Short description (About)
+Production-grade cross-platform AI SSH terminal for SRE & DevOps, native Claude Code MCP integration, secure sudo, multi-hop jump host, SFTP remote file editor, no server-side agent, Windows/macOS/Linux desktop client
+
+## Topics (add to existing)
+devops
+sre
+secure-ssh
+ai-terminal
+ai-ssh
+jump-host
+remote-terminal
+server-monitoring
+multi-server
+tabby-alternative
+warp-alternative
+sfpt
+sftp-client
+ops-terminal
+fleet-ops
+mcp-server
+claude-code-mcp
+production-ops
+windows-portable
+
+## Website URL (About)
+https://dlbury.github.io/clide/

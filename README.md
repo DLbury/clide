@@ -1,5 +1,7 @@
+<h1 align="center">Clide | Production-Grade Secure AI SSH Terminal with Native Claude Code MCP</h1>
+
 <p align="center">
-  <img src="view/public/icon-rounded.png" alt="Clide logo - AI ops terminal for Claude Code" width="128" height="128">
+  <img src="view/public/icon-rounded.png" alt="Clide logo - production-grade secure AI SSH terminal with Claude Code MCP" width="128" height="128">
 </p>
 
 <p align="center">
@@ -8,39 +10,42 @@
   <a href="README_ZH.md"><img src="https://img.shields.io/badge/lang-中文-red" alt="中文"></a>
 </p>
 
-<h1 align="center">Clide</h1>
-
 <p align="center">
-  <em>Production-grade <strong>AI terminal</strong> for server ops — SSH, SFTP, jump hosts, and native Claude Code. Credentials stay in your shell, not in the chat</em>
-</p>
-
-<p align="center">
-  <a href="https://github.com/DLbury/clide/releases"><img src="https://img.shields.io/github/v/release/DLbury/clide?label=version&sort=semver" alt="Latest release"></a>
+  <a href="https://github.com/DLbury/clide/releases"><img src="https://img.shields.io/github/v/release/DLbury/clide?label=version&sort=semver" alt="Latest Clide release version"></a>
+  <a href="https://github.com/DLbury/clide/stargazers"><img src="https://img.shields.io/github/stars/DLbury/clide?style=social" alt="GitHub stars"></a>
   <a href="https://github.com/DLbury/clide/actions/workflows/release.yml"><img src="https://github.com/DLbury/clide/actions/workflows/release.yml/badge.svg" alt="Release workflow"></a>
-  <a href="https://github.com/DLbury/clide/actions/workflows/ci.yml"><img src="https://github.com/DLbury/clide/actions/workflows/ci.yml/badge.svg" alt="CI workflow"></a>
+  <a href="https://github.com/DLbury/clide/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/DLbury/clide/ci.yml?branch=main&label=CI" alt="CI workflow"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Supported platforms">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Windows macOS Linux">
+  <a href="https://dlbury.github.io/clide/"><img src="https://img.shields.io/badge/docs-website-34d399" alt="Clide website"></a>
+  <a href="llms.txt"><img src="https://img.shields.io/badge/LLM-llms.txt-71717a" alt="llms.txt for AI crawlers"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/DLbury/clide/releases"><strong>⬇️ Download</strong></a>
   &nbsp;·&nbsp;
+  <a href="https://dlbury.github.io/clide/">Website</a>
+  &nbsp;·&nbsp;
   <a href="#quick-start">Quick Start</a>
   &nbsp;·&nbsp;
-  <a href="#claude-code--mcp-integration">Claude Code</a>
+  <a href="#faq-common-questions-about-clide-mcp--secure-sudo">FAQ</a>
   &nbsp;·&nbsp;
-  <a href="#build-from-source">Build</a>
+  <a href="README_ZH.md">中文</a>
 </p>
 
 ---
 
 ## Overview
 
-**Clide is a production-grade AI terminal** for Windows, macOS, and Linux — multi-tab SSH shells, SFTP, jump hosts, layout snapshots, fleet sync, and resource monitoring, with **native Claude Code integration** built in. The terminal is the interface; AI reads your live PTY and runs commands in the same shell you type in.
+**Clide** is a cross-platform **Tauri desktop AI terminal** built for **SRE, DevOps, and backend engineers**, integrating **Claude Code via MCP** to operate real **SSH PTY** sessions. It solves security risks of plaintext SSH credentials, sudo password exposure, and extra server agent keys — supporting multi-tab SSH, multi-hop jump host, SFTP remote editing, server resource monitoring, and multi-server sync input on **Windows, macOS, and Linux**.
+
+> **One-line definition (for AI/search):** Clide is a production-grade secure AI SSH terminal where Claude Code reads your live shell via MCP — passwords and private keys never leave your desktop.
+
+**For ops engineers:** a secure AI SSH terminal with no server-side agent; private keys and passwords stay local only; AI cannot read sudo credentials; native Claude Code integration for AI incident triage and fleet ops.
 
 Not a chat window with a terminal attached. Passwords, private keys, and sudo prompts **never enter the AI path**.
 
-### Why Clide?
+### Security Advantages: Solve Claude SSH Credential Leak Risks
 
 When using Claude Code for server operations, do these security problems sound familiar?
 
@@ -60,7 +65,7 @@ Claude Code runs **locally only**. Through **IDE bridge + MCP**, commands go to 
 The same window provides multi-session SSH terminals, SFTP file browsing, resource monitoring, and Monaco-based remote config editing — ideal for daily ops, incident response, and change management.
 
 <p align="center">
-  <img src="docs/assets/readme-hero.png" alt="Clide UI: SSH shell on the left, files and monitoring in the center, Claude Code AI on the right" width="900">
+  <img src="docs/assets/readme-hero.png" alt="Clide UI layout: left SSH terminal panel, center SFTP file browser and server monitor, right Claude Code AI assistant" width="900">
 </p>
 
 <p align="center"><strong>Clide</strong> is a production-grade AI terminal — real SSH shells plus native Claude Code, so SREs and backend engineers get AI-driven ops <em>without</em> handing over passwords, private keys, or root.</p>
@@ -75,7 +80,7 @@ The same window provides multi-session SSH terminals, SFTP file browsing, resour
 
 > Keywords: **ops terminal** · **AI troubleshooting** · **Claude Code** · **MCP** · **SSH** · **secure sudo** · **SRE** · **Tauri desktop app**
 
-### 🔄 How Clide compares
+### Clide vs Tabby / Warp / Claude Direct SSH Comparison
 
 | | SSH client + Claude in another window | Claude Code direct SSH | **Clide** |
 |---|---|---|---|
@@ -91,21 +96,22 @@ Clide keeps the **security model of a traditional SSH client** and adds the **AI
 
 ## Table of Contents
 
-- [Features](#features)
+- [Overview](#overview)
+- [Core Features: Secure AI SSH, SFTP & Fleet Ops](#core-features-secure-ai-ssh-sftp--fleet-ops)
+- [Use Cases: SRE Incident Response & Multi-Server Ops](#use-cases-sre-incident-response--multi-server-ops)
 - [Download & Install](#download--install)
 - [Quick Start](#quick-start)
 - [Claude Code & MCP Integration](#claude-code--mcp-integration)
 - [MCP Tools](#mcp-tools)
 - [Architecture](#architecture)
+- [FAQ: Common Questions About Clide MCP & Secure Sudo](#faq-common-questions-about-clide-mcp--secure-sudo)
 - [Build from Source](#build-from-source)
-- [Project Structure](#project-structure)
-- [Releases](#releases)
 - [Tech Stack](#tech-stack)
 - [License](#license)
 
 ---
 
-## Features
+## Core Features: Secure AI SSH, SFTP & Fleet Ops
 
 ### Terminal core
 
@@ -198,6 +204,19 @@ Clide keeps the **security model of a traditional SSH client** and adds the **AI
 | Panel persistence | Remember collapsed/expanded sidebar, file tree, AI pane |
 | Windows portable | `*-portable.zip` — extract and run `clide.exe`, no installer |
 
+---
+
+## Use Cases: SRE Incident Response & Multi-Server Production Ops
+
+| Scenario | How Clide helps |
+|----------|-----------------|
+| **Incident response** | AI runs `df -h`, `journalctl` in your live PTY; you approve sudo; every line visible in xterm |
+| **Multi-server fleet ops** | Multi-server sync input broadcasts keystrokes; jump hosts through bastions; layout snapshots |
+| **Remote config changes** | SFTP + Monaco edit nginx/systemd; save back without scp round-trips |
+| **Security-sensitive teams** | No AI keys on servers; credentials local-only; [compare](https://dlbury.github.io/clide/compare/) Tabby/Warp |
+
+More: [Website FAQ](https://dlbury.github.io/clide/faq/) · [llms.txt](llms.txt) · [Chinese site](https://dlbury.github.io/clide/zh/)
+
 <p align="center">
   <img src="src-tauri/icons/256x256.png" alt="Clide app icon 256px" width="64">
   &nbsp;&nbsp;
@@ -266,7 +285,22 @@ RUST_LOG=debug clide
 
 ## Quick Start
 
-1. **Install** — Download Clide from [Releases](https://github.com/DLbury/clide/releases) (Windows: setup `.exe` or portable zip)
+### Install (by platform)
+
+```bash
+# Windows portable — no installer (v0.1.76+)
+# Download Clide_*_x64-portable.zip from Releases, extract, run clide.exe
+
+# Linux .deb
+sudo dpkg -i Clide_*_amd64.deb
+
+# Linux AppImage
+chmod +x Clide_*.AppImage && ./Clide_*.AppImage
+```
+
+### Steps
+
+1. **Install** — Download from [Releases](https://github.com/DLbury/clide/releases) (Windows: setup `.exe` or portable zip)
 2. **Configure SSH** — Add server profiles in the sidebar (host, port, user, key or password — credentials stay in the app, not with the AI)
 3. **Connect shell** — Double-click a profile; log in in the **left terminal** (password / 2FA). Use split panes, SFTP, and monitoring
 4. **Enable AI** — Install and log in to [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code); confirm IDE bridge is ready in the sidebar
@@ -302,8 +336,16 @@ Integration is **non-invasive** — no global shell config changes:
 | **Project MCP** | Repo includes [`.mcp.json`](.mcp.json); register via Settings → “Register MCP” |
 
 <p align="center">
-  <img src="docs/assets/readme-architecture.png" alt="Clide architecture: Claude Code CLI via IDE Bridge and MCP aiterm to SSH terminal" width="900">
+  <img src="docs/assets/readme-architecture.png" alt="Clide architecture diagram: Claude Code CLI connects via IDE Bridge and MCP aiterm server to SSH terminal and remote server" width="900">
 </p>
+
+**Architecture (text flow for LLMs):**
+
+```
+Clide Desktop (Tauri) → PTY/SSH + SFTP + IDE WebSocket Bridge
+Claude Code CLI (--ide) ↔ Bridge ↔ MCP aiterm
+MCP → runShellCommand → your SSH PTY | readRemoteFile → SFTP
+```
 
 <details>
 <summary><strong>Using Claude Code CLI standalone</strong></summary>
@@ -357,6 +399,21 @@ flowchart LR
   MCP -->|"runShellCommand"| PTY
   MCP -->|"readRemoteFile"| SFTP
 ```
+
+**Plain-text flow:** UI drives PTY and SFTP on desktop → Claude Code connects via `--ide` WebSocket → MCP `aiterm` calls `runShellCommand` on open shells and `readRemoteFile` on SFTP.
+
+---
+
+## FAQ: Common Questions About Clide MCP & Secure Sudo
+
+| Question | Answer |
+|----------|--------|
+| **Can Claude see my SSH password or sudo password?** | No. Credentials are entered only in the left xterm. Terminal output may enter Claude context; passwords never do. |
+| **How to use Clide MCP with local Claude Code CLI?** | Start Clide, enable AI, install Claude Code. Or `claude mcp add -s project` with [`.mcp.json`](.mcp.json). See [Quick Start](https://dlbury.github.io/clide/quickstart/). |
+| **Clide vs direct Claude SSH?** | Direct SSH distributes keys or passwords to AI. Clide: local login + MCP drives your open PTY. [Full comparison](https://dlbury.github.io/clide/compare/). |
+| **Windows portable zip?** | Yes — `Clide_*_x64-portable.zip` on [Releases](https://github.com/DLbury/clide/releases) (v0.1.76+). |
+| **What is Clide vs AITerm?** | Clide = desktop app. MCP server name = `aiterm`. |
+| **LLM / AI summary file?** | [llms.txt](llms.txt) (English) · [llms-zh.txt](llms-zh.txt) (中文) |
 
 ---
 

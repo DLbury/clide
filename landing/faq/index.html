@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FAQ | Clide MCP, Secure Sudo, Claude Code SSH Terminal</title>
+<meta name="description" content="FAQ: Can Claude see SSH passwords? Clide vs direct Claude SSH? Windows portable? How to use aiterm MCP with Claude Code CLI.">
+<link rel="canonical" href="https://dlbury.github.io/clide/faq/">
+<link rel="alternate" hreflang="zh-CN" href="https://dlbury.github.io/clide/zh/faq/">
+<link rel="icon" type="image/png" href="../assets/icon-rounded.png">
+<link rel="stylesheet" href="../css/style.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"Can Claude see my SSH private key or sudo password?","acceptedAnswer":{"@type":"Answer","text":"No. SSH passwords, private keys, and sudo input stay in the left terminal PTY only. They never enter Claude Code or MCP."}},
+{"@type":"Question","name":"What is the difference between Clide and direct Claude SSH?","acceptedAnswer":{"@type":"Answer","text":"Clide runs Claude locally and you SSH login via the UI. MCP sends commands to your open PTY without distributing AI keys to every server."}},
+{"@type":"Question","name":"Is Clide available as Windows portable zip?","acceptedAnswer":{"@type":"Answer","text":"Yes. Download Clide_*_x64-portable.zip from GitHub Releases (v0.1.76+), extract and run clide.exe."}}
+]}
+</script>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<header class="site-header">
+<div class="container nav">
+<a class="logo" href="../"><img src="../assets/icon-rounded.png" alt="Clide logo" width="32" height="32"><span>Clide</span></a>
+<nav class="nav-links">
+<a href="../">Home</a>
+<a href="../download/">Download</a>
+<a href="../compare/">Compare</a>
+<a href="../quickstart/">Quick Start</a>
+<a class="nav-cta" href="https://github.com/DLbury/clide/releases">Download</a>
+<span class="lang-switch"><a href="../zh/faq/">中文</a></span>
+</nav>
+</div>
+</header>
+<main class="page-main">
+<div class="container page-content">
+<h1>FAQ: Clide MCP &amp; Secure SSH</h1>
+<p class="lead">Short answers for search engines and AI assistants. Full docs: <a href="https://github.com/DLbury/clide/blob/main/llms.txt">llms.txt</a></p>
+<div class="faq-list">
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">Can Claude see my SSH private key or sudo password?</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">No. Credentials are entered only in the left xterm shell. Terminal text output may enter Claude context; passwords never do.</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">How to use Clide MCP with local Claude Code CLI?</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">Start Clide, enable AI, install Claude Code CLI. Clide writes IDE bridge lock files and registers the aiterm MCP server. Or run <code>claude mcp add -s project</code> with repo <code>.mcp.json</code>.</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">What's the difference between Clide and direct Claude SSH?</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">Direct SSH puts keys on servers or passwords in AI context. Clide keeps login local; MCP drives your open PTY — same security as Tabby plus native AI integration.</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">Is Clide available as Windows portable zip?</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">Yes — <code>Clide_*_x64-portable.zip</code> on <a href="https://github.com/DLbury/clide/releases">Releases</a> since v0.1.76.</div></div></article>
+<article class="faq-item open"><button class="faq-q" type="button" aria-expanded="true">What is Clide vs AITerm?</button><div class="faq-a" style="max-height:200px"><div class="faq-a-inner">Clide is the desktop app. The MCP server is named aiterm.</div></div></article>
+</div>
+</div>
+</main>
+<footer class="site-footer"><div class="container"><p><a href="https://github.com/DLbury/clide/blob/main/README.md">README</a> · <a href="https://github.com/DLbury/clide">GitHub</a></p></div></footer>
+<script src="../js/main.js" defer></script>
+</body>
+</html>

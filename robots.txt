@@ -1,4 +1,5 @@
-# Clide website — https://dlbury.github.io/clide/
+# Clide GitHub repository — allow search and AI crawlers
+# https://github.com/DLbury/clide
 
 User-agent: *
 Allow: /
@@ -7,9 +8,6 @@ User-agent: Googlebot
 Allow: /
 
 User-agent: Bingbot
-Allow: /
-
-User-agent: Baiduspider
 Allow: /
 
 User-agent: GPTBot
@@ -30,7 +28,9 @@ Allow: /
 User-agent: Bytespider
 Allow: /
 
-Sitemap: https://dlbury.github.io/clide/sitemap.xml
+User-agent: Applebot-Extended
+Allow: /
 
-# LLM summaries: https://github.com/DLbury/clide/blob/main/llms.txt
-# 中文摘要: https://github.com/DLbury/clide/blob/main/llms-zh.txt
+# LLM summary files
+# llms.txt — English
+# llms-zh.txt — Chinese

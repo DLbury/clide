@@ -573,7 +573,30 @@ tr:last-child td{border-bottom:none}
   border:1px solid var(--border);color:var(--muted);
 }
 
-@media(max-width:1024px){
+.geo-block{
+  margin:1.5rem 0;padding:1.25rem 1.5rem;
+  border:1px solid rgba(52,211,153,.25);border-radius:var(--radius);
+  background:linear-gradient(145deg,rgba(52,211,153,.06),var(--surface-2));
+}
+.geo-block p{font-size:.9375rem;color:var(--muted);line-height:1.65;margin-top:.5rem}
+.geo-block strong{color:var(--text)}
+.page-main{padding-top:calc(var(--nav-h) + 2rem);padding-bottom:4rem}
+.page-main h1{font-size:clamp(1.75rem,3.5vw,2.5rem);font-weight:700;letter-spacing:-.03em;margin-bottom:1rem}
+.page-main .lead{color:var(--muted);font-size:1.0625rem;max-width:60ch;margin-bottom:2rem;line-height:1.65}
+.page-content{max-width:48rem}
+.page-content h2{font-size:1.25rem;font-weight:700;margin:2rem 0 .75rem;letter-spacing:-.02em}
+.page-content p,.page-content li{font-size:.9375rem;color:var(--muted);line-height:1.65}
+.page-content ul,.page-content ol{margin:.75rem 0 1rem 1.25rem}
+.page-content pre{
+  background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:1rem;overflow-x:auto;font-family:var(--mono);font-size:.8125rem;margin:1rem 0;
+}
+.page-nav-links{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:2rem}
+.page-nav-links a{
+  font-size:.8125rem;padding:6px 12px;border-radius:999px;
+  border:1px solid var(--border);color:var(--muted);
+}
+.page-nav-links a:hover{color:var(--accent);border-color:rgba(52,211,153,.35)}
   .hero-grid{grid-template-columns:1fr}
   .hero-copy{max-width:none;text-align:left}
   .pillar-card,.pillar-card--hero,.pillar-card--ai{grid-column:span 12}

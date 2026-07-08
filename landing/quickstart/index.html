@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quick Start | Clide AI SSH Terminal + Claude Code MCP</title>
+<meta name="description" content="Install Clide, configure SSH profiles, connect shell, enable Claude Code MCP. Step-by-step secure AI SSH terminal setup for Windows, macOS, Linux.">
+<link rel="canonical" href="https://dlbury.github.io/clide/quickstart/">
+<link rel="alternate" hreflang="zh-CN" href="https://dlbury.github.io/clide/zh/quickstart/">
+<link rel="icon" type="image/png" href="../assets/icon-rounded.png">
+<link rel="stylesheet" href="../css/style.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"HowTo","name":"Install and use Clide AI SSH terminal","step":[
+{"@type":"HowToStep","name":"Download","text":"Get installer or Windows portable zip from GitHub Releases"},
+{"@type":"HowToStep","name":"SSH profiles","text":"Add server host, user, key or password in sidebar"},
+{"@type":"HowToStep","name":"Connect","text":"Double-click profile and login in left terminal"},
+{"@type":"HowToStep","name":"Claude Code","text":"Install Claude Code CLI and enable IDE bridge in Clide"}
+]}
+</script>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<header class="site-header">
+<div class="container nav">
+<a class="logo" href="../"><img src="../assets/icon-rounded.png" alt="Clide logo" width="32" height="32"><span>Clide</span></a>
+<nav class="nav-links">
+<a href="../">Home</a>
+<a href="../download/">Download</a>
+<a href="../faq/">FAQ</a>
+<a class="nav-cta" href="https://github.com/DLbury/clide/releases">Download</a>
+<span class="lang-switch"><a href="../zh/quickstart/">中文</a></span>
+</nav>
+</div>
+</header>
+<main class="page-main">
+<div class="container page-content">
+<h1>Quick Start: Clide + Claude Code MCP</h1>
+<ol>
+<li><strong>Download</strong> — <a href="https://github.com/DLbury/clide/releases">GitHub Releases</a> (Windows: <code>*-setup.exe</code> or <code>*-portable.zip</code>)</li>
+<li><strong>SSH profiles</strong> — Sidebar → add host, port, user, key/password (credentials stay in app)</li>
+<li><strong>Connect</strong> — Double-click profile; login in left terminal (password / 2FA / sudo)</li>
+<li><strong>Claude Code</strong> — Install <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code CLI</a>; confirm IDE bridge in Clide sidebar</li>
+<li><strong>Ask AI</strong> — e.g. "check disk usage"; Claude runs <code>runShellCommand</code> in your shell</li>
+</ol>
+<h2>Install commands</h2>
+<pre># Windows portable (no installer)
+# Unzip Clide_*_x64-portable.zip → run clide.exe
+
+# Linux .deb
+sudo dpkg -i Clide_*_amd64.deb
+
+# Linux AppImage
+chmod +x Clide_*.AppImage && ./Clide_*.AppImage
+
+# Register MCP manually (optional)
+claude mcp add -s project  # see .mcp.json in repo</pre>
+</div>
+</main>
+<footer class="site-footer"><div class="container"><p><a href="https://github.com/DLbury/clide/blob/main/README.md">README</a></p></div></footer>
+</body>
+</html>

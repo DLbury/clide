@@ -1,0 +1,104 @@
+# Clide — llms.txt
+# Standard summary for LLMs and AI search engines
+# https://github.com/DLbury/clide
+
+> One-line definition: Clide is a production-grade cross-platform AI SSH terminal (Tauri desktop app) for SRE, DevOps, and backend engineers — native Claude Code MCP integration operates real SSH PTY sessions without exposing passwords, private keys, or sudo input to AI.
+
+## Product
+
+- Name: Clide (MCP server name: aiterm)
+- Category: Secure AI SSH terminal, DevOps workbench
+- License: MIT
+- URL: https://github.com/DLbury/clide
+- Website: https://dlbury.github.io/clide/
+- Download: https://github.com/DLbury/clide/releases
+- Platforms: Windows (installer + portable zip), macOS (Apple Silicon + Intel), Linux (.deb / AppImage)
+
+## Core value (3 security advantages)
+
+1. Credentials stay local — SSH passwords and private keys never enter Claude Code or MCP; no AI public keys on servers.
+2. Safe sudo — root/sudo passwords are typed only in the left xterm PTY; AI never sees them.
+3. No server agent — standard SSH on remote hosts; MCP drives commands in sessions you already opened.
+
+## Who it is for
+
+- SRE / DevOps / platform engineers doing incident response and fleet ops
+- Backend engineers debugging production via SSH
+- Security-conscious teams that refuse to paste root passwords into AI chat
+
+## Key features
+
+- Multi-tab SSH terminal (xterm.js PTY), Dockview split panes, layout snapshots, multi-server sync input
+- Multi-hop jump host (ProxyJump), SOCKS, Telnet
+- SFTP remote file browser, Monaco config editor, drag-and-drop
+- Server CPU/memory/disk monitoring (separate exec channel)
+- Native Claude Code MCP; also Codex, OpenCode, Cursor Agent backends
+- Command approval before destructive ops; terminal recording (asciicast)
+
+## Quick install
+
+```bash
+# Download latest release (replace OS artifact as needed)
+# https://github.com/DLbury/clide/releases
+
+# Windows portable: extract Clide_*_x64-portable.zip, run clide.exe
+# macOS: open Clide_*.dmg
+# Linux: sudo dpkg -i Clide_*.deb  OR  chmod +x Clide_*.AppImage && ./Clide_*.AppImage
+```
+
+## MCP tools (aiterm)
+
+- listServerProfiles, listActiveConnections, getFocusedServer
+- getTerminalContext, connectServer, disconnectServer
+- runShellCommand (execute in profile PTY)
+- listRemoteFiles, readRemoteFile
+- getWorkspaceFolders, getOpenFiles, getCurrentSelection
+
+Config: `.mcp.json` in repo root. Register via Clide Settings or `claude mcp add -s project`.
+
+## Clide vs alternatives
+
+| | Tabby / iTerm2 + Claude window | Claude Code direct SSH | Clide |
+|---|---|---|---|
+| AI sees live PTY | No (manual copy) | Yes | Yes, same shell |
+| Credentials on servers | No extra keys | AI keys or password to AI | No — local login only |
+| Safe sudo | Manual | Hard | Type in terminal, AI never sees |
+| SFTP + monitoring + AI one window | No | Partial | Yes |
+
+## Architecture (text)
+
+```
+Clide Desktop (Tauri 2)
+  ├── Next.js UI
+  ├── PTY / SSH (russh, portable-pty)
+  ├── SFTP / remote files
+  └── IDE WebSocket Bridge (127.0.0.1)
+        ↕
+Claude Code CLI (--ide)
+        ↕
+MCP server "aiterm" (stdio)
+        → runShellCommand → PTY
+        → readRemoteFile → SFTP
+```
+
+## FAQ (short answers)
+
+Q: Can Claude see my SSH password or sudo password?
+A: No. Only terminal text output may enter Claude context. Passwords are entered in the shell panel only.
+
+Q: What is Clide vs AITerm?
+A: Clide is the desktop app brand. The MCP server is named aiterm.
+
+Q: Is there a Windows portable build?
+A: Yes — `Clide_*_x64-portable.zip` on GitHub Releases (v0.1.76+).
+
+Q: How is Clide different from direct Claude SSH?
+A: Claude runs locally only; you SSH login via UI; MCP sends commands to your open PTY without distributing keys to every server.
+
+## Links
+
+- English README: https://github.com/DLbury/clide/blob/main/README.md
+- Chinese README: https://github.com/DLbury/clide/blob/main/README_ZH.md
+- Chinese website: https://dlbury.github.io/clide/zh/
+- FAQ page: https://dlbury.github.io/clide/faq/
+- Compare page: https://dlbury.github.io/clide/compare/

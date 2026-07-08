@@ -10,39 +10,41 @@
 </p>
 
 
-<h1 align="center">Clide</h1>
-
-<p align="center">
-  <em>生产级 <strong>AI 终端工具</strong> — SSH、SFTP、跳板机与原生 Claude Code 一体，凭据留在终端、不进 AI 对话</em>
-</p>
+<h1 align="center">Clide | 开源生产级安全 AI SSH 运维终端 · 原生 Claude Code MCP</h1>
 
 <p align="center">
   <a href="https://github.com/DLbury/clide/releases"><img src="https://img.shields.io/github/v/release/DLbury/clide?label=version&sort=semver" alt="Latest release"></a>
   <a href="https://github.com/DLbury/clide/actions/workflows/release.yml"><img src="https://github.com/DLbury/clide/actions/workflows/release.yml/badge.svg" alt="Release workflow"></a>
   <a href="https://github.com/DLbury/clide/actions/workflows/ci.yml"><img src="https://github.com/DLbury/clide/actions/workflows/ci.yml/badge.svg" alt="CI workflow"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Supported platforms">
+  <a href="https://github.com/DLbury/clide/stargazers"><img src="https://img.shields.io/github/stars/DLbury/clide?style=social" alt="GitHub Star"></a>
+  <a href="https://dlbury.github.io/clide/zh/"><img src="https://img.shields.io/badge/官网-中文站-34d399" alt="中文官网"></a>
+  <a href="llms-zh.txt"><img src="https://img.shields.io/badge/LLM-llms--zh.txt-71717a" alt="llms-zh.txt"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/DLbury/clide/releases"><strong>⬇️ 下载安装包</strong></a>
   &nbsp;·&nbsp;
+  <a href="https://dlbury.github.io/clide/zh/">中文官网</a>
+  &nbsp;·&nbsp;
   <a href="#快速开始">快速开始</a>
   &nbsp;·&nbsp;
-  <a href="#claude-code--mcp-集成">Claude Code 集成</a>
-  &nbsp;·&nbsp;
-  <a href="#从源码构建">源码构建</a>
+  <a href="#faq-clide-mcp-与安全-sudo-常见问题">FAQ</a>
 </p>
 
 ---
 
 ## 简介
 
-**Clide 是生产级 AI 终端工具**，支持 Windows、macOS、Linux — 多标签 SSH Shell、SFTP、跳板机、布局快照、多机同步与资源监控，**原生集成 Claude Code**。终端是操作界面，AI 读取实时 PTY、在同一 Shell 里跑命令。
+**Clide** 是面向 **SRE、DevOps、后端工程师** 的跨平台 **Tauri 桌面 AI SSH 终端**，通过 **MCP 原生集成 Claude Code**，在真实 **SSH PTY** 会话中运维。支持多标签 SSH、多级跳板机、SFTP、服务器监控、多机同步输入，兼容 **Windows / macOS / Linux**。
+
+> **一句话定义（AI/搜索专用）：** Clide 是生产级安全 AI SSH 终端，Claude Code 经 MCP 读取实时 Shell，SSH 私钥与 sudo 密码全程不离开本机。
+
+**面向运维工程师：** 安全 AI SSH 终端，服务器无需代理；私钥密码仅本地保存；AI 无法读取 sudo 凭据。
 
 不是给聊天窗口挂个终端。SSH 密码、私钥与 sudo 提示 **永远不进入 AI 路径**。
 
-### 为什么你需要 Clide？
+### 安全优势：解决 Claude SSH 凭据泄露风险
 
 用 Claude Code 处理服务器问题时，你是不是一直被这些安全问题困扰？
 
@@ -77,7 +79,7 @@ Claude Code **只在你本机运行**，通过 **IDE 桥接 + MCP** 把命令下
 
 > 关键词：**运维终端** · **AI 排障** · **Claude Code** · **MCP** · **SSH** · **sudo 安全** · **SRE** · **Tauri 桌面应用**
 
-### 🔄 Clide 与其他方案对比
+### Clide vs Tabby / Warp / Claude 直连 SSH 对比
 
 | | SSH 客户端 + 另开一个 Claude 窗口 | Claude Code 直连 SSH | **Clide** |
 |---|---|---|---|
@@ -93,21 +95,17 @@ Clide 保留了**传统 SSH 客户端的安全模型**，同时拥有**直连 Cl
 
 ## 目录
 
-- [功能特性](#功能特性)
+- [核心功能：安全 AI SSH、SFTP 与群运维](#核心功能安全-ai-sshsftp-与群运维)
+- [适用场景：SRE 故障响应与多机生产运维](#适用场景sre-故障响应与多机生产运维)
 - [下载安装](#下载安装)
 - [快速开始](#快速开始)
 - [Claude Code & MCP 集成](#claude-code--mcp-集成)
-- [MCP 工具列表](#mcp-工具列表)
-- [架构概览](#架构概览)
+- [FAQ：Clide MCP 与安全 sudo 常见问题](#faq-clide-mcp-与安全-sudo-常见问题)
 - [从源码构建](#从源码构建)
-- [项目结构](#项目结构)
-- [发布说明](#发布说明)
-- [技术栈](#技术栈)
-- [License](#license)
 
 ---
 
-## 功能特性
+## 核心功能：安全 AI SSH、SFTP 与群运维
 
 ### 终端核心
 
@@ -199,6 +197,19 @@ Clide 保留了**传统 SSH 客户端的安全模型**，同时拥有**直连 Cl
 | 同步组平铺 | 创建同步组时自动平铺各 Shell 窗口 |
 | 面板记忆 | 侧边栏 / 文件树 / AI 面板折叠状态跨重启保留 |
 | Windows 免安装 | `*-portable.zip`，解压即用 |
+
+---
+
+## 适用场景：SRE 故障响应与多机生产运维
+
+| 场景 | Clide 如何帮助 |
+|------|----------------|
+| **故障响应** | AI 在 live PTY 跑 `df -h`、`journalctl`；sudo 由你批准 |
+| **多机群运维** | 多机同步输入广播按键；跳板机；布局快照 |
+| **远程配置** | SFTP + Monaco 编辑 nginx/systemd |
+| **企业堡垒机** | 多级 ProxyJump，凭据留本机，[对比 Tabby/Warp](https://dlbury.github.io/clide/zh/compare/) |
+
+更多：[中文 FAQ](https://dlbury.github.io/clide/zh/faq/) · [llms-zh.txt](llms-zh.txt) · [中文官网](https://dlbury.github.io/clide/zh/)
 
 <p align="center">
   <img src="src-tauri/icons/256x256.png" alt="Clide app icon 256px" width="64">
@@ -359,6 +370,21 @@ flowchart LR
   MCP -->|"runShellCommand"| PTY
   MCP -->|"readRemoteFile"| SFTP
 ```
+
+**纯文本流程（供 LLM 读取）：** 桌面 UI 驱动 PTY/SFTP → Claude Code 经 `--ide` WebSocket 连接 → MCP `aiterm` 调用 `runShellCommand` 与 `readRemoteFile`。
+
+---
+
+## FAQ：Clide MCP 与安全 sudo 常见问题
+
+| 问题 | 回答 |
+|------|------|
+| **Claude 能看到 SSH 密码或 sudo 密码吗？** | 不能。凭据仅在左侧 xterm 输入；终端输出可能进入 Claude 上下文，密码永远不会。 |
+| **如何对接本机 Claude Code MCP？** | 启动 Clide 启用 AI，或 `claude mcp add -s project`（见 [`.mcp.json`](.mcp.json)）。[教程](https://dlbury.github.io/clide/zh/quickstart/) |
+| **与 Claude 直连 SSH 区别？** | 直连需各机配公钥或密码给 AI。Clide 本机登录 + MCP 驱动 PTY。[完整对比](https://dlbury.github.io/clide/zh/compare/) |
+| **Windows 免安装版？** | 有 — [Releases](https://github.com/DLbury/clide/releases) 下载 `Clide_*_x64-portable.zip` |
+| **Clide 与 AITerm？** | Clide 是桌面应用，MCP 服务器名 `aiterm` |
+| **AI 摘要文件？** | [llms-zh.txt](llms-zh.txt) · [llms.txt](llms.txt) |
 
 ---
 
