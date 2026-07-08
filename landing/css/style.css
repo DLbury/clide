@@ -253,6 +253,81 @@ section{padding:clamp(4rem,10vw,6rem) 0}
 .b-visual-overlay h3,.b-visual-overlay p{color:var(--text)}
 .b-visual-overlay p{color:var(--muted);font-size:.8125rem;margin-top:.25rem}
 
+/* Product imagery */
+.showcase{
+  padding:clamp(3rem,8vw,5rem) 0;
+  border-bottom:1px solid var(--border);
+}
+.showcase-frame{
+  border-radius:var(--radius-lg);
+  border:1px solid var(--border);
+  overflow:hidden;
+  background:var(--surface);
+  box-shadow:0 32px 64px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.05);
+}
+.showcase-frame img{width:100%;display:block}
+.showcase-caption{
+  margin-top:1rem;font-size:.8125rem;color:var(--muted-2);
+  text-align:center;font-family:var(--mono);
+}
+
+.panel-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
+  margin-top:2.5rem;
+}
+.panel-shot{
+  border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;background:var(--surface-2);
+}
+.panel-crop{
+  height:200px;overflow:hidden;position:relative;
+  background:#0d1117;
+}
+.panel-crop img{
+  position:absolute;width:310%;max-width:none;height:auto;
+  top:-32%;left:0;
+}
+.panel-crop--files img{left:-105%}
+.panel-crop--ai img{left:-210%}
+.panel-shot figcaption{
+  padding:.875rem 1rem;font-size:.8125rem;font-weight:600;
+  border-top:1px solid var(--border);
+}
+.panel-shot p{
+  padding:0 1rem 1rem;font-size:.75rem;color:var(--muted);line-height:1.5;
+}
+
+.arch-figure{
+  border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;background:var(--bg);
+}
+.arch-figure img{width:100%;display:block}
+.arch-figure figcaption{
+  padding:.75rem 1rem;font-size:.75rem;color:var(--muted-2);
+  font-family:var(--mono);border-top:1px solid var(--border);
+}
+
+.use-card-media{
+  height:140px;overflow:hidden;border-bottom:1px solid var(--border);
+  background:#0d1117;
+}
+.use-card-media img{
+  width:100%;height:100%;object-fit:cover;object-position:center 72%;
+  opacity:.92;
+}
+.use-card-media--left img{object-position:12% 72%}
+.use-card-media--center img{object-position:50% 72%}
+.use-card-media--right img{object-position:88% 72%}
+.use-card-body{padding:1.25rem 1.5rem 1.5rem}
+
+.bento-cell.b-visual .panel-crop{height:100%;min-height:220px}
+.bento-cell.b-visual .panel-crop img{width:280%;top:-30%;left:-8%}
+
+@media(max-width:768px){
+  .panel-grid{grid-template-columns:1fr}
+  .panel-crop{height:180px}
+}
+
 /* Security */
 .security-grid{
   display:grid;grid-template-columns:1.1fr .9fr;gap:3rem;align-items:start;
@@ -277,8 +352,9 @@ section{padding:clamp(4rem,10vw,6rem) 0}
 /* Use cases - 2 col */
 .use-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .use-card{
-  padding:1.75rem;border:1px solid var(--border);
+  border:1px solid var(--border);
   border-radius:var(--radius);background:var(--surface);
+  overflow:hidden;
 }
 .use-card h3{font-size:1rem;font-weight:600;margin-bottom:.5rem}
 .use-card p{font-size:.875rem;color:var(--muted)}

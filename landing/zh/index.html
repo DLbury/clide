@@ -22,7 +22,7 @@
 <meta property="og:url" content="https://dlbury.github.io/clide/zh/">
 <meta property="og:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/DLbury/clide/main/view/public/icon-rounded.png">
+<link rel="icon" type="image/png" href="../assets/icon-rounded.png">
 <link rel="stylesheet" href="../css/style.css">
 <script type="application/ld+json">
 {
@@ -47,7 +47,7 @@
 <header class="site-header">
 <div class="container nav">
 <a class="logo" href="../" aria-label="Clide 首页">
-<img src="https://raw.githubusercontent.com/DLbury/clide/main/view/public/icon-rounded.png" alt="Clide 标志" width="32" height="32">
+<img src="../assets/icon-rounded.png" alt="Clide 标志" width="32" height="32">
 <span>Clide</span>
 </a>
 <nav class="nav-links" aria-label="主导航">
@@ -77,7 +77,40 @@
 <div class="hero-visual">
 <div class="hero-glow" aria-hidden="true"></div>
 <figure class="hero-frame">
-<img src="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png" alt="Clide SSH 终端界面：远程 Shell、SFTP 文件树、服务器监控与 Claude Code AI 助手" width="900" height="562" loading="eager" fetchpriority="high">
+<img src="../assets/hero.png" alt="Clide SSH 终端界面：远程 Shell、SFTP 文件树、服务器监控与 Claude Code AI 助手" width="1536" height="1024" loading="eager" fetchpriority="high">
+</figure>
+</div>
+</div>
+</section>
+
+<section class="showcase" aria-labelledby="showcase-title">
+<div class="container reveal">
+<h2 id="showcase-title" class="sr-only">Clide 产品截图</h2>
+<figure class="showcase-frame">
+<img src="../assets/hero.png" alt="Clide 桌面应用：SSH 终端、文件管理器与 Claude Code AI 助手同屏展示" width="1536" height="1024" loading="lazy">
+</figure>
+<p class="showcase-caption">终端、远程文件与 AI 助手，一个窗口搞定</p>
+<div class="panel-grid">
+<figure class="panel-shot">
+<div class="panel-crop panel-crop--terminal">
+<img src="../assets/hero.png" alt="Clide SSH 终端面板，显示远程 Shell 会话" width="1536" height="1024" loading="lazy">
+</div>
+<figcaption>SSH 终端</figcaption>
+<p>多标签远程 Shell，真实 PTY 输出。AI 读取与你相同的终端流。</p>
+</figure>
+<figure class="panel-shot">
+<div class="panel-crop panel-crop--files">
+<img src="../assets/hero.png" alt="Clide 远程文件浏览器与 SFTP 目录树" width="1536" height="1024" loading="lazy">
+</div>
+<figcaption>远程文件</figcaption>
+<p>SFTP 浏览、上传，Monaco 编辑配置，无需离开应用。</p>
+</figure>
+<figure class="panel-shot">
+<div class="panel-crop panel-crop--ai">
+<img src="../assets/hero.png" alt="Clide Claude Code AI 助手面板" width="1536" height="1024" loading="lazy">
+</div>
+<figcaption>Claude Code AI</figcaption>
+<p>本机 Claude Code 通过 MCP 向已打开的 Shell 下发命令。</p>
 </figure>
 </div>
 </div>
@@ -109,7 +142,9 @@
 <p>Dockview 分屏、会话分组、持久化 Profile。xterm.js 真实 PTY，本地 PowerShell 与远程 SSH。你手敲或 AI 跑命令，同一条 Shell。</p>
 </article>
 <article class="bento-cell b-span-5 b-visual">
-<img src="https://picsum.photos/seed/clide-terminal-zh/600/400" alt="暗色环境下的服务器终端会话" width="600" height="400" loading="lazy">
+<div class="panel-crop panel-crop--terminal">
+<img src="../assets/hero.png" alt="Clide 中的 SSH 终端会话" width="1536" height="1024" loading="lazy">
+</div>
 <div class="b-visual-overlay">
 <h3>实时 PTY 输出</h3>
 <p>AI 读取与你相同的终端流</p>
@@ -160,14 +195,10 @@
 <li>终端输出可能进入 Claude 上下文，密码永远不会</li>
 </ul>
 </div>
-<pre class="arch-diagram" aria-label="架构示意图">你的桌面（Clide）
-  |- SSH 连接    仅本机，russh
-  |- 左侧 xterm   你登录、2FA、sudo
-  '- IDE 桥接 + MCP aiterm
-        ^
-本机 Claude Code（--ide）
-  '- runShellCommand / getTerminalContext
-     readRemoteFile / ...</pre>
+<figure class="arch-figure">
+<img src="../assets/architecture.png" alt="Clide 架构图：Claude Code 经 IDE 桥接与 MCP aiterm 连接 SSH 终端与远程服务器" width="1536" height="1024" loading="lazy">
+<figcaption>Clide 集成流程：本地中转，凭据不进入 AI 路径</figcaption>
+</figure>
 </div>
 </div>
 </section>
@@ -180,20 +211,40 @@
 </div>
 <div class="use-grid reveal">
 <article class="use-card">
+<div class="use-card-media use-card-media--left">
+<img src="../assets/hero.png" alt="故障响应时的终端视图" width="1536" height="1024" loading="lazy">
+</div>
+<div class="use-card-body">
 <h3>故障响应</h3>
 <p>AI 在你的 Shell 里跑 <code>df -h</code> 与 <code>journalctl</code>。sudo 由你批准，每行输出可见。</p>
+</div>
 </article>
 <article class="use-card">
+<div class="use-card-media use-card-media--center">
+<img src="../assets/hero.png" alt="远程文件浏览器编辑配置" width="1536" height="1024" loading="lazy">
+</div>
+<div class="use-card-body">
 <h3>远程配置</h3>
 <p>SFTP 浏览生产配置，Monaco 编辑后保存，无需 scp 来回。</p>
+</div>
 </article>
 <article class="use-card">
+<div class="use-card-media use-card-media--left">
+<img src="../assets/hero.png" alt="多会话 SSH 终端" width="1536" height="1024" loading="lazy">
+</div>
+<div class="use-card-body">
 <h3>多机群运维</h3>
 <p>标签页会话、经堡垒机跳转，跨机器监控 CPU 与磁盘。</p>
+</div>
 </article>
 <article class="use-card">
+<div class="use-card-media">
+<img src="../assets/architecture.png" alt="本地中转架构，凭据留在桌面" width="1536" height="1024" loading="lazy">
+</div>
+<div class="use-card-body">
 <h3>安全敏感团队</h3>
 <p>服务器无 AI 公钥，Claude 对话无 root 密码。信任边界与 Tabby 或 iTerm2 相同。</p>
+</div>
 </article>
 </div>
 </div>

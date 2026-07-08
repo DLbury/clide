@@ -26,8 +26,8 @@
 <meta name="twitter:title" content="Clide — SSH Terminal &amp; AI Ops Workbench">
 <meta name="twitter:description" content="Manage servers with a real SSH terminal, SFTP, and Claude Code without handing passwords or keys to AI.">
 <meta name="twitter:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
-<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/DLbury/clide/main/view/public/icon-rounded.png">
-<link rel="apple-touch-icon" href="https://raw.githubusercontent.com/DLbury/clide/main/view/public/icon-rounded.png">
+<link rel="icon" type="image/png" href="assets/icon-rounded.png">
+<link rel="apple-touch-icon" href="assets/icon-rounded.png">
 <link rel="stylesheet" href="css/style.css">
 <script type="application/ld+json">
 {
@@ -116,7 +116,7 @@
 <header class="site-header">
 <div class="container nav">
 <a class="logo" href="./" aria-label="Clide home">
-<img src="https://raw.githubusercontent.com/DLbury/clide/main/view/public/icon-rounded.png" alt="Clide logo" width="32" height="32">
+<img src="assets/icon-rounded.png" alt="Clide logo" width="32" height="32">
 <span>Clide</span>
 </a>
 <nav class="nav-links" aria-label="Main navigation">
@@ -146,7 +146,40 @@
 <div class="hero-visual">
 <div class="hero-glow" aria-hidden="true"></div>
 <figure class="hero-frame">
-<img src="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png" alt="Clide SSH terminal interface with remote shell, SFTP file tree, server stats, and Claude Code AI assistant" width="900" height="562" loading="eager" fetchpriority="high">
+<img src="assets/hero.png" alt="Clide SSH terminal interface with remote shell, SFTP file tree, server stats, and Claude Code AI assistant" width="1536" height="1024" loading="eager" fetchpriority="high">
+</figure>
+</div>
+</div>
+</section>
+
+<section class="showcase" aria-labelledby="showcase-title">
+<div class="container reveal">
+<h2 id="showcase-title" class="sr-only">Clide product screenshots</h2>
+<figure class="showcase-frame">
+<img src="assets/hero.png" alt="Clide desktop app: SSH terminal, file explorer, and Claude Code AI assistant in one window" width="1536" height="1024" loading="lazy">
+</figure>
+<p class="showcase-caption">Terminal, remote files, and AI assistant in one window</p>
+<div class="panel-grid">
+<figure class="panel-shot">
+<div class="panel-crop panel-crop--terminal">
+<img src="assets/hero.png" alt="Clide SSH terminal panel showing live remote shell session" width="1536" height="1024" loading="lazy">
+</div>
+<figcaption>SSH terminal</figcaption>
+<p>Multi-tab remote shell with real PTY output. AI reads the same stream you type in.</p>
+</figure>
+<figure class="panel-shot">
+<div class="panel-crop panel-crop--files">
+<img src="assets/hero.png" alt="Clide remote file explorer with SFTP tree and Monaco editor" width="1536" height="1024" loading="lazy">
+</div>
+<figcaption>Remote files</figcaption>
+<p>SFTP browse, upload, and edit configs in Monaco without leaving the app.</p>
+</figure>
+<figure class="panel-shot">
+<div class="panel-crop panel-crop--ai">
+<img src="assets/hero.png" alt="Clide Claude Code AI assistant panel with tool calls and chat" width="1536" height="1024" loading="lazy">
+</div>
+<figcaption>Claude Code AI</figcaption>
+<p>Local Claude Code drives commands into your open shell via MCP.</p>
 </figure>
 </div>
 </div>
@@ -178,7 +211,9 @@
 <p>Dockview split panes, session groups, persisted profiles. Real xterm.js PTY for local PowerShell and remote SSH. Same shell whether you type or AI runs a command.</p>
 </article>
 <article class="bento-cell b-span-5 b-visual">
-<img src="https://picsum.photos/seed/clide-terminal-dark/600/400" alt="Server terminal session in dark environment" width="600" height="400" loading="lazy">
+<div class="panel-crop panel-crop--terminal">
+<img src="assets/hero.png" alt="Live SSH terminal session in Clide" width="1536" height="1024" loading="lazy">
+</div>
 <div class="b-visual-overlay">
 <h3>Live PTY output</h3>
 <p>AI reads the same stream you see</p>
@@ -229,14 +264,10 @@
 <li>Terminal output may enter Claude context. Passwords never do.</li>
 </ul>
 </div>
-<pre class="arch-diagram" aria-label="Architecture diagram">Your Desktop (Clide)
-  |- SSH connection    local only, russh
-  |- Left xterm         you login, 2FA, sudo
-  '- IDE bridge + MCP aiterm
-        ^
-Local Claude Code (--ide)
-  '- runShellCommand / getTerminalContext
-     readRemoteFile / ...</pre>
+<figure class="arch-figure">
+<img src="assets/architecture.png" alt="Clide architecture: Claude Code CLI connects via IDE Bridge and MCP aiterm to SSH terminal and remote server" width="1536" height="1024" loading="lazy">
+<figcaption>Clide integration flow: local relay, no credentials in the AI path</figcaption>
+</figure>
 </div>
 </div>
 </section>
@@ -249,20 +280,40 @@ Local Claude Code (--ide)
 </div>
 <div class="use-grid reveal">
 <article class="use-card">
+<div class="use-card-media use-card-media--left">
+<img src="assets/hero.png" alt="Terminal view during incident response" width="1536" height="1024" loading="lazy">
+</div>
+<div class="use-card-body">
 <h3>Incident response</h3>
 <p>AI runs <code>df -h</code> and <code>journalctl</code> in your live shell. You approve sudo and see every line.</p>
+</div>
 </article>
 <article class="use-card">
+<div class="use-card-media use-card-media--center">
+<img src="assets/hero.png" alt="Remote file browser for config edits" width="1536" height="1024" loading="lazy">
+</div>
+<div class="use-card-body">
 <h3>Remote config edits</h3>
 <p>SFTP browse production configs, patch in Monaco, save back. No scp round-trips.</p>
+</div>
 </article>
 <article class="use-card">
+<div class="use-card-media use-card-media--left">
+<img src="assets/hero.png" alt="Multi-session SSH terminal" width="1536" height="1024" loading="lazy">
+</div>
+<div class="use-card-body">
 <h3>Fleet operations</h3>
 <p>Tabbed sessions, jump hosts through bastions. Monitor CPU and disk across boxes.</p>
+</div>
 </article>
 <article class="use-card">
+<div class="use-card-media">
+<img src="assets/architecture.png" alt="Local relay architecture keeps credentials on desktop" width="1536" height="1024" loading="lazy">
+</div>
+<div class="use-card-body">
 <h3>Security-sensitive teams</h3>
 <p>No AI keys on servers. No root passwords in Claude chat. Same boundary as Tabby or iTerm2.</p>
+</div>
 </article>
 </div>
 </div>
