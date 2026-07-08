@@ -11,7 +11,7 @@
 <h1 align="center">Clide</h1>
 
 <p align="center">
-  <em>🔒 Manage servers with Claude Code <strong>without leaking passwords or distributing AI public keys</strong></em>
+  <em>Production-grade <strong>AI terminal</strong> for server ops — SSH, SFTP, jump hosts, and native Claude Code. Credentials stay in your shell, not in the chat</em>
 </p>
 
 <p align="center">
@@ -36,6 +36,10 @@
 
 ## Overview
 
+**Clide is a production-grade AI terminal** for Windows, macOS, and Linux — multi-tab SSH shells, SFTP, jump hosts, layout snapshots, fleet sync, and resource monitoring, with **native Claude Code integration** built in. The terminal is the interface; AI reads your live PTY and runs commands in the same shell you type in.
+
+Not a chat window with a terminal attached. Passwords, private keys, and sudo prompts **never enter the AI path**.
+
 ### Why Clide?
 
 When using Claude Code for server operations, do these security problems sound familiar?
@@ -59,7 +63,7 @@ The same window provides multi-session SSH terminals, SFTP file browsing, resour
   <img src="docs/assets/readme-hero.png" alt="Clide UI: SSH shell on the left, files and monitoring in the center, Claude Code AI on the right" width="900">
 </p>
 
-<p align="center"><strong>Clide</strong> is a desktop ops terminal that pairs a real SSH shell with a local Claude Code copilot — so SREs and backend engineers can let AI troubleshoot servers <em>without</em> handing over passwords, private keys, or root.</p>
+<p align="center"><strong>Clide</strong> is a production-grade AI terminal — real SSH shells plus native Claude Code, so SREs and backend engineers get AI-driven ops <em>without</em> handing over passwords, private keys, or root.</p>
 
 ### 👤 Who is this for?
 
@@ -103,18 +107,39 @@ Clide keeps the **security model of a traditional SSH client** and adds the **AI
 
 ## Features
 
+### Terminal core
+
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### 🖥️ SSH Terminal
+**SSH terminal**
 
-- Multi-tab shells, Dockview split layout
+- Multi-tab shells, Dockview split layout, session groups
 - xterm.js live PTY (local PowerShell / remote SSH)
-- Session groups, persisted profiles
-- Auto-opens local shell on startup
+- **Layout snapshots** — save/restore full workspace with per-shell cwd; auto-reconnect on load
+- **Multi-server sync** — broadcast keystrokes & paste to all selected servers in one tab
+- Command history, **terminal recording** (asciicast export)
+- Panel layout memory (sidebar, file tree, AI pane)
 
 </td>
+<td width="50%" valign="top">
+
+**Connectivity & fleet ops**
+
+- **Multi-hop jump hosts** (ProxyJump) with per-hop credentials
+- SOCKS proxy, Telnet
+- Persisted server profiles, auto local shell on startup
+- **Windows portable zip** — no-install build alongside setup `.exe`
+
+</td>
+</tr>
+</table>
+
+### Ops toolkit
+
+<table>
+<tr>
 <td width="50%" valign="top">
 
 ### 📁 Remote Files
@@ -125,9 +150,7 @@ Clide keeps the **security model of a traditional SSH client** and adds the **AI
 - Open/save via Monaco editor
 
 </td>
-</tr>
-<tr>
-<td valign="top">
+<td width="50%" valign="top">
 
 ### 📊 Resource Monitoring
 
@@ -135,18 +158,45 @@ Clide keeps the **security model of a traditional SSH client** and adds the **AI
 - Separate exec channel — does not block PTY
 
 </td>
-<td valign="top">
+</tr>
+</table>
 
-### 🤖 Claude Code Ops Assistant
+### AI copilot (built-in)
 
-- Local Claude Code + MCP: `runShellCommand` drives the left shell — not direct AI SSH
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🤖 Claude Code & multi-backend AI
+
+- **Claude Code**, Codex, OpenCode, Cursor Agent — switch in settings
+- Local CLI + MCP: `runShellCommand` drives the left shell — not direct AI SSH
 - Streaming chat, tool calls, terminal output visualization
+- **Command approval** before destructive / sensitive commands
+- Multi-thread agent conversations; new empty thread on startup when last chat had messages
+
+</td>
+<td width="50%" valign="top">
+
+### 🔒 Secure AI boundary
+
 - **Clear password boundary**: SSH/sudo only in left xterm; AI never asks for or embeds passwords
+- MCP operates on sessions you already opened — no agent on servers
 - Long tasks: poll `getTerminalContext`; optional terminal context injection
 
 </td>
 </tr>
 </table>
+
+### Recent highlights (v0.1.76+)
+
+| Feature | What it does |
+|---------|----------------|
+| Layout snapshots | Probe real cwd per shell before save; one-click reconnect + restore splits |
+| Multi-server sync | Pick servers → one tab with a shell each → type once, broadcast everywhere |
+| Sync group tiling | Auto tile all sync shells on create |
+| Panel persistence | Remember collapsed/expanded sidebar, file tree, AI pane |
+| Windows portable | `*-portable.zip` — extract and run `clide.exe`, no installer |
 
 <p align="center">
   <img src="src-tauri/icons/256x256.png" alt="Clide app icon 256px" width="64">
@@ -164,7 +214,7 @@ Get the latest build from **[Releases](https://github.com/DLbury/clide/releases)
 
 | Platform | Format | Notes |
 |----------|--------|-------|
-| **Windows** | `.msi` / `.exe` | WebView2 required (usually preinstalled on Win10/11) |
+| **Windows** | `.exe` installer / `*-portable.zip` | WebView2 required (usually preinstalled on Win10/11). Portable: extract and run `clide.exe` |
 | **macOS** | `.dmg` | Separate builds for Apple Silicon (`aarch64`) and Intel (`x86_64`); use **v0.1.21+** (earlier builds had MCP startup issues) |
 | **Linux** | `.deb` / `.AppImage` | WebKitGTK and related deps (see [Linux troubleshooting](#linux-troubleshooting)) |
 
@@ -216,11 +266,11 @@ RUST_LOG=debug clide
 
 ## Quick Start
 
-1. **Install** — Download Clide from [Releases](https://github.com/DLbury/clide/releases)
+1. **Install** — Download Clide from [Releases](https://github.com/DLbury/clide/releases) (Windows: setup `.exe` or portable zip)
 2. **Configure SSH** — Add server profiles in the sidebar (host, port, user, key or password — credentials stay in the app, not with the AI)
-3. **Connect shell** — Double-click a profile; log in in the **left terminal** (password / 2FA)
+3. **Connect shell** — Double-click a profile; log in in the **left terminal** (password / 2FA). Use split panes, SFTP, and monitoring
 4. **Enable AI** — Install and log in to [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code); confirm IDE bridge is ready in the sidebar
-5. **Troubleshoot** — Describe the issue to the AI, e.g. “check disk and load on this machine”; Claude calls `runShellCommand`; you see command and output on the left; enter `sudo` password in the shell when needed
+5. **Ops with AI** — Describe the issue to the AI, e.g. “check disk and load on this machine”; Claude calls `runShellCommand`; you see command and output on the left; enter `sudo` password in the shell when needed
 
 ```
 Example:
@@ -413,7 +463,7 @@ Copyright © 2026 [DLbury](https://github.com/DLbury)
 
 <p align="center">
   <sub>
-    Clide · AI Ops Terminal · Claude Code · Secure SSH &amp; sudo<br>
+    Clide · Production AI Terminal · Claude Code · Secure SSH &amp; sudo<br>
     If Clide saves you a late-night incident or two, consider ⭐ <strong>starring</strong> the repo<br>
     and sharing it with a fellow SRE who still pastes root passwords into a chat.
   </sub>

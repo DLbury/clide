@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Clide — SSH Terminal, SFTP Client &amp; AI Ops Workbench for SRE | Claude Code MCP</title>
-<meta name="description" content="Clide is a free, open-source cross-platform SSH terminal and DevOps workbench. Multi-tab shells, SFTP, remote file editing, server monitoring, plus Claude Code AI that troubleshoots servers without seeing your password or SSH keys.">
+<title>Clide — Production-Grade AI Terminal | SSH, SFTP, Claude Code MCP</title>
+<meta name="description" content="Clide is a free, open-source production-grade AI terminal for Windows, macOS, and Linux. Multi-tab SSH, SFTP, jump hosts, layout snapshots, fleet sync, and native Claude Code — credentials stay in your shell, not in the chat.">
 <meta name="keywords" content="SSH terminal, SSH client, terminal emulator, SFTP client, remote terminal, DevOps terminal, SRE tools, server management, ops workbench, cross-platform terminal, Windows SSH client, Linux terminal, macOS terminal, AI terminal, AI ops, Claude Code, MCP server, secure sudo, remote server troubleshooting, incident response, jump host, bastion SSH, xterm, multi-tab terminal, Tauri, open source terminal">
 <meta name="author" content="Clide">
 <meta name="robots" content="index, follow, max-image-preview:large">
@@ -17,14 +17,14 @@
 <meta property="og:site_name" content="Clide">
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="zh_CN">
-<meta property="og:title" content="Clide — SSH Terminal &amp; AI Ops Workbench for Server Management">
-<meta property="og:description" content="Cross-platform SSH terminal with SFTP, monitoring, and Claude Code AI. Credentials stay in your shell, not in the chat. Free and open source.">
+<meta property="og:title" content="Clide — Production-Grade AI Terminal">
+<meta property="og:description" content="Production-grade AI terminal: multi-tab SSH, SFTP, jump hosts, fleet sync, and native Claude Code. Credentials stay in your shell.">
 <meta property="og:url" content="https://dlbury.github.io/clide/">
 <meta property="og:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <meta property="og:image:alt" content="Clide desktop app: SSH terminal on the left, remote files and monitoring in the center, Claude Code AI assistant on the right">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Clide — SSH Terminal &amp; AI Ops Workbench">
-<meta name="twitter:description" content="Manage servers with a real SSH terminal, SFTP, and Claude Code without handing passwords or keys to AI.">
+<meta name="twitter:title" content="Clide — Production-Grade AI Terminal">
+<meta name="twitter:description" content="Production AI terminal: SSH, SFTP, fleet sync, and Claude Code. Credentials stay in your shell.">
 <meta name="twitter:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <link rel="icon" type="image/png" href="assets/icon-rounded.png">
 <link rel="apple-touch-icon" href="assets/icon-rounded.png">
@@ -38,7 +38,7 @@
       "@id": "https://dlbury.github.io/clide/#website",
       "url": "https://dlbury.github.io/clide/",
       "name": "Clide",
-      "description": "Cross-platform SSH terminal and AI ops workbench for SRE and DevOps",
+      "description": "Production-grade AI terminal for SRE and DevOps — SSH, SFTP, and Claude Code MCP",
       "inLanguage": ["en", "zh-CN"],
       "publisher": {"@id": "https://dlbury.github.io/clide/#organization"}
     },
@@ -85,7 +85,7 @@
           "name": "What is Clide?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Clide is a free, open-source desktop SSH terminal and DevOps workbench for Windows, macOS, and Linux. It combines multi-tab remote shells, SFTP file management, server monitoring, and Claude Code AI assistance in one window."
+            "text": "Clide is a production-grade AI terminal — a full SSH and SFTP client with native Claude Code integration. AI reads your live PTY and runs commands in the same shell. Credentials never enter the AI path."
           }
         },
         {
@@ -120,6 +120,7 @@
 <span>Clide</span>
 </a>
 <nav class="nav-links" aria-label="Main navigation">
+<a href="#highlights">Highlights</a>
 <a href="#features">Features</a>
 <a href="#security">Security</a>
 <a href="#compare">Compare</a>
@@ -135,9 +136,17 @@
 <section class="hero" aria-labelledby="hero-title">
 <div class="container hero-grid">
 <div class="hero-copy">
-<p class="hero-eyebrow">Open source · MIT</p>
-<h1 id="hero-title">SSH ops with AI that never sees your password</h1>
-<p class="hero-lead">One desktop app for remote shells, SFTP, monitoring, and Claude Code. Credentials stay in your terminal.</p>
+<p class="hero-eyebrow">Production-grade AI terminal · Open source</p>
+<h1 id="hero-title">An AI terminal built for production ops</h1>
+<p class="hero-lead">Real SSH shells, SFTP, jump hosts, layout snapshots, and fleet sync — with native Claude Code that reads your live PTY and runs commands in the same terminal you type in.</p>
+<p class="hero-sub">Not a chat window with a terminal attached. The terminal is the product; AI is built in. Passwords and keys never enter the AI path.</p>
+<div class="hero-chips">
+<span class="hero-chip hero-chip--accent">SSH · SFTP · Split panes</span>
+<span class="hero-chip">Jump host chains</span>
+<span class="hero-chip">Multi-server sync</span>
+<span class="hero-chip">Layout snapshots</span>
+<span class="hero-chip">Claude Code MCP</span>
+</div>
 <div class="btn-group">
 <a class="btn btn-primary" href="https://github.com/DLbury/clide/releases">Download</a>
 <a class="btn btn-secondary" href="https://github.com/DLbury/clide">GitHub</a>
@@ -152,20 +161,58 @@
 </div>
 </section>
 
+<section id="highlights" class="pillars" aria-labelledby="pillars-title">
+<div class="container">
+<div class="section-head center reveal">
+<p class="section-eyebrow">Production-grade</p>
+<h2 id="pillars-title">A real terminal tool — AI-native, not AI-bolted-on</h2>
+<p>Clide is an AI terminal for daily SSH and file ops. Claude Code drives your open shells via MCP — same PTY, same trust boundary as manual ops.</p>
+</div>
+<div class="pillar-grid reveal">
+<article class="pillar-card pillar-card--hero">
+<p class="pillar-num">01 · Core</p>
+<h3>Multi-tab SSH terminal</h3>
+<p>Real xterm.js PTY for local PowerShell and remote SSH. Dockview split panes, session groups, layout snapshots with per-shell cwd, command history, and asciicast recording.</p>
+<ul class="pillar-list">
+<li>Save and restore entire workspace layouts</li>
+<li>Broadcast keystrokes across selected servers</li>
+<li>Panel state remembered across restarts</li>
+</ul>
+</article>
+<article class="pillar-card">
+<p class="pillar-num">02 · Files</p>
+<h3>SFTP &amp; remote editor</h3>
+<p>Browse, upload, drag-and-drop, and edit nginx or systemd configs in Monaco — without scp round-trips or a second app.</p>
+</article>
+<article class="pillar-card">
+<p class="pillar-num">03 · Fleet</p>
+<h3>Bastion &amp; monitoring</h3>
+<p>Multi-hop ProxyJump chains, SOCKS proxy, CPU/memory/disk panels on a separate exec channel that never blocks your shell.</p>
+</article>
+<article class="pillar-card pillar-card--ai">
+<span class="pillar-badge">Built-in</span>
+<p class="pillar-num">04 · AI</p>
+<h3>Native Claude Code integration</h3>
+<p>Claude Code, Codex, OpenCode, or Cursor Agent via MCP. Command approval before risky ops. Multi-thread conversations. Reads PTY output — never your sudo password.</p>
+</article>
+</div>
+</div>
+</section>
+
 <section class="showcase" aria-labelledby="showcase-title">
 <div class="container reveal">
 <h2 id="showcase-title" class="sr-only">Clide product screenshots</h2>
 <figure class="showcase-frame">
 <img src="assets/hero.png" alt="Clide desktop app: SSH terminal, file explorer, and Claude Code AI assistant in one window" width="1536" height="1024" loading="lazy">
 </figure>
-<p class="showcase-caption">Terminal, remote files, and AI assistant in one window</p>
+<p class="showcase-caption">Left: SSH terminal · Center: remote files &amp; stats · Right: Claude Code AI</p>
 <div class="panel-grid">
 <figure class="panel-shot">
 <div class="panel-crop panel-crop--terminal">
 <img src="assets/hero.png" alt="Clide SSH terminal panel showing live remote shell session" width="1536" height="1024" loading="lazy">
 </div>
-<figcaption>SSH terminal</figcaption>
-<p>Multi-tab remote shell with real PTY output. AI reads the same stream you type in.</p>
+<figcaption>SSH terminal — the core</figcaption>
+<p>Multi-tab remote shell with real PTY. You type here; AI runs here too. Layout snapshots and fleet sync start from this panel.</p>
 </figure>
 <figure class="panel-shot">
 <div class="panel-crop panel-crop--files">
@@ -179,7 +226,7 @@
 <img src="assets/hero.png" alt="Clide Claude Code AI assistant panel with tool calls and chat" width="1536" height="1024" loading="lazy">
 </div>
 <figcaption>Claude Code AI</figcaption>
-<p>Local Claude Code drives commands into your open shell via MCP.</p>
+<p>Built-in AI layer. Local Claude Code drives commands into your open shell via MCP — on the same PTY you use for manual ops.</p>
 </figure>
 </div>
 </div>
@@ -201,14 +248,15 @@
 <section id="features" aria-labelledby="features-title">
 <div class="container">
 <div class="section-head reveal">
-<h2 id="features-title">A production SSH client, plus an ops toolkit</h2>
-<p>Multi-tab shells, remote files, live monitoring, and native Claude Code MCP. Not a chat window bolted onto PuTTY.</p>
+<p class="section-eyebrow">Full feature set</p>
+<h2 id="features-title">Production AI terminal — full toolkit</h2>
+<p>Multi-tab SSH, SFTP, monitoring, and native Claude Code MCP. Everything runs through your real terminal sessions.</p>
 </div>
 <div class="bento reveal">
 <article class="bento-cell b-span-7 b-accent">
 <div class="bento-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
 <h3>Multi-tab SSH terminal</h3>
-<p>Dockview split panes, session groups, persisted profiles. Real xterm.js PTY for local PowerShell and remote SSH. Same shell whether you type or AI runs a command.</p>
+<p>Dockview split panes, session groups, persisted profiles. Real xterm.js PTY for local PowerShell and remote SSH. Command history, terminal recording, and asciicast export.</p>
 </article>
 <article class="bento-cell b-span-5 b-visual">
 <div class="panel-crop panel-crop--terminal">
@@ -234,10 +282,24 @@
 <h3>Secure sudo</h3>
 <p>Root prompts appear in your terminal. You type the password. MCP never captures it.</p>
 </article>
+<article class="bento-cell b-span-4">
+<span class="bento-tag bento-tag--new">New</span>
+<h3>Layout snapshots</h3>
+<p>Save entire workspace layouts with per-shell cwd. One click to reconnect servers and restore splits.</p>
+</article>
+<article class="bento-cell b-span-4">
+<span class="bento-tag bento-tag--new">New</span>
+<h3>Multi-server sync</h3>
+<p>Select multiple servers, open one tab with a shell each, and broadcast every keystroke or paste to all.</p>
+</article>
+<article class="bento-cell b-span-4">
+<h3>Jump host chains</h3>
+<p>Multi-hop ProxyJump with per-hop credentials. Bastion, SOCKS, and Telnet — standard SSH on the server side.</p>
+</article>
 <article class="bento-cell b-span-8">
 <div class="bento-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-<h3>Claude Code + MCP + jump hosts</h3>
-<p>Local Claude Code drives <code>runShellCommand</code> into your open PTY. SSH jump, SOCKS proxy, Telnet. Standard SSH on the server side, zero agent install.</p>
+<h3>Claude Code + MCP</h3>
+<p>Claude Code, Codex, OpenCode, or Cursor Agent drives <code>runShellCommand</code> into your open PTY. Command approval for risky ops. Multi-thread agent conversations. Zero agent install on servers.</p>
 <div class="tags" aria-label="Tech stack">
 <span class="tag">Tauri 2</span>
 <span class="tag">russh</span>
@@ -246,6 +308,41 @@
 <span class="tag">Next.js</span>
 </div>
 </article>
+</div>
+</div>
+</section>
+
+<section class="split-section" aria-labelledby="split-title">
+<div class="container">
+<div class="section-head center reveal">
+<h2 id="split-title" class="sr-only">Terminal core vs AI copilot</h2>
+</div>
+<div class="split-grid reveal">
+<div class="split-panel split-panel--core">
+<p class="split-label">Terminal core</p>
+<h3>Real SSH workbench</h3>
+<p style="color:var(--muted);font-size:.9375rem;margin-top:.5rem">The foundation of a production AI terminal — full SSH client capabilities.</p>
+<ul class="feature-checklist">
+<li>Multi-tab &amp; split-pane SSH sessions</li>
+<li>Layout snapshots with auto-reconnect</li>
+<li>Multi-server keystroke sync</li>
+<li>SFTP file manager + Monaco editor</li>
+<li>Jump host chains &amp; resource monitoring</li>
+<li>Command history &amp; terminal recording</li>
+</ul>
+</div>
+<div class="split-panel split-panel--ai">
+<p class="split-label">AI-native</p>
+<h3>Claude Code built in</h3>
+<p style="color:var(--muted);font-size:.9375rem;margin-top:.5rem">AI reads output and runs commands in your open shells — you stay in control of credentials.</p>
+<ul class="feature-checklist">
+<li>Claude Code, Codex, OpenCode, Cursor Agent</li>
+<li>MCP drives commands into your open PTY</li>
+<li>Command approval before destructive ops</li>
+<li>Multi-thread agent conversations</li>
+<li>Credentials never enter the AI path</li>
+</ul>
+</div>
 </div>
 </div>
 </section>
@@ -303,7 +400,7 @@
 </div>
 <div class="use-card-body">
 <h3>Fleet operations</h3>
-<p>Tabbed sessions, jump hosts through bastions. Monitor CPU and disk across boxes.</p>
+<p>Multi-server sync broadcast, jump hosts through bastions, layout snapshots across sessions. Monitor CPU and disk across boxes.</p>
 </div>
 </article>
 <article class="use-card">
@@ -343,6 +440,9 @@
 <tr><th scope="row">SFTP file manager</th><td class="hl yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
 <tr><th scope="row">Remote config editor</th><td class="hl yes">Monaco</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="yes">Yes</td></tr>
 <tr><th scope="row">Server monitoring</th><td class="hl yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+<tr><th scope="row">Layout snapshots</th><td class="hl yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+<tr><th scope="row">Multi-server sync input</th><td class="hl yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+<tr><th scope="row">Jump host chains</th><td class="hl yes">Yes</td><td class="yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
 <tr><th scope="row">Claude Code MCP</th><td class="hl yes">Native</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
 <tr><th scope="row">AI uses your PTY</th><td class="hl yes">Same shell</td><td class="no">-</td><td class="no">-</td><td class="no">-</td><td class="no">-</td></tr>
 <tr><th scope="row">Open source</th><td class="hl yes">MIT</td><td class="yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
@@ -356,7 +456,7 @@
 <section id="quickstart" aria-labelledby="quickstart-title">
 <div class="container">
 <div class="section-head center reveal">
-<h2 id="quickstart-title">Four steps to your first AI-driven shell</h2>
+<h2 id="quickstart-title">Four steps to get started</h2>
 </div>
 <div class="flow reveal">
 <div class="flow-step">
@@ -375,9 +475,9 @@
 <p>Password, 2FA, and sudo all happen in the left terminal.</p>
 </div>
 <div class="flow-step">
-<strong>Ask</strong>
+<strong>Ask AI</strong>
 <h3>Claude Code</h3>
-<p>Describe the issue. AI runs commands in your open shell.</p>
+<p>Describe the issue. AI runs commands in your open shell and reads the output.</p>
 </div>
 </div>
 </div>
@@ -391,11 +491,11 @@
 <div class="faq-list reveal" itemscope itemtype="https://schema.org/FAQPage">
 <article class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
 <button class="faq-q" type="button" aria-expanded="false" itemprop="name">
-What is Clide, an AI terminal or a regular SSH client?
+What is Clide?
 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
 </button>
 <div class="faq-a" itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
-<div class="faq-a-inner" itemprop="text">Both. Clide is a full SSH terminal and SFTP client first. The AI layer via Claude Code MCP is optional: it sends commands to your open shell and reads output back.</div>
+<div class="faq-a-inner" itemprop="text">Clide is a production-grade AI terminal — a full SSH and SFTP client where Claude Code reads your live PTY and runs commands in the same shell. Not a standalone chatbot; the terminal is the interface.</div>
 </div>
 </article>
 <article class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
@@ -432,8 +532,8 @@ Is Clide related to AITerm?
 <section class="cta-band" aria-labelledby="cta-title">
 <div class="container cta-inner reveal">
 <div>
-<h2 id="cta-title">Replace your SSH + SFTP + chat stack</h2>
-<p>Free, MIT licensed. Windows, macOS, and Linux.</p>
+<h2 id="cta-title">The production AI terminal for server ops</h2>
+<p>Free, MIT licensed. Windows portable zip, macOS, and Linux installers.</p>
 </div>
 <div class="btn-group">
 <a class="btn btn-primary" href="https://github.com/DLbury/clide/releases">Download</a>
@@ -455,7 +555,7 @@ Is Clide related to AITerm?
 </nav>
 <p>Built with Tauri 2, Rust, and Next.js</p>
 </div>
-<p class="footer-keywords">Clide open source SSH terminal emulator, SFTP client, remote server terminal, DevOps workbench, SRE ops tools, cross-platform terminal Windows macOS Linux, AI-assisted server management, Claude Code MCP terminal, secure SSH client sudo, jump host bastion terminal, production troubleshooting terminal, xterm multi-tab SSH, remote file editor Monaco, server monitoring dashboard, incident response SSH tool, platform engineering terminal, backend developer SSH client, AITerm MCP server</p>
+<p class="footer-keywords">Clide production-grade AI terminal, open source SSH terminal, SFTP client, DevOps workbench, SRE ops tools, cross-platform terminal Windows macOS Linux, Claude Code MCP terminal, secure SSH sudo, jump host bastion, production troubleshooting terminal, xterm multi-tab SSH, Monaco remote file editor, server monitoring, multi-server sync terminal, AITerm MCP server</p>
 </div>
 </footer>
 

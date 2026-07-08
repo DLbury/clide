@@ -13,7 +13,7 @@
 <h1 align="center">Clide</h1>
 
 <p align="center">
-  <em>🔒 安全地用 Claude Code 管理服务器，<strong>永不泄露密码，无需配置公钥</strong></em>
+  <em>生产级 <strong>AI 终端工具</strong> — SSH、SFTP、跳板机与原生 Claude Code 一体，凭据留在终端、不进 AI 对话</em>
 </p>
 
 <p align="center">
@@ -38,6 +38,10 @@
 
 ## 简介
 
+**Clide 是生产级 AI 终端工具**，支持 Windows、macOS、Linux — 多标签 SSH Shell、SFTP、跳板机、布局快照、多机同步与资源监控，**原生集成 Claude Code**。终端是操作界面，AI 读取实时 PTY、在同一 Shell 里跑命令。
+
+不是给聊天窗口挂个终端。SSH 密码、私钥与 sudo 提示 **永远不进入 AI 路径**。
+
 ### 为什么你需要 Clide？
 
 用 Claude Code 处理服务器问题时，你是不是一直被这些安全问题困扰？
@@ -61,7 +65,7 @@ Claude Code **只在你本机运行**，通过 **IDE 桥接 + MCP** 把命令下
   <img src="docs/assets/readme-hero.png" alt="Clide 界面概览：左侧 SSH Shell、中间文件与监控、右侧 Claude Code AI" width="900">
 </p>
 
-<p align="center"><strong>Clide</strong> 是一款桌面运维终端，把真实 SSH Shell 与本机 Claude Code 副驾组合在一起——让 SRE 和后端工程师放心让 AI 排障服务器，<em>而无需交出密码、私钥或 root 权限</em>。</p>
+<p align="center"><strong>Clide</strong> 是生产级 AI 终端工具 — 真实 SSH Shell 与原生 Claude Code 一体，让 SRE 与后端工程师放心做 AI 驱动运维，<em>而无需交出密码、私钥或 root</em>。</p>
 
 ### 👤 谁适合用？
 
@@ -105,18 +109,39 @@ Clide 保留了**传统 SSH 客户端的安全模型**，同时拥有**直连 Cl
 
 ## 功能特性
 
+### 终端核心
+
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### 🖥️ SSH 终端
+**SSH 终端**
 
-- 多标签 Shell、Dockview 分屏布局
+- 多标签 Shell、Dockview 分屏、会话分组
 - xterm.js 实时 PTY（本地 PowerShell / 远程 SSH）
-- 会话分组、配置持久化
-- 启动时自动打开本地 Shell
+- **布局快照** — 保存/恢复完整工作区（各 Shell 独立 cwd）；加载时自动重连
+- **多机同步输入** — 选中多台服务器，一个 tab 各开一个 Shell，按键/粘贴同步广播
+- 命令历史、**终端录制**（asciicast 导出）
+- 面板布局记忆（侧边栏、文件树、AI 面板折叠状态）
 
 </td>
+<td width="50%" valign="top">
+
+**连接与群运维**
+
+- **多级跳板机**（ProxyJump），逐跳独立凭据
+- SOCKS 代理、Telnet
+- 持久化服务器 Profile，启动时自动打开本地 Shell
+- **Windows 免安装版** — `*-portable.zip`，解压运行 `clide.exe`
+
+</td>
+</tr>
+</table>
+
+### 运维工具包
+
+<table>
+<tr>
 <td width="50%" valign="top">
 
 ### 📁 远程文件
@@ -127,9 +152,7 @@ Clide 保留了**传统 SSH 客户端的安全模型**，同时拥有**直连 Cl
 - 与 Monaco 编辑器联动打开/保存
 
 </td>
-</tr>
-<tr>
-<td valign="top">
+<td width="50%" valign="top">
 
 ### 📊 资源监控
 
@@ -137,18 +160,45 @@ Clide 保留了**传统 SSH 客户端的安全模型**，同时拥有**直连 Cl
 - 独立 exec 通道，不干扰 PTY 交互
 
 </td>
-<td valign="top">
+</tr>
+</table>
 
-### 🤖 Claude Code 运维助手
+### AI 能力（内置）
 
-- 本机 Claude Code + MCP：`runShellCommand` 驱动左侧 Shell，非 AI 直连 SSH
-- 流式对话、工具调用与终端输出回传可视化
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🤖 Claude Code 与多 AI 后端
+
+- **Claude Code**、Codex、OpenCode、Cursor Agent — 设置中切换
+- 本机 CLI + MCP：`runShellCommand` 驱动左侧 Shell，非 AI 直连 SSH
+- 流式对话、工具调用与终端输出回传
+- **命令审批** — 破坏性/敏感命令执行前人工确认
+- 多线程 Agent 对话；上次对话非空时启动自动新建空线程
+
+</td>
+<td width="50%" valign="top">
+
+### 🔒 安全 AI 边界
+
 - **密码边界清晰**：SSH / sudo 仅在左侧 xterm 输入，AI 不索要、不嵌入命令
+- MCP 只操作你已打开的会话 — 服务器无需 agent
 - 长任务可轮询 `getTerminalContext`；终端上下文可注入对话
 
 </td>
 </tr>
 </table>
+
+### 近期亮点（v0.1.76+）
+
+| 功能 | 说明 |
+|------|------|
+| 布局快照 | 保存前探测各 Shell 真实 cwd；一键重连并恢复分屏 |
+| 多机同步输入 | 选服务器 → 各开一个 Shell → 敲一次、全部同步 |
+| 同步组平铺 | 创建同步组时自动平铺各 Shell 窗口 |
+| 面板记忆 | 侧边栏 / 文件树 / AI 面板折叠状态跨重启保留 |
+| Windows 免安装 | `*-portable.zip`，解压即用 |
 
 <p align="center">
   <img src="src-tauri/icons/256x256.png" alt="Clide app icon 256px" width="64">
@@ -166,7 +216,7 @@ Clide 保留了**传统 SSH 客户端的安全模型**，同时拥有**直连 Cl
 
 | 平台 | 格式 | 说明 |
 |------|------|------|
-| **Windows** | `.msi` / `.exe` | 需 WebView2（Win10/11 通常已自带） |
+| **Windows** | `.exe` 安装包 / `*-portable.zip` | 需 WebView2（Win10/11 通常已自带）。免安装版：解压运行 `clide.exe` |
 | **macOS** | `.dmg` | Apple Silicon（`aarch64`）与 Intel（`x86_64`）分别构建；v0.1.20 及更早版本存在与 Linux 相同的 MCP 启动问题，请用 v0.1.21+ |
 | **Linux** | `.deb` / `.AppImage` | 需 WebKitGTK 等依赖（见下方 [Linux 故障排除](#linux-故障排除)） |
 
@@ -218,11 +268,11 @@ RUST_LOG=debug clide
 
 ## 快速开始
 
-1. **安装** — 从 [Releases](https://github.com/DLbury/clide/releases) 下载并安装 Clide（本机）
+1. **安装** — 从 [Releases](https://github.com/DLbury/clide/releases) 下载（Windows 可选安装包或 portable zip）
 2. **配置 SSH** — 侧边栏添加服务器 Profile（主机、端口、用户、密钥或密码——凭据留在应用内，不给 AI）
-3. **连接 Shell** — 双击 Profile，在 **左侧终端** 完成登录（含密码 / 二次验证）
+3. **连接 Shell** — 双击 Profile，在 **左侧终端** 完成登录（含密码 / 二次验证）。分屏、SFTP、监控均可使用
 4. **启用 AI** — 本机安装并登录 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)，确认侧栏 IDE 桥接已就绪
-5. **排障** — 对 AI 描述现象，例如「查看这台机磁盘和负载」；Claude 调用 `runShellCommand`，你在左侧看到命令与输出，需要 `sudo` 时在 Shell 里输入密码
+5. **AI 运维** — 对 AI 描述现象，例如「查看这台机磁盘和负载」；Claude 调用 `runShellCommand`，你在左侧看到命令与输出，需要 `sudo` 时在 Shell 里输入密码
 
 ```
 示例：
@@ -415,7 +465,7 @@ Copyright © 2026 [DLbury](https://github.com/DLbury)
 
 <p align="center">
   <sub>
-    Clide · AI Ops Terminal · Claude Code · Secure SSH &amp; sudo<br>
+    Clide · 生产级 AI 终端 · Claude Code · 安全 SSH &amp; sudo<br>
     如果 Clide 帮你少熬一个通宵救火，欢迎 ⭐ <strong>Star</strong> 这个仓库，<br>
     并把它分享给身边还在往对话框里粘贴 root 密码的运维同学。
   </sub>
