@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
-export type AiBackend = 'claude-code'
+export type AiBackend = 'claude-code' | 'codex' | 'opencode' | 'cursor'
 
 export interface AiSettings {
   enabled: boolean
-  /** 固定为 Claude Code 本机 CLI */
   backend: AiBackend
+  /** @deprecated 使用 cliPaths['claude-code']；保留以兼容旧配置 */
   claudePath: string
+  cliPaths: Partial<Record<AiBackend, string>>
   claudeSessionId?: string
   provider: 'anthropic'
   apiKey: string
@@ -18,30 +19,65 @@ export interface AiSettings {
   systemPrompt: string
   injectTerminalContext: boolean
   autoExecuteCommands: boolean
+  /** MCP runShellCommand 执行前是否自动切换到目标 Shell 标签 */
+  focusShellOnMcpExecute: boolean
+  /** 敏感/不可撤销命令执行前询问用户确认 */
+  requireCommandApproval: boolean
 }
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
   enabled: true,
   backend: 'claude-code',
   claudePath: '',
+  cliPaths: {},
   provider: 'anthropic',
   apiKey: '',
   baseUrl: 'https://api.anthropic.com/v1',
   model: 'claude-sonnet-4-20250514',
   temperature: 0.7,
   systemPrompt:
-    '你是 AI Terminal 助手。远程命令必须用 MCP aiterm 的 runShellCommand 执行并汇报 output。sudo 等需要交互输入密码的命令：用 runShellCommand 发起后，提示用户在左侧 Shell 终端里手动输入密码，不要向用户索要密码、不要把密码写进命令或聊天。',
+    '你是 Clide（AI Terminal）助手。平台通过 MCP 服务器 aiterm 提供真实远程 PTY：runShellCommand 在 Shell 中执行命令，getTerminalContext 读取终端输出快照，createNewShell 可新开 Shell（splitBelow 可在面板下方拆分）。同一 Shell 同时只能跑一条前台命令。sudo/SSH 密码由用户在 Shell 面板手动输入，不要索要或写入密码。',
   injectTerminalContext: true,
-  // Safety: avoid executing suggested commands without explicit user action.
   autoExecuteCommands: false,
+  focusShellOnMcpExecute: false,
+  requireCommandApproval: true,
 }
 
 const STORAGE_KEY = 'aiterm-ai-settings'
+const VALID_BACKENDS: AiBackend[] = ['claude-code', 'codex', 'opencode', 'cursor']
+
+function isAiBackend(value: unknown): value is AiBackend {
+  return typeof value === 'string' && VALID_BACKENDS.includes(value as AiBackend)
+}
+
+export function getActiveCliPath(settings: AiSettings): string {
+  const fromMap = settings.cliPaths?.[settings.backend]?.trim()
+  if (fromMap) return fromMap
+  if (settings.backend === 'claude-code' && settings.claudePath.trim()) {
+    return settings.claudePath.trim()
+  }
+  return ''
+}
+
+export function withActiveCliPath(settings: AiSettings, path: string): AiSettings {
+  const cliPaths = { ...settings.cliPaths, [settings.backend]: path }
+  return {
+    ...settings,
+    cliPaths,
+    ...(settings.backend === 'claude-code' ? { claudePath: path } : {}),
+  }
+}
 
 function normalizeSettings(raw: Partial<AiSettings>): AiSettings {
-  const merged = { ...DEFAULT_AI_SETTINGS, ...raw, backend: 'claude-code' }
+  const merged = { ...DEFAULT_AI_SETTINGS, ...raw }
+  const backend = isAiBackend(merged.backend) ? merged.backend : 'claude-code'
+  const cliPaths: Partial<Record<AiBackend, string>> = { ...merged.cliPaths }
+  if (merged.claudePath?.trim() && !cliPaths['claude-code']) {
+    cliPaths['claude-code'] = merged.claudePath.trim()
+  }
+  const claudePath = cliPaths['claude-code'] ?? merged.claudePath ?? ''
   delete merged.claudeSessionId
-  return merged
+  return { ...merged, backend, cliPaths, claudePath }
 }
 
 export function loadAiSettings(): AiSettings {

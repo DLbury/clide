@@ -91,6 +91,10 @@ pub fn clear_session(session_id: &str) {
     BUFFERS.lock().remove(session_id);
 }
 
+pub fn export_buffer(session_id: &str) -> String {
+    tail_snippet(session_id, MAX_BUFFER_CHARS)
+}
+
 /// 取会话输出尾部，供 IDE 工具 / 上下文展示（最近 max_chars 个 Unicode 标量）。
 pub fn tail_snippet(session_id: &str, max_chars: usize) -> String {
     BUFFERS

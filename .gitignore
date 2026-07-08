@@ -25,8 +25,12 @@ Thumbs.db
 
 # Local tooling
 .claude/
+.cursor/
+.agents/
+skills-lock.json
 .spec-workflow/
 .tauri-dev.config.json
+src-tauri/.mcp.json
 
 # Debug
 npm-debug.log*

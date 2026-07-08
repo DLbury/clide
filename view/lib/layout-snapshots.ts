@@ -32,6 +32,7 @@ export interface ServerLayoutSnapshot {
   activeShellId?: string
   activeFileId?: string | null
   activeBrowserTabId?: string | null
+  monitorOpen?: boolean
   shells: LayoutSnapshotShell[]
   openFiles: LayoutSnapshotFile[]
   browserTabs: LayoutSnapshotBrowser[]
@@ -124,4 +125,13 @@ export function snapshotPathForFileTreeLoad(
     return remotePathForListApi(displayPath, session.user)
   }
   return displayPath
+}
+
+export function dockviewHasMonitorPanel(dockview: unknown): boolean {
+  try {
+    const json = JSON.stringify(dockview)
+    return json.includes('monitor-main') || json.includes('"component":"monitor"')
+  } catch {
+    return false
+  }
 }

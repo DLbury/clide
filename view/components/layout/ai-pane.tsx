@@ -1,13 +1,16 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, useMemo } from 'react'
-import { Send, Sparkles, Play, Loader2, Trash2, PlugZap, Square, Terminal, CornerDownLeft } from 'lucide-react'
+import { Send, Sparkles, Play, Loader2, Trash2, PlugZap, Square, History, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/lib/types'
 import { AiAssistantParts } from '@/components/layout/ai-assistant-parts'
 import { ThinkingIndicator } from '@/components/layout/thinking-indicator'
 import type { McpRegisterStatus } from '@/lib/claude-client'
-import { classifyInteractivePrompt } from '@/lib/shell-tool-executor'
+import { CommandApprovalInline } from '@/components/layout/command-approval-inline'
+import { TerminalInputInline } from '@/components/layout/terminal-input-inline'
+import { assistantTextContent } from '@/lib/chat-stream-parts'
+import type { PendingCommandApproval } from '@/lib/command-approval-bridge'
 import { claudePathLabel, uniqueClaudeCandidates } from '@/lib/claude-client'
 import {
   ContextMenu,
@@ -19,7 +22,7 @@ import {
 
 function assistantHasVisibleContent(msg: ChatMessage): boolean {
   return !!(
-    msg.content?.trim() ||
+    assistantTextContent(msg).trim() ||
     msg.reasoning?.trim() ||
     (msg.tools?.length ?? 0) > 0 ||
     (msg.tasks?.length ?? 0) > 0 ||
@@ -62,12 +65,21 @@ interface AiPaneProps {
   onPromptCancel?: (sessionId: string) => void
   onFocusTerminal?: () => void
   onPromptSendInput?: (sessionId: string, input: string) => void
+  profileId?: string
+  threadsDrawerOpen?: boolean
+  onOpenThreadsDrawer?: () => void
+  onNewThread?: () => void
+  commandApprovalPending?: PendingCommandApproval | null
+  commandApprovalResolved?: { request: PendingCommandApproval; approved: boolean } | null
+  onApproveCommand?: (id: string) => void
+  onDenyCommand?: (id: string) => void
 }
 
 function serializeAssistantMessage(msg: ChatMessage): string {
   const sections: string[] = []
-  if (msg.content?.trim()) {
-    sections.push(msg.content.trim())
+  const text = assistantTextContent(msg)
+  if (text.trim()) {
+    sections.push(text.trim())
   }
   if (msg.command?.trim()) {
     sections.push(`【命令】\n${msg.command.trim()}`)
@@ -108,6 +120,14 @@ export function AiPane({
   onPromptCancel,
   onFocusTerminal,
   onPromptSendInput,
+  profileId,
+  threadsDrawerOpen = false,
+  onOpenThreadsDrawer,
+  onNewThread,
+  commandApprovalPending = null,
+  commandApprovalResolved = null,
+  onApproveCommand,
+  onDenyCommand,
 }: AiPaneProps) {
   const [input, setInput] = useState('')
   const [historyIndex, setHistoryIndex] = useState(-1)
@@ -127,16 +147,13 @@ export function AiPane({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isThinking])
+  }, [messages, isThinking, interactivePrompt, commandApprovalPending, commandApprovalResolved])
 
   const handleRegisterMcp = useCallback(() => {
     onRetryMcpRegister?.()
   }, [onRetryMcpRegister])
 
   const taskActive = isTaskActive ?? isThinking
-  const promptKind = interactivePrompt
-    ? classifyInteractivePrompt(interactivePrompt.prompt)
-    : null
 
   const handleSend = useCallback(() => {
     if (!input.trim() || taskActive || !aiEnabled) return
@@ -266,14 +283,37 @@ export function AiPane({
                 )}
               </div>
             </div>
-            <button
-              onClick={onClearChat}
-              disabled={messages.length === 0}
-              className="p-1.5 rounded hover:bg-muted transition-colors disabled:opacity-40"
-              title="清空对话"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={onOpenThreadsDrawer}
+                disabled={!onOpenThreadsDrawer}
+                className={cn(
+                  'p-1.5 rounded hover:bg-muted transition-colors disabled:opacity-40',
+                  threadsDrawerOpen && 'bg-muted'
+                )}
+                title="对话记录"
+              >
+                <History className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+              <button
+                type="button"
+                onClick={onNewThread}
+                disabled={!onNewThread}
+                className="p-1.5 rounded hover:bg-muted transition-colors disabled:opacity-40"
+                title="新对话"
+              >
+                <Plus className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+              <button
+                onClick={onClearChat}
+                disabled={messages.length === 0}
+                className="p-1.5 rounded hover:bg-muted transition-colors disabled:opacity-40"
+                title="清空对话"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+            </div>
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-44">
@@ -330,7 +370,7 @@ export function AiPane({
               )}
             />
             <span className="text-muted-foreground inline-flex items-center gap-1">
-              Claude Code
+              {modelLabel ?? 'AI'}
               {bridgeStatus.running && bridgeStatus.connected ? (
                 <>· 已连接</>
               ) : mcpRegistering || (bridgeStatus.running && !bridgeStatus.connected) ? (
@@ -372,81 +412,6 @@ export function AiPane({
               )}
             </div>
           )}
-        </div>
-      )}
-
-      {interactivePrompt && (
-        <div className="mx-4 mt-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-3 text-xs space-y-2.5">
-          <div className="font-medium text-amber-800 dark:text-amber-300">
-            {promptKind === 'password'
-              ? '请在左侧终端输入密码'
-              : promptKind === 'confirm'
-                ? '请在左侧终端确认，或使用下方快捷按钮'
-                : '终端正在等待您的输入'}
-          </div>
-          <div className="font-mono text-[11px] text-muted-foreground break-all">
-            提示: {interactivePrompt.prompt}
-          </div>
-          <div className="font-mono text-[11px] text-muted-foreground truncate">
-            命令: {interactivePrompt.command}
-          </div>
-          <p className="text-muted-foreground leading-relaxed">
-            密码不会经过 AI，请直接在左侧 Shell 中输入（输入时不会显示字符）。输入完成后点击右侧「继续」。
-          </p>
-          <div className="flex flex-wrap gap-2 pt-0.5">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-muted/60"
-              onClick={() => onFocusTerminal?.()}
-            >
-              <Terminal className="w-3 h-3" />
-              聚焦终端
-            </button>
-            {promptKind === 'confirm' && (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-muted/60"
-                onClick={() =>
-                  onPromptSendInput?.(interactivePrompt.sessionId, 'yes\n')
-                }
-              >
-                发送 yes
-              </button>
-            )}
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-muted/60"
-              onClick={() =>
-                onPromptSendInput?.(interactivePrompt.sessionId, '\n')
-              }
-            >
-              <CornerDownLeft className="w-3 h-3" />
-              发送 Enter
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-2 pt-1 border-t border-amber-500/20">
-            <button
-              type="button"
-              className="px-2.5 py-1 rounded bg-primary text-primary-foreground text-xs hover:bg-primary/90"
-              onClick={onPromptDismiss}
-            >
-              继续
-            </button>
-            <button
-              type="button"
-              className="px-2.5 py-1 rounded border border-amber-500/40 text-xs hover:bg-amber-500/10"
-              onClick={onPromptDismiss}
-            >
-              密码已输入
-            </button>
-            <button
-              type="button"
-              className="px-2.5 py-1 rounded border border-destructive/40 text-destructive text-xs hover:bg-destructive/10"
-              onClick={() => onPromptCancel?.(interactivePrompt.sessionId)}
-            >
-              取消 (Ctrl+C)
-            </button>
-          </div>
         </div>
       )}
 
@@ -532,10 +497,31 @@ export function AiPane({
           )
         })}
 
+        {interactivePrompt && (
+          <TerminalInputInline
+            sessionId={interactivePrompt.sessionId}
+            command={interactivePrompt.command}
+            prompt={interactivePrompt.prompt}
+            onConfirm={() => onPromptDismiss?.()}
+            onCancel={() => onPromptCancel?.(interactivePrompt.sessionId)}
+            onFocusTerminal={onFocusTerminal}
+            onSendInput={onPromptSendInput}
+          />
+        )}
+
+        {(commandApprovalPending || commandApprovalResolved) && (
+          <CommandApprovalInline
+            pending={commandApprovalPending}
+            resolved={commandApprovalResolved}
+            onApprove={id => onApproveCommand?.(id)}
+            onDeny={id => onDenyCommand?.(id)}
+          />
+        )}
+
         {showThinkingPlaceholder && (
             <div className="flex justify-start">
               <div className="text-sm">
-                <ThinkingIndicator label="正在等待 Claude 响应" />
+                <ThinkingIndicator label={`正在等待 ${modelLabel ?? 'AI'} 响应`} />
               </div>
             </div>
           )}

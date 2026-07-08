@@ -1,5 +1,6 @@
 import type { TerminalOutputEvent } from '@/lib/terminal-client'
 import { listenTerminalOutput } from '@/lib/terminal-client'
+import { appendTerminalRecordingEvent, isTerminalRecording } from '@/lib/terminal-recording-store'
 
 type OutputHandler = (event: TerminalOutputEvent) => void
 
@@ -13,14 +14,25 @@ let listenerPromise: Promise<() => void> | null = null
 let listenerRefCount = 0
 let globalUnlistenFn: (() => void) | null = null
 
+function ceilCharBoundary(s: string, idx: number): number {
+  let i = Math.min(Math.max(idx, 0), s.length)
+  while (i > 0 && i < s.length) {
+    const code = s.charCodeAt(i)
+    if (code >= 0x80 && code <= 0xbf) i--
+    else break
+  }
+  return i
+}
+
 function appendToBuffer(sessionId: string, data: string) {
   let buf = outputBuffers.get(sessionId) ?? ''
   let dropped = droppedChars.get(sessionId) ?? 0
   buf += data
   if (buf.length > MAX_BUFFER_CHARS) {
     const trim = buf.length - MAX_BUFFER_CHARS
-    buf = buf.slice(trim)
-    dropped += trim
+    const start = ceilCharBoundary(buf, trim)
+    buf = buf.slice(start)
+    dropped += start
   }
   outputBuffers.set(sessionId, buf)
   droppedChars.set(sessionId, dropped)
@@ -28,6 +40,9 @@ function appendToBuffer(sessionId: string, data: string) {
 
 function dispatch(event: TerminalOutputEvent) {
   appendToBuffer(event.sessionId, event.data)
+  if (isTerminalRecording(event.sessionId)) {
+    appendTerminalRecordingEvent(event.sessionId, 'o', event.data)
+  }
   subscribers.get('__all__')?.forEach(handler => handler(event))
   subscribers.get(event.sessionId)?.forEach(handler => handler(event))
 }
@@ -40,6 +55,19 @@ export function getTerminalOutputBuffer(sessionId: string): string {
 export function clearTerminalOutputBuffer(sessionId: string): void {
   outputBuffers.delete(sessionId)
   droppedChars.delete(sessionId)
+}
+
+/** 用完整快照替换缓冲（不触发订阅者，避免 xterm 重复写入） */
+export function replaceTerminalOutputBuffer(sessionId: string, data: string): void {
+  if (data.length > MAX_BUFFER_CHARS) {
+    const trim = data.length - MAX_BUFFER_CHARS
+    const start = ceilCharBoundary(data, trim)
+    outputBuffers.set(sessionId, data.slice(start))
+    droppedChars.set(sessionId, start)
+  } else {
+    outputBuffers.set(sessionId, data)
+    droppedChars.set(sessionId, 0)
+  }
 }
 
 const resyncHandlers = new Set<(sessionId: string) => void>()

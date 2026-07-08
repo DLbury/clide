@@ -6,6 +6,7 @@ use crate::process_util::{
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -354,28 +355,38 @@ fn find_node_exe(_cmd_dir: &Path) -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
-/// IDE 桥接已启用时追加到 Claude，促使其调用 MCP 工具而非仅文字回答。
-const IDE_BRIDGE_APPEND_PROMPT: &str = r#"You are connected to AI Terminal via IDE MCP integration (server `aiterm`).
+/// IDE 桥接已启用时追加：说明平台模型与工具语义，而非逐步指挥调用。
+const IDE_BRIDGE_APPEND_PROMPT: &str = r#"You are connected to Clide (AI Terminal) via MCP server `aiterm`.
 
-Conversational messages (greetings, thanks, small talk, general questions):
-- Reply in plain text only. Do NOT call runShellCommand or other MCP tools.
+## Platform
 
-Remote/server shell tasks — mandatory workflow:
-1. Call `getFocusedServer` or `listActiveConnections` to get `profileId`.
-   - `profileId` must be the stable ID from tool output; never use session name/host/shellId as `profileId`.
-2. If the terminal is not connected, call `mcp__aiterm__connectServer` with that `profileId`, then `mcp__aiterm__runShellCommand`.
-3. Call `mcp__aiterm__runShellCommand` with `profileId` and `command`. Use the tool JSON `output` field in your reply.
-4. NEVER say you "cannot connect directly" / "无法直接连接" / "MCP 受限" / "无法远程执行" and only paste bash blocks — you CAN execute via IDE tools.
-5. NEVER use local Bash/WSL/PowerShell, and NEVER use the Skill tool (skills are not MCP). Do not invoke `runShellCommand` as a skill name.
+Clide is a desktop SSH/terminal client. You operate **remote servers through real PTY sessions** shown in the user's Shell panels — the same terminals they would type into manually.
 
-MCP tool names (server `aiterm` only): mcp__aiterm__runShellCommand, mcp__aiterm__getFocusedServer, mcp__aiterm__connectServer, mcp__aiterm__listActiveConnections, etc.
-NEVER claim these tools are missing when the bridge is ready — call mcp__aiterm__runShellCommand first.
+**Identity model**
+- `profileId` — stable server profile ID from tool output (never substitute host name, display name, or shellId).
+- `connectionId` — open tab instance; usually resolved via profileId.
+- `shellId` — one Shell tab within a connection; each has its own PTY.
+- `terminalSessionId` — internal PTY id (`profileId::shellId`).
 
-Sudo / interactive passwords:
-- Run `sudo ...` via runShellCommand like any other command.
-- NEVER ask the user to paste sudo or SSH passwords into chat, and NEVER embed passwords in commands.
-- When sudo prompts for a password, tell the user to type it directly in the left Shell panel (same as a normal terminal); you cannot type it for them.
-- SSH login passwords are handled by the app UI only — not by the AI.
+**Capabilities**
+- Execute shell commands on connected remote/local PTY via `runShellCommand`.
+- Read terminal output snapshots via `getTerminalContext` (no new command sent).
+- Open additional Shell tabs; optionally split below an existing panel via `createNewShell(splitBelow=true)`.
+- Browse/read remote files, port forwards, embedded browser — see tool list.
+
+**Hard limits**
+- **One foreground command per PTY.** A second `runShellCommand` on a busy shell does not queue — the app may auto-create a split monitor shell below, or reject the call. Plan separate shells for parallel or monitoring work.
+- **Multi-server without stealing UI focus.** `runShellCommand` / `getTerminalContext` target any connected profile via `profileId`; they do not require switching the user's visible server tab. Do not call `connectServer` when `listActiveConnections` already shows that profile's terminal connected — that avoids unnecessary reconnects and tab switches.
+- **No local shell substitution** — do not use Bash/WSL/PowerShell tools or paste-only command blocks when the bridge is ready and the user asked for remote execution.
+- **Interactive secrets** — SSH login passwords: app UI only. `sudo`/passphrase: user types in the Shell panel; never ask for or embed passwords in chat/commands.
+- **Workspace folders / getOpenFiles** — local IDE project paths, not the remote server filesystem.
+- **Skills are not MCP** — never invoke `runShellCommand` as a Skill name.
+
+**When to use tools vs plain text**
+- Greetings, explanations, general Q&A: plain text only.
+- Inspecting or changing remote servers: MCP tools; cite tool JSON `output` in your answer.
+
+Tool names may appear as `runShellCommand` or `mcp__aiterm__runShellCommand` (same server).
 "#;
 
 /// --ide 模式下放行的工具。
@@ -409,6 +420,8 @@ const AITERM_IDE_ALLOWED_TOOLS: &[&str] = &[
     "mcp__aiterm__getOpenFiles",
     "getCurrentSelection",
     "mcp__aiterm__getCurrentSelection",
+    "createNewShell",
+    "mcp__aiterm__createNewShell",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -449,23 +462,45 @@ struct Persistent {
     prompt_path: Option<PathBuf>,
 }
 
-pub struct ClaudeSessionManager {
+/// 单个 Agent Thread 的运行时：进程按需租用，session_id 跨进程持久用于 --resume。
+struct ThreadRuntime {
     proc: Arc<Mutex<Option<Persistent>>>,
-    /// 当前进行中的请求 id；reader 线程据此给事件打标签，`result`（done）后清空。
     current_request: Arc<Mutex<Option<String>>>,
-    /// 进程已建立的 Claude 会话 id（来自 system/init 与 result 事件）。
     session_id: Arc<Mutex<Option<String>>>,
-    /// 本轮是否已通过 text_delta 推送过正文，供 assistant 快照回退判断。
     saw_text: Arc<AtomicBool>,
-    /// 当前请求是否已收到 stdout（看门狗用，每轮消息重置）。
     request_output_seen: Arc<AtomicBool>,
-    /// 进程代号自增计数器。
-    generation: Arc<AtomicU64>,
-    /// 首次发送时记录的 AppHandle，供取消时补发 done 事件清理前端 handler。
-    app: Arc<Mutex<Option<AppHandle>>>,
 }
 
-/// 由可变参数生成进程复用指纹。任一变化都要求重启常驻进程。
+impl ThreadRuntime {
+    fn new() -> Self {
+        Self {
+            proc: Arc::new(Mutex::new(None)),
+            current_request: Arc::new(Mutex::new(None)),
+            session_id: Arc::new(Mutex::new(None)),
+            saw_text: Arc::new(AtomicBool::new(false)),
+            request_output_seen: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn release_process(&self) {
+        if let Some(mut p) = self.proc.lock().take() {
+            let _ = p.child.kill();
+            if let Some(path) = &p.prompt_path {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+}
+
+pub struct ClaudeSessionManager {
+    threads: Mutex<HashMap<String, Arc<ThreadRuntime>>>,
+    /// request_id → thread_id
+    inflight: Mutex<HashMap<String, String>>,
+    generation: AtomicU64,
+    app: Mutex<Option<AppHandle>>,
+}
+
+/// 由可变参数生成进程复用指纹（不含 thread_id，隔离由 threads map 负责）。
 fn build_fingerprint(
     claude: &str,
     bridge_port: Option<u16>,
@@ -503,17 +538,21 @@ fn write_user_message(stdin: &mut std::process::ChildStdin, prompt: &str) -> std
 impl ClaudeSessionManager {
     pub fn new() -> Self {
         Self {
-            proc: Arc::new(Mutex::new(None)),
-            current_request: Arc::new(Mutex::new(None)),
-            session_id: Arc::new(Mutex::new(None)),
-            saw_text: Arc::new(AtomicBool::new(false)),
-            request_output_seen: Arc::new(AtomicBool::new(false)),
-            generation: Arc::new(AtomicU64::new(0)),
-            app: Arc::new(Mutex::new(None)),
+            threads: Mutex::new(HashMap::new()),
+            inflight: Mutex::new(HashMap::new()),
+            generation: AtomicU64::new(0),
+            app: Mutex::new(None),
         }
     }
 
-    /// 发送一条消息：优先复用常驻进程；指纹/会话不匹配或进程已死则重启。
+    fn runtime_for(&self, thread_id: &str) -> Arc<ThreadRuntime> {
+        let mut map = self.threads.lock();
+        map.entry(thread_id.to_string())
+            .or_insert_with(|| Arc::new(ThreadRuntime::new()))
+            .clone()
+    }
+
+    /// 发送一条消息：按 thread_id 隔离；进程 idle 后释放，下轮 --resume。
     pub fn spawn(
         &self,
         app: AppHandle,
@@ -526,9 +565,17 @@ impl ClaudeSessionManager {
         bridge_auth_token: Option<String>,
         workspace_dir: Option<PathBuf>,
         mcp_config: Option<PathBuf>,
+        thread_id: &str,
     ) -> Result<(), String> {
         let claude = resolve_claude_path(claude_path)?;
-        let want_session = session_id.filter(|s| !s.trim().is_empty());
+        let runtime = self.runtime_for(thread_id);
+        self.inflight
+            .lock()
+            .insert(request_id.clone(), thread_id.to_string());
+
+        let want_session = session_id
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| runtime.session_id.lock().clone());
         let fingerprint = build_fingerprint(
             &claude,
             bridge_port,
@@ -536,12 +583,20 @@ impl ClaudeSessionManager {
             mcp_config.as_ref(),
         );
 
-        if self.try_reuse(&app, &request_id, &prompt, &fingerprint, &want_session) {
+        if self.try_reuse(
+            &app,
+            runtime.clone(),
+            &request_id,
+            &prompt,
+            &fingerprint,
+            &want_session,
+        ) {
             return Ok(());
         }
 
         self.spawn_process(
             app,
+            runtime,
             request_id,
             prompt,
             &claude,
@@ -555,16 +610,17 @@ impl ClaudeSessionManager {
         )
     }
 
-    /// 尝试复用现有常驻进程。成功写入消息返回 true；否则杀掉旧进程并返回 false。
+    /// 尝试复用该 thread 上仍存活的进程。
     fn try_reuse(
         &self,
         app: &AppHandle,
+        runtime: Arc<ThreadRuntime>,
         request_id: &str,
         prompt: &str,
         fingerprint: &str,
         want_session: &Option<String>,
     ) -> bool {
-        let mut guard = self.proc.lock();
+        let mut guard = runtime.proc.lock();
         if guard.is_none() {
             return false;
         }
@@ -576,8 +632,7 @@ impl ClaudeSessionManager {
                 p.fingerprint == fingerprint,
             )
         };
-        let established = self.session_id.lock().clone();
-        // 复用条件：进程存活、配置一致，且请求未指定会话或与进程会话一致。
+        let established = runtime.session_id.lock().clone();
         let session_ok = want_session.is_none()
             || established.is_none()
             || want_session.as_deref() == established.as_deref();
@@ -592,9 +647,11 @@ impl ClaudeSessionManager {
             return false;
         }
 
-        self.saw_text.store(false, Ordering::SeqCst);
-        self.request_output_seen.store(false, Ordering::SeqCst);
-        *self.current_request.lock() = Some(request_id.to_string());
+        runtime.saw_text.store(false, Ordering::SeqCst);
+        runtime
+            .request_output_seen
+            .store(false, Ordering::SeqCst);
+        *runtime.current_request.lock() = Some(request_id.to_string());
         let (generation, with_ide_mcp) = {
             let p = guard.as_mut().unwrap();
             (p.generation, p.with_ide_mcp)
@@ -602,10 +659,13 @@ impl ClaudeSessionManager {
         let p = guard.as_mut().unwrap();
         match write_user_message(&mut p.stdin, prompt) {
             Ok(()) => {
-                tracing::info!("Reusing persistent Claude process for request_id={request_id}");
+                tracing::info!(
+                    "Reusing Claude process for thread request_id={request_id}"
+                );
                 drop(guard);
                 self.arm_request_watchdog(
                     app.clone(),
+                    runtime.clone(),
                     request_id.to_string(),
                     generation,
                     with_ide_mcp,
@@ -613,24 +673,24 @@ impl ClaudeSessionManager {
                 true
             }
             Err(e) => {
-                tracing::warn!("persistent stdin write failed, will respawn: {e}");
+                tracing::warn!("stdin write failed, will respawn: {e}");
                 if let Some(mut old) = guard.take() {
                     let _ = old.child.kill();
                     if let Some(path) = &old.prompt_path {
                         let _ = std::fs::remove_file(path);
                     }
                 }
-                *self.current_request.lock() = None;
+                *runtime.current_request.lock() = None;
                 false
             }
         }
     }
 
-    /// 启动一个全新的常驻进程并写入首条消息，挂上 stdout/stderr 读取线程与冷启动看门狗。
     #[allow(clippy::too_many_arguments)]
     fn spawn_process(
         &self,
         app: AppHandle,
+        runtime: Arc<ThreadRuntime>,
         request_id: String,
         prompt: String,
         claude: &str,
@@ -646,9 +706,8 @@ impl ClaudeSessionManager {
         *self.app.lock() = Some(app.clone());
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         tracing::info!(
-            "Spawning persistent Claude CLI: resolved={claude}, program={claude_program}, gen={generation}, request_id={request_id}, bridge_port={:?}, workspace={:?}",
+            "Spawning Claude CLI: program={claude_program}, gen={generation}, request_id={request_id}, bridge_port={:?}",
             bridge_port,
-            workspace_dir.as_ref().map(|p| p.display().to_string())
         );
 
         let mut args = vec![
@@ -752,14 +811,13 @@ impl ClaudeSessionManager {
 
         let with_ide_mcp = bridge_port.is_some();
         let stderr_collector: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let request_output_seen = self.request_output_seen.clone();
+        let request_output_seen = runtime.request_output_seen.clone();
 
-        self.saw_text.store(false, Ordering::SeqCst);
+        runtime.saw_text.store(false, Ordering::SeqCst);
         request_output_seen.store(false, Ordering::SeqCst);
-        *self.current_request.lock() = Some(request_id.clone());
-        *self.session_id.lock() = None;
+        *runtime.current_request.lock() = Some(request_id.clone());
 
-        *self.proc.lock() = Some(Persistent {
+        *runtime.proc.lock() = Some(Persistent {
             child,
             stdin,
             fingerprint,
@@ -768,9 +826,9 @@ impl ClaudeSessionManager {
             prompt_path,
         });
 
-        // 先挂 reader 再写 stdin，避免 Linux 上 stderr 填满管道导致子进程阻塞。
         self.spawn_readers(
             app.clone(),
+            runtime.clone(),
             stdout,
             stderr,
             generation,
@@ -779,41 +837,36 @@ impl ClaudeSessionManager {
         );
 
         if let Err(e) = {
-            let mut guard = self.proc.lock();
+            let mut guard = runtime.proc.lock();
             let Some(p) = guard.as_mut() else {
                 return Err("Claude 进程意外丢失".to_string());
             };
             write_user_message(&mut p.stdin, &prompt)
         } {
-            if let Some(mut dead) = self.proc.lock().take() {
-                let _ = dead.child.kill();
-                if let Some(path) = &dead.prompt_path {
-                    let _ = std::fs::remove_file(path);
-                }
-            }
-            *self.current_request.lock() = None;
+            runtime.release_process();
+            *runtime.current_request.lock() = None;
             return Err(format!("写入 Claude 首条消息失败: {e}"));
         }
 
-        self.arm_request_watchdog(app, request_id.clone(), generation, with_ide_mcp);
+        self.arm_request_watchdog(app, runtime, request_id.clone(), generation, with_ide_mcp);
 
-        tracing::info!("persistent Claude spawned, request_id={request_id}, gen={generation}");
+        tracing::info!("Claude spawned, request_id={request_id}, gen={generation}");
         Ok(())
     }
 
-    /// 若本轮请求在超时内无任何 stdout，杀掉进程并向前端报错（冷启动与复用均适用）。
     fn arm_request_watchdog(
         &self,
         app: AppHandle,
+        runtime: Arc<ThreadRuntime>,
         request_id: String,
         generation: u64,
         with_ide_mcp: bool,
     ) {
         let timeout = request_output_timeout(with_ide_mcp);
-        let proc = self.proc.clone();
-        let current = self.current_request.clone();
-        let session = self.session_id.clone();
-        let saw = self.request_output_seen.clone();
+        let proc = runtime.proc.clone();
+        let current = runtime.current_request.clone();
+        let session = runtime.session_id.clone();
+        let saw = runtime.request_output_seen.clone();
         std::thread::spawn(move || {
             std::thread::sleep(timeout);
             if saw.load(Ordering::SeqCst) {
@@ -828,7 +881,7 @@ impl ClaudeSessionManager {
             }
             if let Some(mut dead) = guard.take() {
                 tracing::warn!(
-                    "Claude produced no stdout for {}s; killing gen={}",
+                    "Claude no stdout for {}s; killing gen={}",
                     timeout.as_secs(),
                     generation
                 );
@@ -850,10 +903,10 @@ impl ClaudeSessionManager {
         });
     }
 
-    /// 为常驻进程挂上 stdout/stderr 读取线程，按当前 request_id 路由事件。
     fn spawn_readers(
         &self,
         app: AppHandle,
+        runtime: Arc<ThreadRuntime>,
         stdout: std::process::ChildStdout,
         stderr: std::process::ChildStderr,
         generation: u64,
@@ -861,11 +914,12 @@ impl ClaudeSessionManager {
         stderr_collector: Arc<Mutex<Vec<String>>>,
     ) {
         let app_stdout = app.clone();
-        let proc = self.proc.clone();
-        let current = self.current_request.clone();
-        let session = self.session_id.clone();
-        let saw_text = self.saw_text.clone();
+        let proc = runtime.proc.clone();
+        let current = runtime.current_request.clone();
+        let session = runtime.session_id.clone();
+        let saw_text = runtime.saw_text.clone();
         let stderr_for_stdout = stderr_collector.clone();
+        let runtime_done = runtime.clone();
 
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
@@ -881,25 +935,6 @@ impl ClaudeSessionManager {
                     .ok()
                     .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(String::from))
                     .unwrap_or_default();
-                let detail = if detected_type == "stream_event" {
-                    serde_json::from_str::<serde_json::Value>(trimmed)
-                        .ok()
-                        .and_then(|v| {
-                            let inner = v
-                                .pointer("/event/type")
-                                .and_then(|t| t.as_str())
-                                .unwrap_or("");
-                            let delta = v
-                                .pointer("/event/delta/type")
-                                .and_then(|t| t.as_str())
-                                .unwrap_or("");
-                            Some(format!("{inner}/{delta}"))
-                        })
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                tracing::trace!("stream line: type={detected_type} {detail}");
 
                 let req = current.lock().clone();
                 let mut local_sid = session.lock().clone();
@@ -913,7 +948,6 @@ impl ClaudeSessionManager {
                     events =
                         parse_plaintext_fallback(trimmed, req.as_deref().unwrap_or(""), &local_sid);
                 }
-                // 回写进程会话 id（system/init、result 都可能更新）。
                 {
                     let mut s = session.lock();
                     if *s != local_sid {
@@ -921,7 +955,6 @@ impl ClaudeSessionManager {
                     }
                 }
 
-                // 轮次之间（req 为空，如 init 事件）只采集会话 id，不向前端派发。
                 let Some(req_id) = req else { continue };
                 for event in events {
                     let is_done = event.done;
@@ -930,16 +963,20 @@ impl ClaudeSessionManager {
                     }
                     let _ = app_stdout.emit("claude:stream", event);
                     if is_done {
-                        // 本轮以 result 收尾：清空当前请求，进程继续存活等待下一条。
                         let mut cur = current.lock();
                         if cur.as_deref() == Some(req_id.as_str()) {
                             *cur = None;
                         }
+                        drop(cur);
+                        // 回合结束：释放进程，保留 session_id 供 --resume
+                        runtime_done.release_process();
+                        tracing::info!(
+                            "Claude turn done for request_id={req_id}, process released (idle)"
+                        );
                     }
                 }
             }
 
-            // stdout EOF：进程已退出。仅当仍是当前进程时清理并上报失败。
             std::thread::sleep(std::time::Duration::from_millis(200));
             let mut guard = proc.lock();
             let is_current = guard.as_ref().map(|p| p.generation) == Some(generation);
@@ -966,13 +1003,7 @@ impl ClaudeSessionManager {
             let collected_stderr: Vec<String> = stderr_for_stdout.lock().drain(..).collect();
             let req = current.lock().take();
             let sid = session.lock().clone();
-            tracing::info!(
-                "persistent Claude process ended: gen={generation}, in_flight_request={:?}, exit_error={:?}",
-                req.as_deref().unwrap_or("(none)"),
-                exit_error.as_deref().unwrap_or("(none)")
-            );
 
-            // 仅当有进行中的轮次（进程在产出 result 前死亡）时才上报错误，避免空闲退出误报。
             if let Some(req_id) = req {
                 let detail = exit_error
                     .map(|e| {
@@ -994,7 +1025,7 @@ impl ClaudeSessionManager {
         });
 
         let app_stderr = app;
-        let current_err = self.current_request.clone();
+        let current_err = runtime.current_request.clone();
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().flatten() {
@@ -1052,31 +1083,35 @@ impl ClaudeSessionManager {
         });
     }
 
-    /// 取消某轮请求：杀掉常驻进程（下条消息会以 --resume 重启保留上下文）。
     pub fn cancel(&self, request_id: &str) {
-        let is_current = self.current_request.lock().as_deref() == Some(request_id);
-        if is_current {
-            self.kill_process(Some(request_id));
+        let thread_id = self.inflight.lock().remove(request_id);
+        let Some(tid) = thread_id else {
+            return;
+        };
+        let runtime = self.threads.lock().get(&tid).cloned();
+        let Some(runtime) = runtime else {
+            return;
+        };
+        if runtime.current_request.lock().as_deref() == Some(request_id) {
+            self.kill_runtime(&runtime, Some(request_id));
         }
     }
 
     pub fn cancel_all(&self) {
-        let req = self.current_request.lock().clone();
-        self.kill_process(req.as_deref());
+        self.inflight.lock().clear();
+        let runtimes: Vec<Arc<ThreadRuntime>> = self.threads.lock().values().cloned().collect();
+        for runtime in runtimes {
+            let req = runtime.current_request.lock().clone();
+            self.kill_runtime(&runtime, req.as_deref());
+        }
     }
 
-    /// 杀掉常驻进程并清理临时文件；若给出请求 id 则补发 done，避免前端 handler 泄漏。
-    fn kill_process(&self, request_id: Option<&str>) {
-        if let Some(mut p) = self.proc.lock().take() {
-            let _ = p.child.kill();
-            if let Some(path) = &p.prompt_path {
-                let _ = std::fs::remove_file(path);
-            }
-        }
-        *self.current_request.lock() = None;
+    fn kill_runtime(&self, runtime: &ThreadRuntime, request_id: Option<&str>) {
+        runtime.release_process();
+        *runtime.current_request.lock() = None;
         if let Some(req) = request_id {
             if let Some(app) = self.app.lock().clone() {
-                let sid = self.session_id.lock().clone();
+                let sid = runtime.session_id.lock().clone();
                 let _ = app.emit(
                     "claude:stream",
                     ClaudeStreamEvent {
@@ -1206,8 +1241,8 @@ fn parse_stream_line(
                         events_out.push(ev);
                     }
                     Some("text") => {
-                        // 新文本块开始时重置标志，确保后续 assistant 快照能正确补发正文
-                        saw_text_stream.store(false, Ordering::SeqCst);
+                        // 注意：不要在此处置位 saw_text_stream——部分 CLI 版本会宣告
+                        // text 块但正文只随 assistant 快照下发，提前置位会吞掉正文。
                         let ev = mk("text_block_start");
                         events_out.push(ev);
                     }
@@ -1226,6 +1261,7 @@ fn parse_stream_line(
                 {
                     let mut ev = mk("stream_event");
                     ev.text = Some(text.to_string());
+                    saw_text_stream.store(true, Ordering::SeqCst);
                     events_out.push(ev);
                 }
             } else if delta_type == "thinking_delta" {

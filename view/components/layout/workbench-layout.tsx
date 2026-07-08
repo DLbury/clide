@@ -21,12 +21,14 @@ import {
   IDockviewHeaderActionsProps,
 } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
-import { Terminal, FileCode, Globe, X, Plus } from 'lucide-react'
+import { Terminal, FileCode, Globe, Activity, X, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppTheme } from '@/hooks/use-app-theme'
 import { EditorContent } from '@/components/layout/editor-content'
 import { ShellPane } from '@/components/layout/shell-pane'
 import { BrowserPanel } from '@/components/layout/browser-panel'
+import { ServerMonitorPanel } from '@/components/terminal/server-monitor-panel'
+import type { HostStatsSample } from '@/lib/host-stats-history'
 import {
   hideAllEmbeddedWebviews,
   showAllEmbeddedWebviews,
@@ -57,6 +59,7 @@ import {
 interface WorkbenchContextValue {
   onNewShell: (referencePanelId?: string) => void
   onNewBrowser?: () => void
+  onOpenMonitor?: () => void
   onReconnect?: () => void
   requestEditorClose: (fileId: string, panelApi: { close: () => void }) => void
   tryClosePanel: (panelId: string) => void
@@ -128,6 +131,12 @@ interface BrowserPanelParams {
   onUrlChange: (url: string, tunnelId?: string) => void
 }
 
+interface MonitorPanelParams {
+  type: 'monitor'
+  session: Session
+  initialHistory: HostStatsSample[]
+}
+
 export interface WorkbenchBrowserTab {
   id: string
   title: string
@@ -136,7 +145,9 @@ export interface WorkbenchBrowserTab {
   tunnelId?: string
 }
 
-type PanelParams = TerminalPanelParams | EditorPanelParams | BrowserPanelParams
+type PanelParams = TerminalPanelParams | EditorPanelParams | BrowserPanelParams | MonitorPanelParams
+
+const MONITOR_PANEL_ID = 'monitor-main'
 
 function TerminalPanel({ params }: IDockviewPanelProps<TerminalPanelParams>) {
   const { shells, clearSignals } = useContext(WorkbenchRuntimeContext)
@@ -189,6 +200,25 @@ function EditorPanel({ params }: IDockviewPanelProps<EditorPanelParams>) {
   )
 }
 
+function MonitorPanelWrapper({ params, api }: IDockviewPanelProps<MonitorPanelParams>) {
+  const [panelVisible, setPanelVisible] = useState(api.isVisible)
+
+  useEffect(() => {
+    const apply = () => setPanelVisible(api.isVisible)
+    apply()
+    const disposable = api.onDidVisibilityChange(apply)
+    return () => disposable.dispose()
+  }, [api])
+
+  return (
+    <ServerMonitorPanel
+      session={params.session}
+      initialHistory={params.initialHistory}
+      active={panelVisible}
+    />
+  )
+}
+
 function BrowserPanelWrapper({ params, api }: IDockviewPanelProps<BrowserPanelParams>) {
   const [panelVisible, setPanelVisible] = useState(api.isVisible)
 
@@ -227,6 +257,8 @@ const WorkbenchTab = memo(function WorkbenchTab({
         return <FileCode className="w-3.5 h-3.5" />
       case 'browser':
         return <Globe className="w-3.5 h-3.5" />
+      case 'monitor':
+        return <Activity className="w-3.5 h-3.5" />
     }
   })()
 
@@ -235,12 +267,15 @@ const WorkbenchTab = memo(function WorkbenchTab({
       ? api.title
       : data.type === 'browser'
         ? (data as BrowserPanelParams).title
-        : (data as EditorPanelParams).file.name
+        : data.type === 'monitor'
+          ? '服务器监控'
+          : (data as EditorPanelParams).file.name
 
   const isModified = data.type === 'editor' && (data as EditorPanelParams).file.isModified
   const canClose =
     data.type === 'editor' ||
     data.type === 'browser' ||
+    data.type === 'monitor' ||
     (data.type === 'terminal' && (data as TerminalPanelParams).canCloseTab)
 
   const handleClose = (e?: React.MouseEvent) => {
@@ -314,7 +349,7 @@ const WorkbenchTab = memo(function WorkbenchTab({
 })
 
 function RightHeaderActions({ panels, activePanel }: IDockviewHeaderActionsProps) {
-  const { onNewShell, onNewBrowser } = useContext(WorkbenchContext)
+  const { onNewShell, onNewBrowser, onOpenMonitor } = useContext(WorkbenchContext)
   const hasTerminal = panels.some(p => p.id.startsWith('terminal-'))
 
   if (!hasTerminal) return null
@@ -325,6 +360,19 @@ function RightHeaderActions({ panels, activePanel }: IDockviewHeaderActionsProps
 
   return (
     <div className="flex h-full items-stretch">
+      {onOpenMonitor && (
+        <button
+          onClick={() => onOpenMonitor()}
+          className={cn(
+            'flex items-center justify-center h-full px-2',
+            'hover:bg-muted/50 transition-colors border-l border-border',
+            'text-muted-foreground hover:text-foreground'
+          )}
+          title="服务器监控"
+        >
+          <Activity className="w-4 h-4" />
+        </button>
+      )}
       {onNewBrowser && (
         <button
           onClick={() => onNewBrowser()}
@@ -357,6 +405,7 @@ const components = {
   terminal: TerminalPanel,
   editor: EditorPanel,
   browser: BrowserPanelWrapper,
+  monitor: MonitorPanelWrapper,
 }
 
 const tabComponents = {
@@ -374,12 +423,16 @@ export interface WorkbenchLayoutProps {
   clearSignals?: Record<string, number>
   browserTabs?: WorkbenchBrowserTab[]
   activeBrowserTabId?: string
+  monitorOpen?: boolean
+  monitorHistory?: HostStatsSample[]
   onShellChange: (shellId: string) => void
   onNewShell: () => void
   onCloseShell: (shellId: string) => void
   onCloseBrowser?: (tabId: string) => void
   onBrowserUrlChange?: (tabId: string, url: string, tunnelId?: string) => void
   onNewBrowser?: () => void
+  onOpenMonitor?: () => void
+  onCloseMonitor?: () => void
   onReconnect?: () => void
   onCommand: (shellId: string, command: string) => void
   onFileChange: (fileId: string, content: string) => void
@@ -390,11 +443,18 @@ export interface WorkbenchLayoutProps {
   onLayoutRestoreDone?: () => void
 }
 
+export type ShellPanelPlacement = {
+  referencePanelId: string
+  direction: 'within' | 'below'
+}
+
 export interface WorkbenchLayoutHandle {
   focusTerminal: (shellId?: string) => void
   activateShellById: (shellId: string) => void
   focusEditor: () => void
+  focusMonitorPanel: () => void
   splitEditor: (direction: 'right' | 'below') => void
+  prepareShellPlacement: (referenceShellId: string, direction?: 'within' | 'below') => void
   captureLayout: () => unknown | null
 }
 
@@ -410,12 +470,16 @@ export const WorkbenchLayout = memo(
   clearSignals = {},
   browserTabs = [],
   activeBrowserTabId,
+  monitorOpen = false,
+  monitorHistory = [],
   onShellChange,
   onNewShell,
   onCloseShell,
   onCloseBrowser,
   onBrowserUrlChange,
   onNewBrowser,
+  onOpenMonitor,
+  onCloseMonitor,
   onReconnect,
   onCommand,
   onFileChange,
@@ -436,7 +500,7 @@ export const WorkbenchLayout = memo(
   shellsRef.current = shells
   const editorSnapshotRef = useRef<Map<string, string>>(new Map())
   const terminalParamsCacheRef = useRef<Map<string, string>>(new Map())
-  const newShellPlacementRef = useRef<string | undefined>(undefined)
+  const newShellPlacementRef = useRef<ShellPanelPlacement | undefined>(undefined)
 
   const onShellChangeRef = useRef(onShellChange)
   const onNewShellRef = useRef(onNewShell)
@@ -461,8 +525,27 @@ export const WorkbenchLayout = memo(
   onBrowserUrlChangeRef.current = onBrowserUrlChange
   const onNewBrowserRef = useRef(onNewBrowser)
   onNewBrowserRef.current = onNewBrowser
+  const onOpenMonitorRef = useRef(onOpenMonitor)
+  onOpenMonitorRef.current = onOpenMonitor
+  const onCloseMonitorRef = useRef(onCloseMonitor)
+  onCloseMonitorRef.current = onCloseMonitor
+  const monitorOpenRef = useRef(monitorOpen)
+  monitorOpenRef.current = monitorOpen
   const onReconnectRef = useRef(onReconnect)
   onReconnectRef.current = onReconnect
+
+  const buildMonitorParams = useCallback(
+    (): MonitorPanelParams => ({
+      type: 'monitor',
+      session,
+      initialHistory: monitorHistory,
+    }),
+    [session, monitorHistory]
+  )
+
+  const monitorHistoryKey = monitorHistory.length
+    ? `${monitorHistory.length}:${monitorHistory[monitorHistory.length - 1]?.ts ?? 0}`
+    : '0'
 
   const buildBrowserParams = useCallback(
     (tab: WorkbenchBrowserTab): BrowserPanelParams => ({
@@ -528,14 +611,21 @@ export const WorkbenchLayout = memo(
     []
   )
 
-  const resolveTerminalReferencePanel = useCallback(
-    (api: DockviewApi, excludePanelId?: string) => {
+  const resolveShellPanelPlacement = useCallback(
+    (api: DockviewApi, excludePanelId?: string): ShellPanelPlacement | undefined => {
       const placement = newShellPlacementRef.current
       newShellPlacementRef.current = undefined
-      if (placement && placement !== excludePanelId && api.getPanel(placement)) {
+      if (
+        placement &&
+        placement.referencePanelId !== excludePanelId &&
+        api.getPanel(placement.referencePanelId)
+      ) {
         return placement
       }
-      return findTerminalRef(api, excludePanelId)
+      const refPanel = findTerminalRef(api, excludePanelId)
+      return refPanel
+        ? { referencePanelId: refPanel, direction: 'within' as const }
+        : undefined
     },
     [findTerminalRef]
   )
@@ -563,20 +653,25 @@ export const WorkbenchLayout = memo(
 
       missing.forEach((shell, index) => {
         const panelId = `terminal-${shell.id}`
-        const refPanel = index === 0 ? undefined : resolveTerminalReferencePanel(api, panelId)
+        const placement = index === 0 ? undefined : resolveShellPanelPlacement(api, panelId)
         api.addPanel({
           id: panelId,
           component: 'terminal',
           tabComponent: 'tab',
           title: shell.name,
           params: buildTerminalParams(shell.id),
-          ...(refPanel
-            ? { position: { referencePanel: refPanel, direction: 'within' as const } }
+          ...(placement
+            ? {
+                position: {
+                  referencePanel: placement.referencePanelId,
+                  direction: placement.direction,
+                },
+              }
             : {}),
         })
       })
     },
-    [shells, buildTerminalParams, resolveTerminalReferencePanel]
+    [shells, buildTerminalParams, resolveShellPanelPlacement]
   )
 
   const onReady = useCallback(
@@ -678,7 +773,7 @@ export const WorkbenchLayout = memo(
           terminalParamsCacheRef.current.set(panelId, paramsKey)
         }
       } else {
-        const refPanel = resolveTerminalReferencePanel(api, panelId)
+        const placement = resolveShellPanelPlacement(api, panelId)
         // 允许添加第一个面板（当没有参考面板且面板列表为空时）
         api.addPanel({
           id: panelId,
@@ -686,8 +781,13 @@ export const WorkbenchLayout = memo(
           tabComponent: 'tab',
           title: shell.name,
           params,
-          ...(refPanel
-            ? { position: { referencePanel: refPanel, direction: 'within' as const } }
+          ...(placement
+            ? {
+                position: {
+                  referencePanel: placement.referencePanelId,
+                  direction: placement.direction,
+                },
+              }
             : {}),
         })
         terminalParamsCacheRef.current.set(panelId, paramsKey)
@@ -702,7 +802,7 @@ export const WorkbenchLayout = memo(
         syncingRef.current = false
       }
     })
-  }, [shellsLayoutKey, connectionId, buildTerminalParams, terminalParamsKey, resolveTerminalReferencePanel])
+  }, [shellsLayoutKey, connectionId, buildTerminalParams, terminalParamsKey, resolveShellPanelPlacement])
 
   const browserTabsKey = browserTabs.map(t => `${t.id}:${t.title}:${t.url}:${t.webviewLabel}`).join('|')
 
@@ -752,6 +852,40 @@ export const WorkbenchLayout = memo(
     })
   }, [browserTabsKey, connectionId, findTerminalRef, buildBrowserParams])
 
+  // Sync monitor panel
+  useEffect(() => {
+    const api = apiRef.current
+    if (!api) return
+
+    const shouldShow = monitorOpen && session.type === 'ssh'
+    const panel = api.getPanel(MONITOR_PANEL_ID)
+    const params = buildMonitorParams()
+
+    if (shouldShow) {
+      if (panel) {
+        panel.api.updateParameters(params)
+      } else {
+        const terminalRef = findTerminalRef(api)
+        const existingBrowser = api.panels.find(p => p.id.startsWith('browser-'))
+        const refPanel = terminalRef ?? existingBrowser?.id
+        if (!refPanel) return
+
+        api.addPanel({
+          id: MONITOR_PANEL_ID,
+          component: 'monitor',
+          tabComponent: 'tab',
+          title: '服务器监控',
+          params,
+          position: { referencePanel: refPanel, direction: 'within' as const },
+        })
+      }
+    } else if (panel) {
+      syncingRef.current = true
+      panel.api.close()
+      syncingRef.current = false
+    }
+  }, [monitorOpen, monitorHistoryKey, connectionId, session.type, findTerminalRef, buildMonitorParams])
+
   const openFilesKey = openFiles.map(f => `${f.id}:${f.path}`).join('|')
 
   // 加载布局快照：等面板创建完成后再 fromJSON
@@ -770,8 +904,9 @@ export const WorkbenchLayout = memo(
       const shellsReady = shells.every(s => api.getPanel(`terminal-${s.id}`))
       const filesReady = openFiles.every(f => api.getPanel(`editor-${f.id}`))
       const browsersReady = browserTabs.every(t => api.getPanel(`browser-${t.id}`))
+      const monitorReady = !monitorOpen || session.type !== 'ssh' || Boolean(api.getPanel(MONITOR_PANEL_ID))
 
-      if (!shellsReady || !filesReady || !browsersReady) {
+      if (!shellsReady || !filesReady || !browsersReady || !monitorReady) {
         if (attempts < 30) {
           setTimeout(tryApply, 50)
         } else {
@@ -807,6 +942,8 @@ export const WorkbenchLayout = memo(
     shellsLayoutKey,
     openFilesKey,
     browserTabsKey,
+    monitorOpen,
+    session.type,
     onLayoutRestoreDone,
   ])
 
@@ -822,6 +959,8 @@ export const WorkbenchLayout = memo(
   const handleNewShellInGroup = useCallback(
     (referencePanelId?: string) => {
       newShellPlacementRef.current = referencePanelId
+        ? { referencePanelId, direction: 'within' }
+        : undefined
       onNewShellRef.current()
     },
     []
@@ -864,6 +1003,9 @@ export const WorkbenchLayout = memo(
         if (browserTabs.some(t => t.id === tabId)) {
           onCloseBrowserRef.current?.(tabId)
         }
+      }
+      if (panel.id === MONITOR_PANEL_ID && monitorOpenRef.current) {
+        onCloseMonitorRef.current?.()
       }
     })
 
@@ -1064,6 +1206,9 @@ export const WorkbenchLayout = memo(
         if (!api || !activeFileId) return
         api.getPanel(`editor-${activeFileId}`)?.api.setActive()
       },
+      focusMonitorPanel: () => {
+        apiRef.current?.getPanel(MONITOR_PANEL_ID)?.api.setActive()
+      },
       splitEditor: (direction: 'right' | 'below') => {
         const api = apiRef.current
         if (!api || !activeFileId) return
@@ -1082,6 +1227,12 @@ export const WorkbenchLayout = memo(
           },
         })
       },
+      prepareShellPlacement: (referenceShellId: string, direction: 'within' | 'below' = 'within') => {
+        newShellPlacementRef.current = {
+          referencePanelId: `terminal-${referenceShellId}`,
+          direction,
+        }
+      },
       captureLayout: () => apiRef.current?.toJSON() ?? null,
     }),
     [activeShellId, activeFileId, openFiles, buildEditorParams, focusShellTerminal]
@@ -1091,6 +1242,7 @@ export const WorkbenchLayout = memo(
     () => ({
       onNewShell: handleNewShellInGroup,
       onNewBrowser: onNewBrowserRef.current ? () => onNewBrowserRef.current?.() : undefined,
+      onOpenMonitor: onOpenMonitorRef.current ? () => onOpenMonitorRef.current?.() : undefined,
       onReconnect: onReconnectRef.current ? () => onReconnectRef.current?.() : undefined,
       requestEditorClose,
       tryClosePanel,

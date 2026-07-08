@@ -142,6 +142,10 @@ export async function sendClaudeMessage(options: {
   continueSession?: boolean
   /** 由前端预生成并先注册 stream handler，避免 spawn 后事件早于注册 */
   requestId?: string
+  /** Agent Thread id（多会话并行）；兼容旧 connectionKey */
+  threadId?: string
+  /** @deprecated 使用 threadId */
+  connectionKey?: string
 }): Promise<string> {
   return invoke<string>('claude_send_message', {
     prompt: options.prompt,
@@ -149,6 +153,8 @@ export async function sendClaudeMessage(options: {
     sessionId: options.sessionId || null,
     continueSession: options.continueSession ?? false,
     requestId: options.requestId || null,
+    threadId: options.threadId || options.connectionKey || null,
+    connectionKey: options.connectionKey || options.threadId || null,
   })
 }
 

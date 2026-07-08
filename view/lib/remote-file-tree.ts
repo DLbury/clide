@@ -10,10 +10,10 @@ export function resolveRemoteDisplayPath(path: string, user?: string): string {
   const normalized = path.replace(/\\/g, '/')
   if (isWindowsRemotePath(normalized)) return normalized
   if (!path || path === '~') {
-    return user ? `/home/${user}` : '~'
+    return '~'
   }
   if (path.startsWith('~/')) {
-    return user ? `/home/${user}/${path.slice(2)}` : path
+    return path
   }
   return normalized
 }
@@ -36,9 +36,11 @@ export function mergeRemoteChildren(
   parentPath: string,
   children: FileItem[]
 ): FileItem[] {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+  const target = norm(parentPath)
   const walk = (nodes: FileItem[]): FileItem[] =>
     nodes.map(item => {
-      if (item.path === parentPath && item.type === 'directory') {
+      if (norm(item.path) === target && item.type === 'directory') {
         return {
           ...item,
           isExpanded: true,
@@ -51,6 +53,20 @@ export function mergeRemoteChildren(
       return item
     })
   return walk(items)
+}
+
+/** 刷新时仅替换指定目录下的子项，保留其余已展开子树 */
+export function replaceRemoteChildrenAt(
+  items: FileItem[],
+  parentPath: string,
+  children: FileItem[]
+): FileItem[] {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
+  const target = norm(parentPath)
+  if (target === '/' || target === '~') {
+    return children
+  }
+  return mergeRemoteChildren(items, parentPath, children)
 }
 
 export function getRemoteParentPath(path: string, user?: string): string | null {

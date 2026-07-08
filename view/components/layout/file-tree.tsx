@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo, type ReactNode } from 'react'
 import {
   ChevronRight,
   ChevronDown,
@@ -21,6 +21,9 @@ import {
   Loader2,
   Shield,
   Trash2,
+  Search,
+  X,
+  PanelLeftClose,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { FileItem } from '@/lib/types'
@@ -57,6 +60,13 @@ import {
   isRemotePathDrag,
 } from '@/lib/file-drag'
 import {
+  flattenVisibleFileTree,
+  mergeExpandOverrides,
+  FILE_TREE_VIRTUAL_THRESHOLD,
+  type FlatFileRow,
+} from '@/lib/file-tree-view'
+import { VirtualFileTreeBody } from '@/components/layout/virtual-file-tree-body'
+import {
   uploadOverallPercent,
   type UploadProgress,
 } from '@/lib/remote-file-transfer'
@@ -82,10 +92,15 @@ interface FileTreeProps {
   onRename?: (item: FileItem, newName: string) => void | Promise<void>
   onOpenInTerminal?: (path: string, isDirectory: boolean) => void
   onCreateRemoteFile?: (dirPath: string, fileName: string) => void | Promise<void>
+  onCreateRemoteFolder?: (dirPath: string, folderName: string) => void | Promise<void>
+  onSearchRemote?: (query: string) => Promise<FileItem[]>
+  onChmod?: (item: FileItem, mode: string) => void | Promise<void>
   transferBusy?: boolean
   uploadProgress?: UploadProgress | null
   fileRootMode?: boolean
   onFileRootModeChange?: (enabled: boolean) => void
+  onCollapse?: () => void
+  remoteLoadError?: string | null
 }
 
 interface PendingFolder {
@@ -103,10 +118,12 @@ function RemotePathBar({
   currentPath,
   remoteUser,
   onNavigate,
+  trailingAction,
 }: {
   currentPath: string
   remoteUser?: string
   onNavigate: (path: string) => void
+  trailingAction?: ReactNode
 }) {
   const displayPath = resolveRemoteDisplayPath(currentPath, remoteUser)
   const [draft, setDraft] = useState(displayPath)
@@ -124,70 +141,46 @@ function RemotePathBar({
     if (parent) onNavigate(parent)
   }
 
-  const segments = displayPath.split('/').filter(Boolean)
-
   return (
-    <div className="border-b border-border px-2 py-1.5 space-y-1.5 shrink-0">
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={goUp}
-          disabled={!getRemoteParentPath(currentPath, remoteUser)}
-          className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:pointer-events-none"
-          title="上级目录"
-        >
-          <ArrowUp className="w-3.5 h-3.5 text-muted-foreground" />
-        </button>
-        <input
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              go()
-            }
-          }}
-          className="flex-1 min-w-0 h-7 px-2 text-xs font-mono rounded border border-border bg-background outline-none focus:ring-1 focus:ring-primary"
-          spellCheck={false}
-          aria-label="远程路径"
-        />
-        <button
-          type="button"
-          onClick={go}
-          className="p-1 rounded hover:bg-muted"
-          title="转到"
-        >
-          <CornerDownLeft className="w-3.5 h-3.5 text-muted-foreground" />
-        </button>
-      </div>
-      <div className="flex items-center flex-wrap gap-0.5 text-[11px] font-mono text-muted-foreground px-0.5">
-        <button
-          type="button"
-          className="hover:text-foreground hover:underline"
-          onClick={() => onNavigate('~')}
-        >
-          ~
-        </button>
-        {segments.map((seg, index) => {
-          const path = `/${segments.slice(0, index + 1).join('/')}`
-          return (
-            <span key={path} className="flex items-center gap-0.5">
-              <span>/</span>
-              <button
-                type="button"
-                className="hover:text-foreground hover:underline truncate max-w-[80px]"
-                onClick={() => onNavigate(path)}
-                title={seg}
-              >
-                {seg}
-              </button>
-            </span>
-          )
-        })}
-      </div>
+    <div className="flex items-center gap-1 min-w-0 flex-1">
+      <button
+        type="button"
+        onClick={goUp}
+        disabled={!getRemoteParentPath(currentPath, remoteUser)}
+        className="p-1 rounded icon-btn disabled:opacity-30 disabled:pointer-events-none shrink-0"
+        title="上级目录"
+      >
+        <ArrowUp className="w-3.5 h-3.5 text-muted-foreground" />
+      </button>
+      <input
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            go()
+          }
+        }}
+        className="flex-1 min-w-0 h-7 px-1.5 text-xs font-mono rounded border border-border bg-background outline-none focus:ring-1 focus:ring-primary"
+        spellCheck={false}
+        aria-label="远程路径"
+        title={draft}
+        placeholder="~ 或 /path/to/dir"
+      />
+      <button
+        type="button"
+        onClick={go}
+        className="p-1 rounded icon-btn shrink-0"
+        title="转到"
+      >
+        <CornerDownLeft className="w-3.5 h-3.5 text-muted-foreground" />
+      </button>
+      {trailingAction}
     </div>
   )
 }
+
+const REMOTE_CURRENT_FOLDER_ID = '__remote_current__'
 
 function resolveParentDirectory(
   items: FileItem[],
@@ -316,7 +309,10 @@ function FileTreeItem({
   onConfirmRename,
   onCancelRename,
   transferBusy,
+  hideChildren = false,
   onRemoteDragEnd,
+  onCreateRemoteFolder,
+  onChmod,
 }: {
   item: FileItem
   depth: number
@@ -345,6 +341,9 @@ function FileTreeItem({
   onCancelRename: () => void
   transferBusy?: boolean
   onRemoteDragEnd?: () => void
+  onCreateRemoteFolder?: (dirPath: string, folderName: string) => void | Promise<void>
+  onChmod?: (item: FileItem, mode: string) => void | Promise<void>
+  hideChildren?: boolean
 }) {
   const Icon = getFileIcon(item.name, item.type === 'directory', item.isExpanded || false)
   const isDirectory = item.type === 'directory'
@@ -354,6 +353,27 @@ function FileTreeItem({
   const childCount = item.children?.length ?? 0
   const [isDropTarget, setIsDropTarget] = useState(false)
   const canDragRemote = remoteMode && !!onMove && !transferBusy
+
+  const promptChmod = () => {
+    if (!onChmod) return
+    const mode = window.prompt('八进制权限（如 755、644）', '644')
+    if (mode?.trim()) void Promise.resolve(onChmod(item, mode.trim()))
+  }
+
+  const chmodMenu = remoteMode && onChmod && (
+    <>
+      <ContextMenuSeparator />
+      <ContextMenuItem disabled={transferBusy} onClick={() => onChmod(item, '755')}>
+        chmod 755
+      </ContextMenuItem>
+      <ContextMenuItem disabled={transferBusy} onClick={() => onChmod(item, '644')}>
+        chmod 644
+      </ContextMenuItem>
+      <ContextMenuItem disabled={transferBusy} onClick={promptChmod}>
+        自定义 chmod…
+      </ContextMenuItem>
+    </>
+  )
 
   const handleClick = () => {
     if (isDirectory) {
@@ -466,7 +486,7 @@ function FileTreeItem({
           </div>
           )}
 
-          {!showRenameInput && isDirectory && item.isExpanded && (
+          {!showRenameInput && isDirectory && item.isExpanded && !hideChildren && (
             <div>
               {childCount === 0 && remoteMode ? (
                 <div
@@ -506,6 +526,8 @@ function FileTreeItem({
                     onCancelRename={onCancelRename}
                     transferBusy={transferBusy}
                     onRemoteDragEnd={onRemoteDragEnd}
+                    onCreateRemoteFolder={onCreateRemoteFolder}
+                    onChmod={onChmod}
                   />
                 ))
               )}
@@ -550,12 +572,18 @@ function FileTreeItem({
                 删除
               </ContextMenuItem>
             )}
+            {chmodMenu}
           </>
         )}
         {isDirectory && (
           <>
             {remoteMode && onNavigate && (
               <ContextMenuItem onClick={() => onNavigate(item.path)}>进入文件夹</ContextMenuItem>
+            )}
+            {remoteMode && onCreateRemoteFolder && (
+              <ContextMenuItem disabled={transferBusy} onClick={() => onStartNewFolder(item)}>
+                新建文件夹
+              </ContextMenuItem>
             )}
             {!remoteMode && (
               <>
@@ -592,6 +620,7 @@ function FileTreeItem({
                 </ContextMenuItem>
               </>
             )}
+            {chmodMenu}
           </>
         )}
       </ContextMenuContent>
@@ -620,10 +649,15 @@ export function FileTree({
   onRename,
   onOpenInTerminal,
   onCreateRemoteFile,
+  onCreateRemoteFolder,
+  onSearchRemote,
+  onChmod,
   transferBusy = false,
   uploadProgress = null,
   fileRootMode = false,
   onFileRootModeChange,
+  onCollapse,
+  remoteLoadError,
 }: FileTreeProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const [dropMode, setDropMode] = useState<'upload' | 'move' | null>(null)
@@ -644,25 +678,66 @@ export function FileTree({
   const [files, setFiles] = useState<FileItem[]>(() =>
     externalFiles ? cloneFileTree(externalFiles) : cloneFileTree(EMPTY_FILE_TREE)
   )
+  const [expandOverrides, setExpandOverrides] = useState<Map<string, boolean>>(() => new Map())
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<FileItem[] | null>(null)
+  const [searchBusy, setSearchBusy] = useState(false)
   const [pendingFolder, setPendingFolder] = useState<PendingFolder | null>(null)
   const [pendingRename, setPendingRename] = useState<PendingRename | null>(null)
   const renameTargetRef = useRef<FileItem | null>(null)
   const filesFingerprint = externalFiles?.map(f => `${f.path}:${f.isExpanded}:${f.children?.length ?? 0}`).join('|')
 
   useEffect(() => {
-    if (remoteMode || externalFiles !== undefined) {
-      setFiles(cloneFileTree(externalFiles ?? []))
+    if (remoteMode) {
+      setPendingFolder(null)
+      setPendingRename(null)
+      return
+    }
+    if (externalFiles !== undefined) {
+      setFiles(cloneFileTree(externalFiles))
       setPendingFolder(null)
       setPendingRename(null)
     }
   }, [externalFiles, filesFingerprint, remoteMode])
 
+  const displayFiles = useMemo(
+    () =>
+      remoteMode
+        ? mergeExpandOverrides(
+            searchResults ?? externalFiles ?? [],
+            searchResults ? new Map() : expandOverrides
+          )
+        : files,
+    [remoteMode, searchResults, externalFiles, expandOverrides, files]
+  )
+
+  const flatRows = useMemo(() => flattenVisibleFileTree(displayFiles), [displayFiles])
+  const useVirtualList = flatRows.length >= FILE_TREE_VIRTUAL_THRESHOLD
+
   const handleToggle = useCallback(
     (id: string) => {
+      if (remoteMode) {
+        const item = findFileItemById(displayFiles, id)
+        const wasExpanded = expandOverrides.get(id) ?? item?.isExpanded ?? false
+        const nextExpanded = !wasExpanded
+        setExpandOverrides(prev => {
+          const next = new Map(prev)
+          next.set(id, nextExpanded)
+          return next
+        })
+        if (
+          item?.type === 'directory' &&
+          nextExpanded &&
+          (!item.children || item.children.length === 0)
+        ) {
+          onDirectoryExpand?.(item)
+        }
+        return
+      }
       setFiles(prev => {
         const item = findFileItemById(prev, id)
         if (
-          remoteMode &&
           item?.type === 'directory' &&
           !item.isExpanded &&
           (!item.children || item.children.length === 0)
@@ -672,15 +747,35 @@ export function FileTree({
         return toggleDirectoryExpanded(prev, id)
       })
     },
-    [remoteMode, onDirectoryExpand]
+    [remoteMode, onDirectoryExpand, displayFiles, expandOverrides]
   )
 
   const handleRefresh = useCallback(() => {
     setPendingFolder(null)
     setPendingRename(null)
-    setFiles(cloneFileTree(externalFiles ?? EMPTY_FILE_TREE))
+    setSearchResults(null)
+    setSearchQuery('')
+    if (!remoteMode) {
+      setFiles(cloneFileTree(externalFiles ?? EMPTY_FILE_TREE))
+    }
     onRefresh?.()
-  }, [externalFiles, onRefresh])
+  }, [externalFiles, onRefresh, remoteMode])
+
+  const runSearch = useCallback(() => {
+    const q = searchQuery.trim()
+    if (!q || !onSearchRemote) return
+    setSearchBusy(true)
+    void onSearchRemote(q)
+      .then(results => setSearchResults(results))
+      .catch(() => setSearchResults([]))
+      .finally(() => setSearchBusy(false))
+  }, [searchQuery, onSearchRemote])
+
+  const clearSearch = useCallback(() => {
+    setSearchResults(null)
+    setSearchQuery('')
+    setSearchOpen(false)
+  }, [])
 
   const startRename = useCallback((item: FileItem) => {
     renameTargetRef.current = item
@@ -727,8 +822,11 @@ export function FileTree({
   }, [currentPath])
 
   const handleCollapseAll = useCallback(() => {
-    setFiles(prev => setAllExpanded(prev, false))
-  }, [])
+    setExpandOverrides(new Map())
+    if (!remoteMode) {
+      setFiles(prev => setAllExpanded(prev, false))
+    }
+  }, [remoteMode])
 
   const startNewFolder = useCallback((parent: FileItem) => {
     setFiles(prev => setDirectoryExpanded(prev, parent.id, true))
@@ -740,18 +838,32 @@ export function FileTree({
   }, [])
 
   const handleNewFolderClick = useCallback(() => {
-    const parent = resolveParentDirectory(files, selectedPath)
+    if (remoteMode && onCreateRemoteFolder) {
+      const dir = currentPath || '/'
+      setPendingFolder({
+        parentId: REMOTE_CURRENT_FOLDER_ID,
+        parentPath: dir,
+        name: '新建文件夹',
+      })
+      return
+    }
+    const parent = resolveParentDirectory(displayFiles, selectedPath)
     if (parent) startNewFolder(parent)
-  }, [files, selectedPath, startNewFolder])
+  }, [remoteMode, onCreateRemoteFolder, currentPath, displayFiles, selectedPath, startNewFolder])
 
   const confirmNewFolder = useCallback(() => {
     if (!pendingFolder) return
     const name = pendingFolder.name.trim()
-    if (name) {
-      setFiles(prev => createDirectory(prev, pendingFolder.parentPath, name))
+    if (!name) return
+    if (remoteMode && onCreateRemoteFolder) {
+      void Promise.resolve(onCreateRemoteFolder(pendingFolder.parentPath, name)).finally(() => {
+        setPendingFolder(null)
+      })
+      return
     }
+    setFiles(prev => createDirectory(prev, pendingFolder.parentPath, name))
     setPendingFolder(null)
-  }, [pendingFolder])
+  }, [pendingFolder, remoteMode, onCreateRemoteFolder])
 
   const cancelNewFolder = useCallback(() => {
     setPendingFolder(null)
@@ -855,6 +967,80 @@ export function FileTree({
     [remoteMode, resetDropMode]
   )
 
+  const remoteNewFolderInput =
+    pendingFolder?.parentId === REMOTE_CURRENT_FOLDER_ID ? (
+      <NewFolderInput
+        depth={0}
+        name={pendingFolder.name}
+        onChange={name => setPendingFolder(prev => (prev ? { ...prev, name } : null))}
+        onConfirm={confirmNewFolder}
+        onCancel={cancelNewFolder}
+      />
+    ) : null
+
+  const renderFileTreeItem = (item: FileItem, depth: number, hideChildren = false) => (
+    <FileTreeItem
+      key={item.id}
+      item={item}
+      depth={depth}
+      hideChildren={hideChildren}
+      selectedPath={selectedPath}
+      pendingFolder={pendingFolder}
+      pendingRename={pendingRename}
+      remoteMode={remoteMode}
+      onFileOpen={onFileOpen}
+      onFileSelect={onFileSelect}
+      onToggle={handleToggle}
+      onNavigate={onNavigate}
+      onStartNewFolder={startNewFolder}
+      onStartNewFile={startNewFile}
+      onCopyPath={copyPath}
+      onPendingFolderChange={name =>
+        setPendingFolder(prev => (prev ? { ...prev, name } : null))
+      }
+      onConfirmNewFolder={confirmNewFolder}
+      onCancelNewFolder={cancelNewFolder}
+      onDownload={onDownload}
+      onDelete={onDelete}
+      onMove={onMove}
+      onRename={onRename}
+      onOpenInTerminal={onOpenInTerminal}
+      onStartRename={startRename}
+      onRenameChange={name => setPendingRename(prev => (prev ? { ...prev, name } : null))}
+      onConfirmRename={confirmRename}
+      onCancelRename={cancelRename}
+      transferBusy={transferBusy}
+      onRemoteDragEnd={resetDropMode}
+      onCreateRemoteFolder={onCreateRemoteFolder}
+      onChmod={onChmod}
+    />
+  )
+
+  const listBody =
+    displayFiles.length === 0 ? (
+      <div className="px-4 py-8 text-center text-xs text-muted-foreground space-y-1.5">
+        <p>暂无远程文件</p>
+        <p className="text-muted-foreground/70">
+          {remoteMode && onUpload
+            ? '连接 SSH 后显示目录；拖入本地文件上传，拖入远程项可移动'
+            : '连接 SSH 后显示远程目录'}
+        </p>
+        {remoteNewFolderInput}
+      </div>
+    ) : useVirtualList ? (
+      <VirtualFileTreeBody
+        rows={flatRows}
+        className="h-full overflow-auto terminal-scrollbar py-1"
+        footer={remoteNewFolderInput}
+        renderRow={(row: FlatFileRow) => renderFileTreeItem(row.item, row.depth, true)}
+      />
+    ) : (
+      <>
+        {displayFiles.map(item => renderFileTreeItem(item, 0, false))}
+        {remoteNewFolderInput}
+      </>
+    )
+
   return (
     <div
       className="h-full flex flex-col bg-card min-w-0 w-full select-none"
@@ -864,20 +1050,63 @@ export function FileTree({
       onDrop={handleDrop}
       onDropCapture={handleDropCapture}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          文件
-        </span>
-        <div className="flex items-center gap-0.5">
+      <div className="px-2 py-1.5 border-b border-border shrink-0 space-y-1.5">
+        {/* 第 1 行：标题 + 折叠 */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            文件
+          </span>
+          {onCollapse && (
+            <button
+              type="button"
+              onClick={onCollapse}
+              className="p-1.5 icon-btn shrink-0"
+              title="折叠文件树 (Ctrl+Shift+E)"
+            >
+              <PanelLeftClose className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          )}
+        </div>
+
+        {/* 第 2 行：路径栏 + 刷新 */}
+        <div className="flex items-center min-w-0">
+          {remoteMode && currentPath && onNavigate ? (
+            <RemotePathBar
+              currentPath={currentPath}
+              remoteUser={remoteUser}
+              onNavigate={onNavigate}
+              trailingAction={
+                <button
+                  onClick={handleRefresh}
+                  className="p-1.5 icon-btn shrink-0"
+                  title="刷新"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+                </button>
+              }
+            />
+          ) : (
+            <button
+              onClick={handleRefresh}
+              className="p-1.5 icon-btn shrink-0"
+              title="刷新"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          )}
+        </div>
+
+        {/* 第 3 行：其他操作 */}
+        <div className="flex flex-wrap items-center gap-1">
           {remoteMode && onFileRootModeChange && (
             <button
               type="button"
               onClick={() => onFileRootModeChange(!fileRootMode)}
               className={cn(
-                'p-1 rounded transition-colors',
+                'p-1.5 rounded transition-colors',
                 fileRootMode
-                  ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
-                  : 'hover:bg-muted text-muted-foreground'
+                  ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30'
+                  : 'icon-btn text-muted-foreground'
               )}
               title={
                 fileRootMode
@@ -893,10 +1122,10 @@ export function FileTree({
               type="button"
               onClick={() => onFollowTerminalCwdChange(!followTerminalCwd)}
               className={cn(
-                'p-1 rounded transition-colors',
+                'p-1.5 rounded transition-colors',
                 followTerminalCwd
-                  ? 'bg-primary/15 text-primary'
-                  : 'hover:bg-muted text-muted-foreground'
+                  ? 'bg-primary/15 text-primary hover:bg-primary/25'
+                  : 'icon-btn text-muted-foreground'
               )}
               title={
                 followTerminalCwd
@@ -907,37 +1136,51 @@ export function FileTree({
               <Link2 className="w-3.5 h-3.5" />
             </button>
           )}
+          {remoteMode && onSearchRemote && (
+            <button
+              type="button"
+              onClick={() => setSearchOpen(v => !v)}
+              className={cn(
+                'p-1.5 rounded transition-colors',
+                searchOpen || searchResults
+                  ? 'bg-primary/15 text-primary hover:bg-primary/25'
+                  : 'icon-btn text-muted-foreground'
+              )}
+              title="搜索文件"
+            >
+              <Search className="w-3.5 h-3.5" />
+            </button>
+          )}
           {remoteMode && onUpload && (
-            <>
-              <input
-                ref={uploadInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={e => {
-                  if (e.target.files?.length) uploadFiles(e.target.files)
-                  e.target.value = ''
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => uploadInputRef.current?.click()}
-                disabled={transferBusy}
-                className="p-1 hover:bg-muted rounded transition-colors disabled:opacity-40"
-                title="上传 / 拖拽文件到列表"
-              >
-                {transferBusy ? (
-                  <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
-                ) : (
-                  <Upload className="w-3.5 h-3.5 text-muted-foreground" />
-                )}
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={transferBusy}
+              className="p-1.5 icon-btn disabled:opacity-40"
+              title="上传 / 拖拽文件到列表"
+            >
+              {transferBusy ? (
+                <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
+              ) : (
+                <Upload className="w-3.5 h-3.5 text-muted-foreground" />
+              )}
+            </button>
+          )}
+          {remoteMode && onCreateRemoteFolder && (
+            <button
+              type="button"
+              onClick={handleNewFolderClick}
+              disabled={transferBusy}
+              className="p-1.5 icon-btn disabled:opacity-40"
+              title="新建文件夹"
+            >
+              <FolderPlus className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
           )}
           {!remoteMode && (
             <button
               onClick={handleNewFolderClick}
-              className="p-1 hover:bg-muted rounded transition-colors"
+              className="p-1.5 icon-btn"
               title="新建文件夹"
             >
               <FolderPlus className="w-3.5 h-3.5 text-muted-foreground" />
@@ -945,38 +1188,87 @@ export function FileTree({
           )}
           <button
             onClick={handleCollapseAll}
-            className="p-1 hover:bg-muted rounded transition-colors"
+            className="p-1.5 icon-btn"
             title="全部折叠"
           >
             <ChevronsUpDown className="w-3.5 h-3.5 text-muted-foreground" />
           </button>
-          <button
-            onClick={handleRefresh}
-            className="p-1 hover:bg-muted rounded transition-colors"
-            title="刷新"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
-          </button>
         </div>
       </div>
 
-      {remoteMode && currentPath && onNavigate && (
-        <>
-          <RemotePathBar
-            currentPath={currentPath}
-            remoteUser={remoteUser}
-            onNavigate={onNavigate}
-          />
-          {(followTerminalCwd && terminalCwd) || fileRootMode ? (
-            <div className="px-3 py-1 text-[10px] text-muted-foreground border-b border-border space-y-0.5 font-mono truncate">
-              {fileRootMode && (
-                <p className="text-amber-600 dark:text-amber-400">root 模式 (sudo)</p>
-              )}
-              {followTerminalCwd && terminalCwd && <p>Shell: {terminalCwd}</p>}
-            </div>
-          ) : null}
-        </>
+      {remoteLoadError && (
+        <div className="px-2 py-1.5 text-xs text-destructive bg-destructive/5 border-b border-destructive/20 shrink-0">
+          {remoteLoadError}
+        </div>
       )}
+
+      {remoteMode && onUpload && (
+        <input
+          ref={uploadInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={e => {
+            if (e.target.files?.length) uploadFiles(e.target.files)
+            e.target.value = ''
+          }}
+        />
+      )}
+
+      {(searchOpen || searchResults) && remoteMode && onSearchRemote && (
+        <div className="px-2 py-1.5 border-b border-border flex items-center gap-1 shrink-0">
+          <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                runSearch()
+              }
+              if (e.key === 'Escape') clearSearch()
+            }}
+            placeholder="文件名关键词…"
+            className="flex-1 min-w-0 h-7 px-2 text-xs font-mono rounded border border-border bg-background outline-none focus:ring-1 focus:ring-primary"
+            spellCheck={false}
+          />
+          <button
+            type="button"
+            onClick={runSearch}
+            disabled={searchBusy || !searchQuery.trim()}
+            className="p-1 rounded icon-btn disabled:opacity-40"
+            title="搜索"
+          >
+            {searchBusy ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+            ) : (
+              <Search className="w-3.5 h-3.5 text-muted-foreground" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={clearSearch}
+            className="p-1 rounded icon-btn"
+            title="清除搜索"
+          >
+            <X className="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
+        </div>
+      )}
+
+      {searchResults && (
+        <div className="px-3 py-1 text-[10px] text-muted-foreground border-b border-border shrink-0">
+          搜索结果 {searchResults.length} 项（最多 200）
+        </div>
+      )}
+
+      {(followTerminalCwd && terminalCwd) || fileRootMode ? (
+        <div className="px-3 py-1 text-[10px] text-muted-foreground border-b border-border space-y-0.5 font-mono truncate">
+          {fileRootMode && (
+            <p className="text-amber-600 dark:text-amber-400">root 模式 (sudo)</p>
+          )}
+          {followTerminalCwd && terminalCwd && <p>Shell: {terminalCwd}</p>}
+        </div>
+      ) : null}
 
       {uploadProgress && (
         <div className="px-3 py-2 border-b border-border space-y-1.5 shrink-0">
@@ -997,7 +1289,8 @@ export function FileTree({
         <ContextMenuTrigger asChild>
           <div
             className={cn(
-              'flex-1 overflow-auto terminal-scrollbar py-1 min-h-0 relative',
+              'flex-1 min-h-0 relative',
+              !useVirtualList && 'overflow-auto terminal-scrollbar py-1',
               dropMode === 'upload' &&
                 'outline outline-2 outline-dashed outline-primary/60 outline-offset-[-2px] bg-primary/5',
               dropMode === 'move' &&
@@ -1018,53 +1311,7 @@ export function FileTree({
                 </p>
               </div>
             )}
-            {files.length === 0 ? (
-              <div className="px-4 py-8 text-center text-xs text-muted-foreground space-y-1.5">
-                <p>暂无远程文件</p>
-                <p className="text-muted-foreground/70">
-                  {remoteMode && onUpload
-                    ? '连接 SSH 后显示目录；拖入本地文件上传，拖入远程项可移动'
-                    : '连接 SSH 后显示远程目录'}
-                </p>
-              </div>
-            ) : (
-              files.map(item => (
-                <FileTreeItem
-                  key={item.id}
-                  item={item}
-                  depth={0}
-                  selectedPath={selectedPath}
-                  pendingFolder={pendingFolder}
-                  pendingRename={pendingRename}
-                  remoteMode={remoteMode}
-                  onFileOpen={onFileOpen}
-                  onFileSelect={onFileSelect}
-                  onToggle={handleToggle}
-                  onNavigate={onNavigate}
-                  onStartNewFolder={startNewFolder}
-                  onStartNewFile={startNewFile}
-                  onCopyPath={copyPath}
-                  onPendingFolderChange={name =>
-                    setPendingFolder(prev => (prev ? { ...prev, name } : null))
-                  }
-                  onConfirmNewFolder={confirmNewFolder}
-                  onCancelNewFolder={cancelNewFolder}
-                  onDownload={onDownload}
-                  onDelete={onDelete}
-                  onMove={onMove}
-                  onRename={onRename}
-                  onOpenInTerminal={onOpenInTerminal}
-                  onStartRename={startRename}
-                  onRenameChange={name =>
-                    setPendingRename(prev => (prev ? { ...prev, name } : null))
-                  }
-                  onConfirmRename={confirmRename}
-                  onCancelRename={cancelRename}
-                  transferBusy={transferBusy}
-                  onRemoteDragEnd={resetDropMode}
-                />
-              ))
-            )}
+            {listBody}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
@@ -1079,6 +1326,11 @@ export function FileTree({
           {remoteMode && onCreateRemoteFile && (
             <ContextMenuItem disabled={transferBusy} onClick={handleCreateRemoteFile}>
               新建文件
+            </ContextMenuItem>
+          )}
+          {remoteMode && onCreateRemoteFolder && (
+            <ContextMenuItem disabled={transferBusy} onClick={handleNewFolderClick}>
+              新建文件夹
             </ContextMenuItem>
           )}
           {!remoteMode && (

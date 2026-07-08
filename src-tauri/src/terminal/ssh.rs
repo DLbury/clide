@@ -67,7 +67,7 @@ async fn run_ssh_session(
         );
     };
 
-    let session = super::ssh_auth::connect_and_auth(&request).await?;
+    let session = super::ssh_auth::connect_and_auth(&request, &session_id).await?;
 
     let mut channel = session
         .channel_open_session()
@@ -89,6 +89,7 @@ async fn run_ssh_session(
         if abort.load(Ordering::Relaxed) {
             let _ = channel.close().await;
             output_emit::flush_session(&app, &session_id);
+            super::ssh_jump::release_jump_for_owner(&request, &session_id);
             emit_status("disconnected", None);
             break;
         }
@@ -111,6 +112,7 @@ async fn run_ssh_session(
             }
             Ok(Some(ChannelMsg::ExitStatus { .. })) | Ok(None) => {
                 output_emit::flush_session(&app, &session_id);
+                super::ssh_jump::release_jump_for_owner(&request, &session_id);
                 emit_status("disconnected", None);
                 break;
             }

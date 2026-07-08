@@ -11,6 +11,8 @@ import {
   Radio,
   ScreenShare,
   MonitorSmartphone,
+  Plus,
+  Trash2,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -23,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { Session, SessionFolder, SessionFormPayload } from '@/lib/types'
+import type { Session, SessionFolder, SessionFormPayload, JumpHostConfig } from '@/lib/types'
 
 /** 尚无分组时，提交后由父组件自动创建默认分组 */
 export const DEFAULT_FOLDER_PLACEHOLDER = '__default_folder__'
@@ -56,13 +58,70 @@ const protocolOptions: {
   { type: 'rdp', label: 'RDP', icon: MonitorSmartphone, description: 'Windows 远程桌面', defaultPort: 3389 },
 ]
 
-const sshAuthMethods: { value: NonNullable<Session['authMethod']>; label: string }[] = [
+const sshAuthMethods: { value: NonNullable<JumpHostConfig['authMethod']>; label: string }[] = [
   { value: 'password', label: '密码' },
   { value: 'key', label: '密钥' },
   { value: 'none', label: '默认密钥' },
 ]
 
 const baudRates = [9600, 19200, 38400, 57600, 115200]
+
+interface JumpHopForm {
+  host: string
+  port: string
+  user: string
+  useOwnAuth: boolean
+  authMethod: NonNullable<JumpHostConfig['authMethod']>
+  password: string
+  privateKeyPath: string
+}
+
+const emptyJumpHop = (): JumpHopForm => ({
+  host: '',
+  port: '22',
+  user: '',
+  useOwnAuth: false,
+  authMethod: 'password',
+  password: '',
+  privateKeyPath: '',
+})
+
+function jumpConfigToForm(h: JumpHostConfig): JumpHopForm {
+  return {
+    host: h.host,
+    port: String(h.port ?? 22),
+    user: h.user ?? '',
+    useOwnAuth: Boolean(h.authMethod),
+    authMethod: h.authMethod ?? 'password',
+    password: h.password ?? '',
+    privateKeyPath: h.privateKeyPath ?? '',
+  }
+}
+
+function resolveSessionJumpHosts(session: Session): JumpHostConfig[] {
+  if (session.jumpHosts?.length) return session.jumpHosts
+  if (session.jumpHost?.host) return [session.jumpHost]
+  return []
+}
+
+function formToJumpConfig(form: JumpHopForm): JumpHostConfig | null {
+  const host = form.host.trim()
+  if (!host) return null
+  const cfg: JumpHostConfig = {
+    host,
+    port: parseInt(form.port, 10) || 22,
+    ...(form.user.trim() ? { user: form.user.trim() } : {}),
+  }
+  if (form.useOwnAuth) {
+    cfg.authMethod = form.authMethod
+    if (form.authMethod === 'password' && form.password.trim()) {
+      cfg.password = form.password.trim()
+    } else if (form.authMethod === 'key') {
+      cfg.privateKeyPath = form.privateKeyPath.trim()
+    }
+  }
+  return cfg
+}
 
 function resolveInitialFolderId(
   folders: SessionFolder[],
@@ -98,6 +157,8 @@ export function NewSessionModal({
   const [authMethod, setAuthMethod] = useState<Session['authMethod']>('password')
   const [password, setPassword] = useState('')
   const [privateKeyPath, setPrivateKeyPath] = useState('')
+  const [jumpEnabled, setJumpEnabled] = useState(false)
+  const [jumpHops, setJumpHops] = useState<JumpHopForm[]>([emptyJumpHop()])
   const [serialPort, setSerialPort] = useState('/dev/ttyUSB0')
   const [baudRate, setBaudRate] = useState('115200')
   const [formError, setFormError] = useState('')
@@ -131,6 +192,14 @@ export function NewSessionModal({
       setPrivateKeyPath(
         editSession.privateKeyPath ?? editSession.authConfig?.keyPath ?? ''
       )
+      const savedHops = resolveSessionJumpHosts(editSession)
+      if (savedHops.length > 0) {
+        setJumpEnabled(true)
+        setJumpHops(savedHops.map(jumpConfigToForm))
+      } else {
+        setJumpEnabled(false)
+        setJumpHops([emptyJumpHop()])
+      }
       setSerialPort(editSession.serialPort ?? editSession.host ?? '/dev/ttyUSB0')
       setBaudRate(String(editSession.baudRate ?? 115200))
       setFolderId(resolveInitialFolderId(folders, defaultFolderId, editSessionFolderId))
@@ -217,6 +286,25 @@ export function NewSessionModal({
           sshSession.authConfig = { type: 'default-keys' }
         }
 
+        if (jumpEnabled) {
+          const configs: JumpHostConfig[] = []
+          for (let i = 0; i < jumpHops.length; i++) {
+            const form = jumpHops[i]
+            if (form.useOwnAuth && form.authMethod === 'key' && !form.privateKeyPath.trim()) {
+              setFormError(`第 ${i + 1} 跳跳板密钥认证需要填写私钥路径`)
+              return null
+            }
+            const cfg = formToJumpConfig(form)
+            if (!cfg) {
+              setFormError(`第 ${i + 1} 跳跳板地址不能为空`)
+              return null
+            }
+            configs.push(cfg)
+          }
+          sshSession.jumpHosts = configs
+          sshSession.jumpHost = configs[0]
+        }
+
         return sshSession
       }
       case 'telnet':
@@ -275,6 +363,8 @@ export function NewSessionModal({
     setAuthMethod('password')
     setPassword('')
     setPrivateKeyPath('')
+    setJumpEnabled(false)
+    setJumpHops([emptyJumpHop()])
     setSerialPort('/dev/ttyUSB0')
     setBaudRate('115200')
     setFormError('')
@@ -485,6 +575,173 @@ export function NewSessionModal({
                       </div>
                     )}
                   </>
+                )}
+              </div>
+
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={jumpEnabled}
+                    onChange={e => setJumpEnabled(e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  <span>经跳板机连接（ProxyJump）</span>
+                </label>
+                {jumpEnabled && (
+                  <div className="space-y-3 pl-1">
+                    {jumpHops.map((hop, index) => (
+                      <div
+                        key={index}
+                        className="space-y-3 rounded-md border border-border/60 bg-muted/10 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-muted-foreground">
+                            跳板 {index + 1}
+                            {index < jumpHops.length - 1 ? ' →' : ' → 目标'}
+                          </span>
+                          {jumpHops.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setJumpHops(prev => prev.filter((_, i) => i !== index))
+                              }
+                              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-destructive"
+                              title="移除此跳"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <Input
+                          value={hop.host}
+                          onChange={e =>
+                            setJumpHops(prev =>
+                              prev.map((h, i) =>
+                                i === index ? { ...h, host: e.target.value } : h
+                              )
+                            )
+                          }
+                          placeholder="bastion.example.com"
+                          className="bg-input border-border"
+                        />
+                        <div className="grid grid-cols-2 gap-3">
+                          <Input
+                            value={hop.port}
+                            onChange={e =>
+                              setJumpHops(prev =>
+                                prev.map((h, i) =>
+                                  i === index ? { ...h, port: e.target.value } : h
+                                )
+                              )
+                            }
+                            placeholder="22"
+                            inputMode="numeric"
+                            className="bg-input border-border"
+                          />
+                          <Input
+                            value={hop.user}
+                            onChange={e =>
+                              setJumpHops(prev =>
+                                prev.map((h, i) =>
+                                  i === index ? { ...h, user: e.target.value } : h
+                                )
+                              )
+                            }
+                            placeholder="用户名（可选）"
+                            className="bg-input border-border"
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={hop.useOwnAuth}
+                            onChange={e =>
+                              setJumpHops(prev =>
+                                prev.map((h, i) =>
+                                  i === index ? { ...h, useOwnAuth: e.target.checked } : h
+                                )
+                              )
+                            }
+                            className="rounded border-border"
+                          />
+                          <span>此跳使用独立凭据</span>
+                        </label>
+                        {hop.useOwnAuth && (
+                          <div className="space-y-2 rounded border border-border/40 bg-muted/20 p-2">
+                            <div className="flex gap-1">
+                              {sshAuthMethods.map(({ value, label }) => (
+                                <button
+                                  key={`hop-${index}-${value}`}
+                                  type="button"
+                                  onClick={() =>
+                                    setJumpHops(prev =>
+                                      prev.map((h, i) =>
+                                        i === index ? { ...h, authMethod: value } : h
+                                      )
+                                    )
+                                  }
+                                  className={cn(
+                                    'flex-1 px-2 py-1 rounded border text-[11px] transition-all',
+                                    hop.authMethod === value
+                                      ? 'border-primary bg-primary/5 text-primary'
+                                      : 'border-border'
+                                  )}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                            {hop.authMethod === 'password' && (
+                              <Input
+                                type="password"
+                                value={hop.password}
+                                onChange={e =>
+                                  setJumpHops(prev =>
+                                    prev.map((h, i) =>
+                                      i === index ? { ...h, password: e.target.value } : h
+                                    )
+                                  )
+                                }
+                                placeholder="SSH 密码"
+                                className="bg-input border-border h-8 text-sm"
+                                autoComplete="off"
+                              />
+                            )}
+                            {hop.authMethod === 'key' && (
+                              <Input
+                                value={hop.privateKeyPath}
+                                onChange={e =>
+                                  setJumpHops(prev =>
+                                    prev.map((h, i) =>
+                                      i === index
+                                        ? { ...h, privateKeyPath: e.target.value }
+                                        : h
+                                    )
+                                  )
+                                }
+                                placeholder="私钥路径"
+                                className="bg-input border-border h-8 text-sm"
+                              />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setJumpHops(prev => [...prev, emptyJumpHop()])}
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1.5" />
+                      添加跳板（多跳链）
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      按顺序经各跳板 forward 至目标；每跳可配置独立凭据，否则与目标共用。
+                    </p>
+                  </div>
                 )}
               </div>
             </>

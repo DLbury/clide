@@ -6,11 +6,12 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import type { AiSettings } from '@/lib/ai-settings'
+import { getActiveCliPath, withActiveCliPath } from '@/lib/ai-settings'
+import { AI_BACKENDS, getBackendMeta } from '@/lib/ai-backends'
+import { detectAiBackend, uniqueAiCandidates } from '@/lib/ai-client'
 import {
-  detectClaude,
   getClaudeMcpStatus,
   registerClaudeMcp,
-  uniqueClaudeCandidates,
   claudePathLabel,
   type McpRegisterStatus,
 } from '@/lib/claude-client'
@@ -24,48 +25,52 @@ interface AiSettingsPanelProps {
 
 export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
   const isDesktop = isTauriRuntime()
-  const [claudeDetect, setClaudeDetect] = useState<string>('')
+  const backendMeta = getBackendMeta(draft.backend)
+  const activeCliPath = getActiveCliPath(draft)
+  const [detectLabel, setDetectLabel] = useState<string>('')
   const [candidates, setCandidates] = useState<string[]>([])
   const [mcpStatus, setMcpStatus] = useState<McpRegisterStatus | null>(null)
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpError, setMcpError] = useState<string | null>(null)
 
   const refreshMcpStatus = () => {
-    if (!isDesktop) {
+    if (!isDesktop || draft.backend !== 'claude-code') {
       setMcpStatus(null)
       return
     }
-    void getClaudeMcpStatus(draft.claudePath || undefined)
+    void getClaudeMcpStatus(activeCliPath || undefined)
       .then(setMcpStatus)
       .catch(() => setMcpStatus(null))
   }
 
   useEffect(() => {
     if (!isDesktop) return
-    detectClaude(draft.claudePath || undefined)
+    detectAiBackend(draft.backend, activeCliPath || undefined)
       .then(result => {
-        setCandidates(uniqueClaudeCandidates(result.candidates ?? []))
+        setCandidates(uniqueAiCandidates(result.candidates ?? []))
         if (result.found) {
-          setClaudeDetect(
+          setDetectLabel(
             [result.path, result.version].filter(Boolean).join(' · ') || '已检测到'
           )
         } else {
-          setClaudeDetect('未检测到 Claude Code CLI')
+          setDetectLabel(`未检测到 ${backendMeta.label} CLI`)
         }
       })
-      .catch(() => setClaudeDetect('检测失败'))
+      .catch(() => setDetectLabel('检测失败'))
     refreshMcpStatus()
-  }, [isDesktop, draft.claudePath])
+  }, [isDesktop, draft.backend, activeCliPath, backendMeta.label])
 
-  const activePath = draft.claudePath.trim()
+  const setCliPath = (path: string) => {
+    onChange(withActiveCliPath(draft, path))
+  }
 
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
-        <p className="font-medium text-foreground">Claude Code 集成</p>
+        <p className="font-medium text-foreground">AI 后端</p>
         <p>
-          通过本机已安装的 Claude Code CLI 工作，不写入全局 shell 配置、不注入环境变量到宿主机。
-          IDE 桥接仅监听 127.0.0.1，向 Claude 提供终端/文件上下文。
+          选择本机已安装的 AI Coding CLI。Claude Code 支持完整 IDE 桥接与 aiterm MCP；
+          Codex / OpenCode / Cursor 通过各自 CLI 非交互模式接入（远程 Shell MCP 需在后端配置 MCP）。
         </p>
       </div>
 
@@ -76,36 +81,56 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
         </div>
         <Switch
           checked={draft.enabled}
-          onCheckedChange={enabled => onChange({ ...draft, enabled, backend: 'claude-code' })}
+          onCheckedChange={enabled => onChange({ ...draft, enabled })}
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="settings-claude-path">Claude Code 路径</Label>
+        <Label>AI 后端</Label>
+        <div className="grid grid-cols-2 gap-2">
+          {AI_BACKENDS.map(meta => (
+            <button
+              key={meta.id}
+              type="button"
+              onClick={() => onChange({ ...draft, backend: meta.id })}
+              className={cn(
+                'rounded-md border px-3 py-2 text-left text-xs transition-colors hover:bg-accent hover:text-accent-foreground',
+                draft.backend === meta.id
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border'
+              )}
+            >
+              <span className="font-medium block">{meta.label}</span>
+              <span className="text-muted-foreground line-clamp-2 mt-0.5">{meta.description}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="settings-cli-path">{backendMeta.label} 路径</Label>
         <Input
-          id="settings-claude-path"
-          placeholder="留空自动检测（PATH 或 ~/.claude/local/claude）"
-          value={draft.claudePath}
-          onChange={e => onChange({ ...draft, claudePath: e.target.value, backend: 'claude-code' })}
+          id="settings-cli-path"
+          placeholder={backendMeta.pathPlaceholder}
+          value={activeCliPath}
+          onChange={e => setCliPath(e.target.value)}
         />
-        {claudeDetect && (
-          <p className="text-xs text-muted-foreground">检测结果：{claudeDetect}</p>
+        {detectLabel && (
+          <p className="text-xs text-muted-foreground">检测结果：{detectLabel}</p>
         )}
+        <p className="text-xs text-muted-foreground">环境变量：{backendMeta.envHint}</p>
       </div>
 
       {candidates.length > 0 && (
         <div className="space-y-2">
-          <Label>已检测到的 Claude Code 安装</Label>
-          <p className="text-xs text-muted-foreground">
-            本机存在多个安装时，可点击下方条目快速切换。
-          </p>
+          <Label>已检测到的 {backendMeta.label} 安装</Label>
           <div className="max-h-40 overflow-y-auto rounded-md border border-border divide-y divide-border">
             <button
               type="button"
-              onClick={() => onChange({ ...draft, claudePath: '', backend: 'claude-code' })}
+              onClick={() => setCliPath('')}
               className={cn(
-                'w-full text-left px-3 py-2 text-xs hover:bg-muted/60 transition-colors',
-                !activePath && 'bg-primary/10 text-primary'
+                'w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground transition-colors',
+                !activeCliPath && 'bg-primary/10 text-primary'
               )}
             >
               自动选择（PATH / 默认路径）
@@ -114,10 +139,10 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
               <button
                 key={path}
                 type="button"
-                onClick={() => onChange({ ...draft, claudePath: path, backend: 'claude-code' })}
+                onClick={() => setCliPath(path)}
                 className={cn(
-                  'w-full text-left px-3 py-2 text-xs hover:bg-muted/60 transition-colors break-all',
-                  activePath.replace(/\\/g, '/').toLowerCase() ===
+                  'w-full text-left px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground transition-colors break-all',
+                  activeCliPath.replace(/\\/g, '/').toLowerCase() ===
                     path.replace(/\\/g, '/').toLowerCase() && 'bg-primary/10 text-primary'
                 )}
               >
@@ -135,13 +160,13 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
                 const currentIdx = candidates.findIndex(
                   p =>
                     p.replace(/\\/g, '/').toLowerCase() ===
-                    activePath.replace(/\\/g, '/').toLowerCase()
+                    activeCliPath.replace(/\\/g, '/').toLowerCase()
                 )
                 const next =
                   currentIdx >= 0
                     ? candidates[(currentIdx + 1) % candidates.length]
                     : candidates[0]
-                onChange({ ...draft, claudePath: next, backend: 'claude-code' })
+                setCliPath(next)
               }}
             >
               切换到下一个安装
@@ -150,7 +175,7 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
         </div>
       )}
 
-      {mcpStatus && (
+      {draft.backend === 'claude-code' && mcpStatus && (
         <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2 text-xs">
           <p className="font-medium text-foreground">MCP 集成（aiterm）</p>
           <p className="text-muted-foreground break-all">项目根：{mcpStatus.projectRoot}</p>
@@ -169,7 +194,7 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
               onClick={() => {
                 setMcpBusy(true)
                 setMcpError(null)
-                void registerClaudeMcp(draft.claudePath || undefined)
+                void registerClaudeMcp(activeCliPath || undefined)
                   .then(status => {
                     setMcpStatus(status)
                   })
@@ -178,7 +203,7 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
                   })
                   .finally(() => setMcpBusy(false))
               }}
-              className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-muted/60 disabled:opacity-50"
+              className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
             >
               {mcpBusy ? '注册中…' : '手动注册 MCP'}
             </button>
@@ -189,13 +214,27 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
         </div>
       )}
 
+      {draft.backend !== 'claude-code' && (
+        <div className="rounded-lg border border-dashed border-border bg-muted/10 p-3 text-xs text-muted-foreground space-y-1">
+          <p className="font-medium text-foreground">MCP / 远程 Shell</p>
+          <p>
+            {draft.backend === 'codex' &&
+              '在 ~/.codex/config.toml 或 `codex mcp add` 注册 aiterm（clide --aiterm-mcp-stdio）。'}
+            {draft.backend === 'opencode' &&
+              '在项目 opencode.json 的 mcp 段添加 aiterm stdio 服务。'}
+            {draft.backend === 'cursor' &&
+              '在 ~/.cursor/mcp.json 配置 aiterm；headless 模式需 `agent --approve-mcps`。'}
+          </p>
+        </div>
+      )}
+
       <div className="space-y-2">
         <Label htmlFor="settings-ai-system-prompt">System Prompt</Label>
         <textarea
           id="settings-ai-system-prompt"
           rows={3}
           value={draft.systemPrompt}
-          onChange={e => onChange({ ...draft, systemPrompt: e.target.value, backend: 'claude-code' })}
+          onChange={e => onChange({ ...draft, systemPrompt: e.target.value })}
           className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary resize-none"
         />
       </div>
@@ -203,12 +242,43 @@ export function AiSettingsPanel({ draft, onChange }: AiSettingsPanelProps) {
       <div className="flex items-center justify-between">
         <div>
           <Label>注入终端上下文</Label>
-          <p className="text-xs text-muted-foreground mt-0.5">将当前 Shell 输出作为 AI 参考（经 IDE 桥接传给 Claude）</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            将当前 Shell 输出附加到提示词
+            {draft.backend === 'claude-code' ? '（并经 IDE 桥接传给 Claude）' : ''}
+          </p>
         </div>
         <Switch
           checked={draft.injectTerminalContext}
-          onCheckedChange={injectTerminalContext =>
-            onChange({ ...draft, injectTerminalContext, backend: 'claude-code' })
+          onCheckedChange={injectTerminalContext => onChange({ ...draft, injectTerminalContext })}
+        />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <Label>敏感命令执行前确认</Label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            开启后，删除文件、强制终止进程等不可撤销操作会先展示命令与影响说明，由你决定是否执行
+          </p>
+        </div>
+        <Switch
+          checked={draft.requireCommandApproval}
+          onCheckedChange={requireCommandApproval =>
+            onChange({ ...draft, requireCommandApproval })
+          }
+        />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <Label>MCP 执行时切换终端</Label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            开启后 runShellCommand 会自动聚焦到目标 Shell；多服务器并行时建议关闭
+          </p>
+        </div>
+        <Switch
+          checked={draft.focusShellOnMcpExecute}
+          onCheckedChange={focusShellOnMcpExecute =>
+            onChange({ ...draft, focusShellOnMcpExecute })
           }
         />
       </div>

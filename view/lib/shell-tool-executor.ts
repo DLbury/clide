@@ -189,6 +189,23 @@ function detectInteractivePrompt(tail: string): string | null {
 }
 
 const shellSessionAbort = new Map<string, AbortController>()
+const runningShellBySession = new Map<string, string>()
+
+export type MonitorShellResolver = (
+  busySessionId: string,
+  command: string
+) => Promise<string | null>
+
+let monitorShellResolver: MonitorShellResolver | null = null
+
+export function registerMonitorShellResolver(resolver: MonitorShellResolver | null) {
+  monitorShellResolver = resolver
+}
+
+export function isShellSessionRunningCommand(sessionId: string): boolean {
+  const requestId = runningShellBySession.get(sessionId)
+  return !!requestId && activeShellToolRequests.has(requestId)
+}
 
 export interface ShellToolRequestPayload {
   requestId: string
@@ -197,6 +214,8 @@ export interface ShellToolRequestPayload {
   waitMs?: number
   sessionType?: string
   beforeExecute?: () => Promise<void>
+  /** 返回 false 时拒绝执行并通知 MCP */
+  requireApproval?: () => Promise<boolean>
 }
 
 export async function executeShellToolInTab(
@@ -222,13 +241,64 @@ export async function executeShellToolInTab(
   activeShellToolRequests.add(payload.requestId)
 
   const waitMs = payload.waitMs ?? 30_000
-  const sessionId = payload.terminalSessionId
+  let sessionId = payload.terminalSessionId
 
   const SAFETY_TIMEOUT_MS =
     waitMs > 0 ? Math.min(waitMs + 8_000, 300_000) : 300_000
   const useSafetyTimeout = waitMs === 0 || waitMs >= 35_000
 
   const line = normalizeShellCommandForPty(payload.command)
+
+  const sessionBusy = isShellSessionRunningCommand(sessionId)
+  if (sessionBusy) {
+    if (monitorShellResolver) {
+      try {
+        const altSessionId = await monitorShellResolver(sessionId, line.trim())
+        if (altSessionId && altSessionId !== sessionId) {
+          console.log(
+            `[ShellTool] Busy PTY ${sessionId} — redirected command to monitor shell ${altSessionId}`
+          )
+          sessionId = altSessionId
+        } else {
+          await completeShellTool(
+            payload.requestId,
+            null,
+            '该 Shell PTY 仍有前台命令在运行，且未能自动创建监控 Shell。getTerminalContext 可读原 Shell 输出；createNewShell 可新开 PTY。',
+            false
+          ).catch(() => {})
+          activeShellToolRequests.delete(payload.requestId)
+          return
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        await completeShellTool(
+          payload.requestId,
+          null,
+          `原 Shell 繁忙且创建监控 Shell 失败: ${message}`,
+          false
+        ).catch(() => {})
+        activeShellToolRequests.delete(payload.requestId)
+        return
+      }
+    } else {
+      await completeShellTool(
+        payload.requestId,
+        null,
+        '该 Shell PTY 仍有前台命令在运行，无法在同一 PTY 发送第二条命令。createNewShell 可新开 Shell；应用也会在可能时自动在下方拆分监控 Shell。',
+        false
+      ).catch(() => {})
+      activeShellToolRequests.delete(payload.requestId)
+      return
+    }
+  } else {
+    const prevAbort = shellSessionAbort.get(sessionId)
+    if (prevAbort) {
+      prevAbort.abort()
+      await submitTerminalInput(sessionId, '\x03').catch(() => {})
+      await new Promise<void>(resolve => setTimeout(resolve, 250))
+    }
+  }
+
   const cmdKey = shellCommandKey(sessionId, line)
   const recent = recentShellCommands.get(cmdKey)
   if (recent && Date.now() - recent.at < SHELL_COMMAND_DEDUP_MS) {
@@ -246,14 +316,23 @@ export async function executeShellToolInTab(
   ensureShellCmdCleanup()
   gcRecentShellCommands()
 
-  const abort = new AbortController()
-  const prevAbort = shellSessionAbort.get(sessionId)
-  if (prevAbort) {
-    prevAbort.abort()
-    await submitTerminalInput(sessionId, '\x03').catch(() => {})
-    await new Promise<void>(resolve => setTimeout(resolve, 250))
+  if (payload.requireApproval) {
+    const approved = await payload.requireApproval()
+    if (!approved) {
+      await completeShellTool(
+        payload.requestId,
+        null,
+        '用户拒绝执行此命令（敏感操作审核）',
+        false
+      ).catch(() => {})
+      activeShellToolRequests.delete(payload.requestId)
+      return
+    }
   }
+
+  const abort = new AbortController()
   shellSessionAbort.set(sessionId, abort)
+  runningShellBySession.set(sessionId, payload.requestId)
 
   try {
     await payload.beforeExecute?.()
@@ -387,6 +466,9 @@ export async function executeShellToolInTab(
     rememberCompletedShellTool(payload.requestId)
   } finally {
     activeShellToolRequests.delete(payload.requestId)
+    if (runningShellBySession.get(sessionId) === payload.requestId) {
+      runningShellBySession.delete(sessionId)
+    }
     if (shellSessionAbort.get(sessionId) === abort) {
       shellSessionAbort.delete(sessionId)
     }

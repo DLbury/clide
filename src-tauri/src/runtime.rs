@@ -24,6 +24,12 @@ pub struct ProfileSnapshot {
     pub session_type: String,
     pub status: String,
     pub port: Option<u16>,
+    /// 单跳跳板机（兼容旧数据），MCP 工具直连 SSH 时需要
+    #[serde(default)]
+    pub jump_host: Option<crate::terminal::JumpHostConfig>,
+    /// 多跳跳板链（优先于 jump_host）
+    #[serde(default)]
+    pub jump_hosts: Option<Vec<crate::terminal::JumpHostConfig>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

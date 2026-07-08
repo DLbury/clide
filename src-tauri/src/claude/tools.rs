@@ -23,48 +23,60 @@ pub fn get_available_tools() -> Vec<Value> {
     vec![
         tool_def(
             "listServerProfiles",
-            "列出侧边栏中已配置的所有服务器/会话（不含密码）",
+            "列出侧边栏已保存的服务器配置（profileId、名称、主机等，不含密码）。用于发现可用 profileId。",
             json!({}),
         ),
         tool_def(
             "listActiveConnections",
-            "列出当前已打开的连接标签、Shell 及终端连接状态",
+            "列出当前已打开的连接标签、各 Shell 的 shellId/连接状态。多服务器场景下查 profileId 与终端是否已连。",
             json!({}),
         ),
         tool_def(
             "getFocusedServer",
-            "获取当前窗口正在查看的连接与 Shell（远程 SSH 会话）",
+            "返回 UI 当前焦点所在的连接与 Shell（profileId、shellId、terminalSessionId）。焦点不等于唯一可操作目标。",
             json!({}),
         ),
         tool_def(
             "getTerminalContext",
-            "获取当前焦点 Shell 标签的终端输出摘要。这是查询命令执行结果的主要方式，特别是在 runShellCommand 返回空或超时时。",
-            json!({}),
+            "读取指定 Shell 的终端输出快照（最近约 12k 字符），不向 PTY 发送新命令。可选 shellId 读取非焦点 Shell。",
+            object_schema(json!({
+                "profileId": { "type": "string", "description": "服务器 profile ID（与 shellId 配合时）" },
+                "shellId": { "type": "string", "description": "Shell 标签 ID；省略则读当前焦点 Shell" }
+            }), &[]),
         ),
         tool_def(
             "createNewShell",
-            "为指定连接创建一个新的 Shell 标签页",
+            "为连接新增一个 Shell 标签（新 PTY）。splitBelow=true 时在 referenceShellId 对应面板下方垂直拆分；返回后需用 listActiveConnections 获取新 shellId。",
             object_schema(json!({
-                "profileId": { "type": "string", "description": "服务器 profile ID（见 listServerProfiles 或 listActiveConnections）" },
-                "name": { "type": "string", "description": "可选的 Shell 名称，如 'Build', 'Monitor'" }
+                "profileId": { "type": "string", "description": "服务器 profile ID" },
+                "name": { "type": "string", "description": "Shell 显示名称" },
+                "referenceShellId": { "type": "string", "description": "参考 Shell 的 shellId（splitBelow 时使用）" },
+                "splitBelow": { "type": "boolean", "description": "是否在参考面板下方拆分，而非仅开新标签" }
             }), &["profileId"]),
         ),
         tool_def(
             "disconnectServer",
-            "断开指定 profile 的所有终端",
+            "断开指定 profile 的所有 PTY 连接。",
             object_schema(json!({
                 "profileId": { "type": "string", "description": "服务器 profile ID" }
             }), &["profileId"]),
         ),
         tool_def(
             "runShellCommand",
-            "在 UI 左侧 Shell 执行命令（与手动输入相同 PTY）。命令会等待 shell 提示符出现才返回，不会因输出暂停而提前完成。若检测到密码/交互提示（sudo/passphrase 等），前端会通知用户在终端手动输入，命令继续等待直到用户完成。若返回 incomplete/timed_out，请调用 getTerminalContext 查看最新输出。AI 不得索要或嵌入密码。",
+            "在指定 Shell 的 PTY 中执行一条命令（与用户手动输入相同路径），等待提示符或 waitMs 超时后返回 output。同一 shellId 同时只能跑一条前台命令；incomplete 表示可能仍在运行。",
             object_schema(json!({
                 "profileId": { "type": "string", "description": "服务器 profile ID" },
                 "command": { "type": "string", "description": "Shell 命令" },
-                "shellId": { "type": "string", "description": "可选 Shell 标签 ID" },
-                "waitMs": { "type": "number", "description": "等待输出毫秒，默认 30000（30秒）。0 = 无限等待（最多 10 分钟）。即使超时也应调用 getTerminalContext 查看实际输出" }
+                "shellId": { "type": "string", "description": "目标 Shell 标签 ID；省略则用该连接当前活动 Shell" },
+                "waitMs": { "type": "number", "description": "等待毫秒，默认 30000；0 表示长时间等待（上限约 10 分钟）" }
             }), &["profileId", "command"]),
+        ),
+        tool_def(
+            "connectServer",
+            "连接指定 profile 的 SSH/终端（若尚未连接）。已连接则直接返回；后台连接，不切换用户当前可见的服务器标签。",
+            object_schema(json!({
+                "profileId": { "type": "string", "description": "服务器 profile ID" }
+            }), &["profileId"]),
         ),
         tool_def(
             "listRemoteFiles",
@@ -168,7 +180,7 @@ pub async fn execute_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> St
             tool_get_focused(ctx)
         }
         "getTerminalContext" | "get_terminal_context" | "mcp__aiterm__getTerminalContext" => {
-            tool_terminal_context(ctx)
+            tool_terminal_context(ctx, args)
         }
         "createNewShell" | "create_new_shell" | "mcp__aiterm__createNewShell" => {
             tool_create_new_shell(ctx, args)
@@ -303,25 +315,63 @@ fn tool_get_focused(ctx: &ToolContext<'_>) -> Value {
     payload
 }
 
-fn tool_terminal_context(ctx: &ToolContext<'_>) -> Value {
+fn tool_terminal_context(ctx: &ToolContext<'_>, args: &Value) -> Value {
     tracing::info!("tool_terminal_context: start");
     let snap = ctx.runtime.get();
+    let shell_id_arg = args.get("shellId").and_then(|v| v.as_str());
+    let profile_id_arg = args
+        .get("profileId")
+        .or_else(|| args.get("sessionId"))
+        .and_then(|v| v.as_str());
+
+    let resolved = if let Some(shell_id) = shell_id_arg {
+        if let Some(pid) = profile_id_arg {
+            ctx.runtime.find_terminal_session(pid, Some(shell_id))
+        } else {
+            snap.connections.iter().find_map(|conn| {
+                conn.shells
+                    .iter()
+                    .find(|s| s.id == shell_id)
+                    .map(|s| (s.terminal_session_id.clone(), conn.profile_id.clone(), s.id.clone()))
+            })
+        }
+    } else {
+        None
+    };
+
+    let (terminal_session_id, snippet, shell_meta) = if let Some((tid, pid, sid)) = resolved {
+        (
+            Some(tid.clone()),
+            tail_snippet(&tid, 12_000),
+            json!({ "profileId": pid, "shellId": sid, "terminalSessionId": tid }),
+        )
+    } else {
+        let focused = focused_payload(&snap);
+        let tid = focused
+            .get("terminalSessionId")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let snippet = tid
+            .as_ref()
+            .map(|id| tail_snippet(id, 12_000))
+            .unwrap_or_default();
+        (tid, snippet, focused)
+    };
+
     tracing::info!("tool_terminal_context: got runtime snapshot");
-    let focused = focused_payload(&snap);
-    tracing::info!("tool_terminal_context: got focused payload");
     let ctx_lock = ctx.ide_context.lock();
     tracing::info!("tool_terminal_context: got ide_context lock");
     let result = json!({
         "success": true,
         "sessionName": ctx_lock.active_session_name,
-        "sessionHost": focused.get("sessionHost").cloned().unwrap_or_else(|| json!(ctx_lock.active_session_host)),
-        "terminalSnippet": focused.get("terminalSnippet").cloned().unwrap_or_else(|| json!(ctx_lock.terminal_snippet)),
+        "sessionHost": ctx_lock.active_session_host,
+        "terminalSnippet": if snippet.is_empty() { Value::Null } else { json!(snippet) },
         "activeProfileId": ctx_lock.active_profile_id,
         "activeConnectionId": ctx_lock.active_connection_id,
         "activeShellId": ctx_lock.active_shell_id,
-        "isRemoteSession": focused.get("isRemoteSession"),
-        "terminalSessionId": focused.get("terminalSessionId"),
-        "focused": focused,
+        "terminalSessionId": terminal_session_id,
+        "shell": shell_meta,
+        "hint": "长任务仍在原 Shell 输出；进度查看请在 splitBelow 新建 Shell 执行，勿在原 Shell runShellCommand",
     });
     tracing::info!(
         "tool_terminal_context: done, result_len={}",
@@ -478,6 +528,9 @@ fn tool_create_new_shell(ctx: &ToolContext<'_>, args: &Value) -> Value {
         name.to_string()
     };
 
+    let reference_shell_id = args.get("referenceShellId").and_then(|v| v.as_str());
+    let split_below = args.get("splitBelow").and_then(|v| v.as_bool()).unwrap_or(false);
+
     let request_id = uuid::Uuid::new_v4().to_string();
     let _ = ctx.app.emit(
         "claude:tool-request",
@@ -486,6 +539,8 @@ fn tool_create_new_shell(ctx: &ToolContext<'_>, args: &Value) -> Value {
             "profileId": pid,
             "connectionId": conn.id,
             "shellName": shell_name,
+            "referenceShellId": reference_shell_id,
+            "splitBelow": split_below,
             "requestId": request_id,
         }),
     );
@@ -501,7 +556,13 @@ fn tool_create_new_shell(ctx: &ToolContext<'_>, args: &Value) -> Value {
         "success": true,
         "profileId": pid,
         "shellName": shell_name,
-        "message": format!("已请求创建新 Shell 标签: {}", shell_name),
+        "referenceShellId": reference_shell_id,
+        "splitBelow": split_below,
+        "message": if split_below {
+            format!("已在 Shell {} 下方拆分新终端: {}", reference_shell_id.unwrap_or("?"), shell_name)
+        } else {
+            format!("已请求创建新 Shell 标签: {}", shell_name)
+        },
     })
 }
 
@@ -717,12 +778,12 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
     );
 
     // 等前端 xterm 标签接管后再等待输出，避免 Rust 阻塞时 UI 尚未写入 PTY
-    let started = ctx.shell_tools.wait_until_started(&request_id, 4000).await;
+    let started = ctx.shell_tools.wait_until_started(&request_id, 180_000).await;
     if !started {
         ctx.shell_tools.cleanup(&request_id);
         return json!({
             "success": false,
-            "error": "前端 Shell 标签未能在 4s 内接管命令执行，请确认终端已连接且 Shell 可见"
+            "error": "前端未能在 3 分钟内接管命令执行（可能正在等待用户确认或终端未连接）"
         });
     }
 
@@ -762,9 +823,8 @@ async fn tool_run_command(ctx: &ToolContext<'_>, args: &Value) -> Value {
                 result["incomplete"] = json!(true);
                 result["status"] = json!("running");
                 result["message"] = json!(
-                    "命令可能仍在运行或尚无输出，请稍后调用 getTerminalContext 查看最新输出。"
+                    "命令可能仍在运行；output 为等待期间已捕获的内容。getTerminalContext(profileId, shellId) 可读该 Shell 最新输出。需要在其它 PTY 执行新命令时，createNewShell 可另开 Shell（splitBelow 可在参考面板下方拆分）；该 Shell 仍被占用时再次 runShellCommand 可能被拒绝或自动转到监控 Shell。"
                 );
-                result["nextAction"] = json!("poll_getTerminalContext");
             }
             result
         }
@@ -799,6 +859,8 @@ fn build_connect_request(
         authMethod: auth_method,
         password,
         privateKeyPath: private_key_path,
+        jumpHost: profile.jump_host.clone(),
+        jumpHosts: profile.jump_hosts.clone(),
         serial_port: None,
         baud_rate: None,
         data_bits: None,

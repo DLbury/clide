@@ -1,7 +1,11 @@
 import { isTauriRuntime } from '@/lib/tauri-env'
-import type { Session, AuthConfig } from '@/lib/types'
+import type { Session, AuthConfig, JumpHostConfig } from '@/lib/types'
 import { getRuntimePassword } from '@/lib/runtime-password'
 import { getStoredPassword } from '@/lib/password-vault-local'
+import {
+  appendTerminalRecordingEvent,
+  isTerminalRecording,
+} from '@/lib/terminal-recording-store'
 
 export interface TerminalConnectRequest {
   sessionId: string
@@ -12,6 +16,8 @@ export interface TerminalConnectRequest {
   authMethod?: Session['authMethod']
   password?: string
   privateKeyPath?: string
+  jumpHost?: JumpHostConfig
+  jumpHosts?: JumpHostConfig[]
   authConfig?: AuthConfig
   // Serial specific
   serialPort?: string
@@ -64,6 +70,8 @@ export function sessionToConnectRequest(session: Session): TerminalConnectReques
     authMethod: session.authMethod,
     password: session.password,
     privateKeyPath: session.privateKeyPath,
+    jumpHost: session.jumpHost,
+    jumpHosts: session.jumpHosts,
     authConfig: session.authConfig,
     serialPort: session.serialPort,
     baudRate: session.baudRate,
@@ -168,6 +176,8 @@ function sessionToInvokeRequest(session: Session) {
     authMethod,
     password,
     privateKeyPath,
+    jumpHost: session.jumpHost ?? session.jumpHosts?.[0] ?? null,
+    jumpHosts: session.jumpHosts ?? (session.jumpHost ? [session.jumpHost] : null),
     serialPort: session.serialPort ?? null,
     baudRate: session.baudRate ?? null,
     dataBits: session.dataBits ?? null,
@@ -200,6 +210,9 @@ export function normalizeShellCommandForPty(command: string): string {
 }
 
 export async function writeTerminal(sessionId: string, data: string): Promise<void> {
+  if (isTerminalRecording(sessionId)) {
+    appendTerminalRecordingEvent(sessionId, 'i', data)
+  }
   notifyTerminalWrite(sessionId, data)
   return invoke<void>('terminal_write', { sessionId, data })
 }
@@ -379,6 +392,49 @@ export async function deleteRemotePath(
   })
 }
 
+export async function createRemoteDirectory(
+  session: Session,
+  dirPath: string,
+  folderName: string,
+  options?: RemoteFileOptions
+): Promise<void> {
+  return invoke<void>('terminal_create_directory', {
+    request: sessionToInvokeRequest(session),
+    dirPath,
+    folderName,
+    useRoot: options?.useRoot ?? false,
+  })
+}
+
+export async function searchRemoteFiles(
+  session: Session,
+  basePath: string,
+  query: string,
+  options?: RemoteFileOptions & { maxDepth?: number }
+): Promise<RemoteFileEntry[]> {
+  return invoke<RemoteFileEntry[]>('terminal_search_files', {
+    request: sessionToInvokeRequest(session),
+    basePath,
+    query,
+    maxDepth: options?.maxDepth ?? 5,
+    useRoot: options?.useRoot ?? false,
+  })
+}
+
+export async function chmodRemotePath(
+  session: Session,
+  path: string,
+  mode: string,
+  options?: RemoteFileOptions
+): Promise<void> {
+  return invoke<void>('terminal_chmod_path', {
+    request: sessionToInvokeRequest(session),
+    path,
+    mode,
+    useRoot: options?.useRoot ?? false,
+  })
+}
+
 export interface RemoteHostStats {
   cpuPercent: number
   memTotalBytes: number
@@ -387,11 +443,73 @@ export interface RemoteHostStats {
   diskUsedBytes: number
   gpuMemTotalBytes?: number
   gpuMemUsedBytes?: number
+  gpuPercent?: number
+  diskReadBps?: number
+  diskWriteBps?: number
+  netRxBps?: number
+  netTxBps?: number
+}
+
+export async function exportTerminalBuffer(sessionId: string): Promise<string> {
+  return invoke<string>('terminal_export_buffer', { sessionId })
 }
 
 export async function getRemoteHostStats(session: Session): Promise<RemoteHostStats> {
   return invoke<RemoteHostStats>('terminal_get_host_stats', {
     request: sessionToInvokeRequest(session),
+  })
+}
+
+export interface RemoteProcess {
+  pid: number
+  user?: string
+  cpuPercent: number
+  memPercent: number
+  memBytes?: number
+  command: string
+}
+
+export async function listRemoteProcesses(session: Session): Promise<RemoteProcess[]> {
+  return invoke<RemoteProcess[]>('terminal_list_processes', {
+    request: sessionToInvokeRequest(session),
+  })
+}
+
+export async function killRemoteProcess(
+  session: Session,
+  pid: number,
+  force = false
+): Promise<void> {
+  return invoke<void>('terminal_kill_process', {
+    request: sessionToInvokeRequest(session),
+    pid,
+    force,
+  })
+}
+
+export interface RemotePort {
+  pid: number
+  port: number
+  protocol: string
+  address: string
+  command?: string
+}
+
+export async function listRemotePorts(session: Session): Promise<RemotePort[]> {
+  return invoke<RemotePort[]>('terminal_list_ports', {
+    request: sessionToInvokeRequest(session),
+  })
+}
+
+export async function killRemotePort(
+  session: Session,
+  port: number,
+  protocol: string
+): Promise<void> {
+  return invoke<void>('terminal_kill_port', {
+    request: sessionToInvokeRequest(session),
+    port,
+    protocol,
   })
 }
 

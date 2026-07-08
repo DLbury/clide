@@ -86,14 +86,17 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.70
+            ## Clide v0.1.71
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **性能优化**：AI 流式回复时减少 workbench 重渲染；runtime 同步防抖；终端输出 IPC 合并；文件树 cwd 跟随防抖
-            - **修复 CI 签名**：`TAURI_SIGNING_PRIVATE_KEY` 直接写入 base64 内容（非临时文件路径）
-            - 含 v0.1.69：AI 流式崩溃修复、Release 签名 base64 格式
+            - **多 AI 后端**：新增 Codex / Cursor Agent / OpenCode 等持久化 ACP 后端支持，可在设置中切换
+            - **多跳跳板链**：SSH 支持多级 ProxyJump，逐跳独立凭据；MCP 远程文件工具同样走跳板链
+            - **命令审批与审计**：AI 执行高危命令前需人工确认，全量命令留存审计记录
+            - **服务器监控**：主机 CPU/内存/磁盘实时面板与历史曲线、远程进程列表、多服务器命令同步
+            - **会话增强**：Agent 多线程对话、终端录制回放、命令历史、远程文件管理器 Windows 主机支持
+            - **修复**：AI 正文偶发不显示、远程新建文件夹落错主目录、mcp.json 解析失败时误清空既有配置、Windows 远程搜索忽略深度限制
 
             ### 平台说明
             - **Windows**: `.msi` / `.exe`（支持应用内更新）

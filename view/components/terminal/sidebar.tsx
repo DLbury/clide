@@ -21,6 +21,7 @@ import {
   Trash2,
   Plug,
   Unplug,
+  PanelLeftClose,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AppLogo } from '@/components/app-logo'
@@ -72,6 +73,7 @@ interface SidebarProps {
   onDeleteLayoutSnapshot?: (sessionId: string, snapshotId: string) => void
   canSaveLayoutSnapshot?: (sessionId: string) => boolean
   layoutSnapshotsVersion?: number
+  onCollapse?: () => void
 }
 
 const getSessionIcon = (type: Session['type']) => {
@@ -236,6 +238,7 @@ export function Sidebar({
   onDeleteLayoutSnapshot,
   canSaveLayoutSnapshot,
   layoutSnapshotsVersion = 0,
+  onCollapse,
 }: SidebarProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(folders.map(f => f.id))
@@ -377,11 +380,21 @@ export function Sidebar({
       />
       <div className="p-4 border-b border-sidebar-border">
         <div className="flex items-center gap-2 mb-4">
-          <AppLogo size={32} className="rounded-lg" />
-          <div>
+          <AppLogo size={32} className="rounded-lg shrink-0" />
+          <div className="flex-1 min-w-0">
             <h1 className="text-sm font-semibold text-sidebar-foreground">{APP_NAME}</h1>
-            <p className="text-xs text-muted-foreground">{APP_TAGLINE}</p>
+            <p className="text-xs text-muted-foreground truncate">{APP_TAGLINE}</p>
           </div>
+          {onCollapse && (
+            <button
+              type="button"
+              onClick={onCollapse}
+              className="p-1.5 shrink-0 hover:bg-sidebar-accent rounded transition-colors text-muted-foreground hover:text-sidebar-foreground"
+              title="折叠服务器列表 (Ctrl+B)"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+          )}
         </div>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

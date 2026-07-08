@@ -23,6 +23,8 @@ import { isTauriRuntime } from '@/lib/tauri-env'
 
 export interface UseClaudeCodeOptions {
   enabled: boolean
+  /** 仅 Claude Code 需要 IDE 桥接与 MCP 预热 */
+  bridgeEnabled?: boolean
   claudePath?: string
   getIdeContext?: () => IdeContext
   /** 变化时立即推送 IDE 上下文（连接/Shell 切换） */
@@ -47,6 +49,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 
 export function useClaudeCode({
   enabled,
+  bridgeEnabled = true,
   claudePath,
   getIdeContext,
   contextSyncKey,
@@ -124,12 +127,12 @@ export function useClaudeCode({
    * registerClaudeMcp + waitClaudeMcpTools（会额外拉起 claude/node 进程，约数秒开销）。
    */
   const ensureMcpReady = useCallback(async () => {
-    if (!isTauriRuntime() || !enabled) return null
+    if (!isTauriRuntime() || !enabled || !bridgeEnabled) return null
     if (mcpAutoAttemptedRef.current && mcpStatusRef.current?.ready) {
       return mcpStatusRef.current
     }
     return runAutoMcpRegister(true)
-  }, [enabled, runAutoMcpRegister])
+  }, [enabled, bridgeEnabled, runAutoMcpRegister])
 
   const ensureStreamReady = useCallback(async () => {
     if (streamReadyRef.current) return
@@ -143,7 +146,7 @@ export function useClaudeCode({
   }, [])
 
   const ensureBridgeReady = useCallback(async () => {
-    if (!isTauriRuntime() || !enabled) return null
+    if (!isTauriRuntime() || !enabled || !bridgeEnabled) return null
 
     const current = await withTimeout(
       getClaudeBridgeStatus().catch(() => null),
@@ -168,7 +171,7 @@ export function useClaudeCode({
     setBridge(status)
     void runAutoMcpRegister()
     return status
-  }, [enabled, runAutoMcpRegister])
+  }, [enabled, bridgeEnabled, runAutoMcpRegister])
 
   useEffect(() => {
     if (!isTauriRuntime() || !enabled) {
@@ -190,28 +193,30 @@ export function useClaudeCode({
     }, 2000)
 
     // AI 启用后预热桥接 + MCP，避免首条消息才注册导致 Claude 拿不到工具
-    const warmTimer = setTimeout(() => {
-      void (async () => {
-        try {
-          const status = await getClaudeBridgeStatus()
-          if (status?.running) {
-            setBridge(status)
-            void runAutoMcpRegister()
-            return
-          }
-          const started = await withTimeout(
-            startClaudeBridge([], claudePathRef.current || undefined),
-            15_000,
-            '预热 Claude Bridge'
-          )
-          bridgeStartedRef.current = true
-          setBridge(started)
-          void runAutoMcpRegister()
-        } catch {
-          // 预热失败不阻断；首条消息会再试
-        }
-      })()
-    }, 2500)
+    const warmTimer = bridgeEnabled
+      ? setTimeout(() => {
+          void (async () => {
+            try {
+              const status = await getClaudeBridgeStatus()
+              if (status?.running) {
+                setBridge(status)
+                void runAutoMcpRegister()
+                return
+              }
+              const started = await withTimeout(
+                startClaudeBridge([], claudePathRef.current || undefined),
+                15_000,
+                '预热 Claude Bridge'
+              )
+              bridgeStartedRef.current = true
+              setBridge(started)
+              void runAutoMcpRegister()
+            } catch {
+              // 预热失败不阻断；首条消息会再试
+            }
+          })()
+        }, 2500)
+      : null
 
     listenClaudeStream(event => {
       const handler = pendingRequests.current.get(event.requestId)
@@ -247,30 +252,34 @@ export function useClaudeCode({
 
     listenBridgeConnected(() => {
       getClaudeBridgeStatus().then(setBridge).catch(console.error)
-      // 桥接连接时只更新状态，不重置注册标记
-      // MCP 配置已在桥接启动时写入，无需重复注册
-    }).then(fn => {
-      unlistenBridgeRef.current = fn
     })
-
-    getClaudeBridgeStatus()
-      .then(status => {
-        if (status) setBridge(status)
+      .then(fn => {
+        unlistenBridgeRef.current = fn
       })
       .catch(() => {})
 
-    const statusPoll = setInterval(() => {
+    const statusPoll = bridgeEnabled
+      ? setInterval(() => {
+          getClaudeBridgeStatus()
+            .then(status => {
+              if (status) setBridge(status)
+            })
+            .catch(() => {})
+        }, 30_000)
+      : null
+
+    if (bridgeEnabled) {
       getClaudeBridgeStatus()
         .then(status => {
           if (status) setBridge(status)
         })
         .catch(() => {})
-    }, 30_000)
+    }
 
     return () => {
       clearTimeout(detectTimer)
-      clearTimeout(warmTimer)
-      clearInterval(statusPoll)
+      if (warmTimer) clearTimeout(warmTimer)
+      if (statusPoll) clearInterval(statusPoll)
       unlistenStreamRef.current?.()
       unlistenBridgeRef.current?.()
       unlistenStreamRef.current = null
@@ -278,18 +287,18 @@ export function useClaudeCode({
       streamReadyRef.current = false
       pendingRequests.current.clear()
       mcpAutoAttemptedRef.current = false
-      if (bridgeStartedRef.current) {
+      if (bridgeStartedRef.current && bridgeEnabled) {
         stopClaudeBridge().catch(console.error)
         bridgeStartedRef.current = false
       }
     }
-  }, [enabled, claudePath, runAutoMcpRegister])
+  }, [enabled, bridgeEnabled, claudePath, runAutoMcpRegister])
 
   useEffect(() => {
-    if (!isTauriRuntime() || !enabled) return
+    if (!isTauriRuntime() || !enabled || !bridgeEnabled) return
     const fn = getIdeContextRef.current
     if (fn) void updateIdeContext(fn()).catch(() => {})
-  }, [enabled, contextSyncKey])
+  }, [enabled, bridgeEnabled, contextSyncKey])
 
   const registerStreamHandler = useCallback(
     (requestId: string, handler: (event: ClaudeStreamEvent) => void) => {

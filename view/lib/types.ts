@@ -1,3 +1,13 @@
+export interface JumpHostConfig {
+  host: string
+  port?: number
+  user?: string
+  /** 留空则与目标会话共用凭据 */
+  authMethod?: 'password' | 'key' | 'none'
+  password?: string
+  privateKeyPath?: string
+}
+
 export interface Session {
   id: string
   name: string
@@ -11,6 +21,10 @@ export interface Session {
   authMethod?: 'password' | 'key' | 'none' | 'ssh-agent' | 'env-var' | 'keychain'
   password?: string
   privateKeyPath?: string
+  /** 单跳跳板机（ProxyJump / Bastion，兼容旧数据） */
+  jumpHost?: JumpHostConfig
+  /** 多跳跳板链（优先于 jumpHost） */
+  jumpHosts?: JumpHostConfig[]
   // 新认证方式配置
   authConfig?: AuthConfig
   // Serial specific

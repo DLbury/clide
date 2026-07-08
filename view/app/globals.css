@@ -21,8 +21,8 @@
   --secondary-foreground: oklch(0.85 0 0);
   --muted: oklch(0.20 0.005 260);
   --muted-foreground: oklch(0.55 0 0);
-  --accent: oklch(0.72 0.19 160);
-  --accent-foreground: oklch(0.12 0.005 260);
+  --accent: oklch(0.26 0.008 260);
+  --accent-foreground: oklch(0.94 0 0);
   --destructive: oklch(0.60 0.20 25);
   --destructive-foreground: oklch(0.95 0 0);
   --border: oklch(0.25 0.005 260);
@@ -65,8 +65,8 @@
   --secondary-foreground: oklch(0.85 0 0);
   --muted: oklch(0.20 0.005 260);
   --muted-foreground: oklch(0.55 0 0);
-  --accent: oklch(0.72 0.19 160);
-  --accent-foreground: oklch(0.12 0.005 260);
+  --accent: oklch(0.26 0.008 260);
+  --accent-foreground: oklch(0.94 0 0);
   --destructive: oklch(0.60 0.20 25);
   --destructive-foreground: oklch(0.95 0 0);
   --border: oklch(0.25 0.005 260);
@@ -100,8 +100,8 @@
   --secondary-foreground: oklch(0.20 0.005 260);
   --muted: oklch(0.88 0.005 260);
   --muted-foreground: oklch(0.50 0 0);
-  --accent: oklch(0.60 0.18 160);
-  --accent-foreground: oklch(0.98 0.001 260);
+  --accent: oklch(0.91 0.008 260);
+  --accent-foreground: oklch(0.18 0.005 260);
   --destructive: oklch(0.60 0.20 25);
   --destructive-foreground: oklch(0.98 0.001 260);
   --border: oklch(0.85 0.005 260);
@@ -186,6 +186,12 @@
   }
 }
 
+@layer components {
+  .icon-btn {
+    @apply rounded transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground;
+  }
+}
+
 /* Shell、对话、编辑器等必须支持文本选择的区域 */
 .select-text-region {
   user-select: text;
@@ -216,8 +222,16 @@ input,
   -webkit-user-select: text !important;
 }
 
-/* 空终端仅在内容溢出时显示滚动条 */
+/* 确保 canvas 层可接收鼠标（Tauri WebView / Dockview 下选区依赖此层） */
+.terminal-host,
+.dv-content-container .terminal-host,
+.xterm .xterm-screen,
+.xterm .xterm-screen canvas {
+  pointer-events: auto !important;
+}
+
 .xterm .xterm-viewport {
+  cursor: text;
   overflow-y: auto !important;
 }
 
@@ -393,6 +407,64 @@ body.file-tree-dragging * {
 .ai-markdown pre {
   max-width: 100%;
   overflow-x: auto;
+}
+
+/* Streamdown 代码块：去掉预留高度，工具栏贴顶，减少复制/下载上方空白 */
+.ai-markdown [data-streamdown='code-block'] {
+  contain-intrinsic-size: auto !important;
+  content-visibility: visible !important;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  gap: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.ai-markdown [data-streamdown='code-block-header'] {
+  display: none;
+}
+
+.ai-markdown [data-streamdown='code-block'] > div:has([data-streamdown='code-block-actions']) {
+  position: relative !important;
+  top: auto !important;
+  margin-top: 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  pointer-events: auto;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 45%, transparent);
+}
+
+.ai-markdown [data-streamdown='code-block-actions'] {
+  position: static;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.ai-markdown [data-streamdown='code-block-body'] {
+  padding: 0.5rem 0.75rem !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+.ai-markdown [data-streamdown='code-block-body'] pre {
+  margin: 0;
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+.ai-markdown [data-streamdown='code-block-copy-button'],
+.ai-markdown [data-streamdown='code-block-download-button'] {
+  height: 1.75rem;
+  width: 1.75rem;
+  padding: 0;
 }
 
 /* Terminal scrollbar base */

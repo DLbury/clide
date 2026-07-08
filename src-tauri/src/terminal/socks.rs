@@ -106,6 +106,8 @@ impl SocksManager {
             authMethod: None,
             password: None,
             privateKeyPath: None,
+            jumpHost: None,
+            jumpHosts: None,
             serial_port: None,
             baud_rate: None,
             data_bits: None,
@@ -114,7 +116,7 @@ impl SocksManager {
         };
         request = enrich_connect_request(request);
 
-        let session = ssh_auth::connect_and_auth(&request).await?;
+        let session = ssh_auth::connect_and_auth(&request, &request.sessionId).await?;
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .map_err(|e| format!("无法绑定本地端口: {e}"))?;

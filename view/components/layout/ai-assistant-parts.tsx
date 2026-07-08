@@ -27,7 +27,7 @@ import {
   ToolInput,
   ToolOutput,
 } from '@/components/ai-elements/tool'
-import { toolStatusToUiState, messageHasRunningTools } from '@/lib/chat-stream-parts'
+import { toolStatusToUiState, messageHasRunningTools, assistantTextContent } from '@/lib/chat-stream-parts'
 import type { ChatMessage, ChatMessagePart } from '@/lib/types'
 
 interface AiAssistantPartsProps {
@@ -49,7 +49,7 @@ export const AiAssistantParts = memo(function AiAssistantParts({
   const tools = message.tools ?? []
   const tasks = message.tasks ?? []
   const hasRunningTools = messageHasRunningTools(message)
-  const replyText = message.content
+  const replyText = assistantTextContent(message)
   const showReplyStream = Boolean(replyText.trim()) || (isStreaming && !hasRunningTools)
 
   const reasoningStreaming = isStreaming && !replyText.trim() && !hasRunningTools && !reasoning

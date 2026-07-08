@@ -10,7 +10,7 @@ pub use detect::{
     ClaudeAutoDetectManager, ClaudeDetectResult,
 };
 pub use mcp_register::{
-    check_mcp_status, ensure_project_mcp_json, register_mcp, sync_mcp_bridge_env,
-    try_auto_ensure_project_mcp, try_auto_register_mcp, wait_for_mcp_ready, McpRegisterStatus,
-    McpRuntimeCache,
+    aiterm_acp_mcp_servers, check_mcp_status, ensure_cursor_mcp_json, ensure_project_mcp_json,
+    ensure_workspace_cursor_mcp_json, register_mcp, sync_mcp_bridge_env, try_auto_ensure_project_mcp,
+    try_auto_register_mcp, wait_for_mcp_ready, McpRegisterStatus, McpRuntimeCache,
 };

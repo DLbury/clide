@@ -63,6 +63,9 @@ impl ShellToolCoordinator {
                 if slot.started {
                     return true;
                 }
+                if slot.done {
+                    return true;
+                }
             }
             if Instant::now() >= deadline {
                 return false;

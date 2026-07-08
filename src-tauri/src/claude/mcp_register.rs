@@ -116,6 +116,31 @@ fn mcp_config_template(bridge: Option<(u16, &str)>) -> Result<Value, String> {
     }))
 }
 
+/// ACP `session/new` 内联 MCP 条目（Cursor 可能仍优先读 ~/.cursor/mcp.json）。
+pub fn aiterm_acp_mcp_servers(bridge: Option<(u16, &str)>) -> Result<Value, String> {
+    let (command, args) = mcp_stdio_launcher_command().ok_or_else(|| {
+        "无法定位 Clide 可执行文件（MCP 需要 clide --aiterm-mcp-stdio）".to_string()
+    })?;
+    let mut env = Vec::new();
+    if let Some((port, token)) = bridge {
+        for (name, value) in [
+            ("AITERM_IDE_PORT", port.to_string()),
+            ("AITERM_IDE_AUTH_TOKEN", token.to_string()),
+            ("ENABLE_IDE_INTEGRATION", "true".to_string()),
+            ("CLAUDE_CODE_SSE_PORT", port.to_string()),
+        ] {
+            env.push(json!({ "name": name, "value": value }));
+        }
+    }
+    Ok(json!([{
+        "type": "stdio",
+        "name": MCP_SERVER_NAME,
+        "command": command,
+        "args": args,
+        "env": env
+    }]))
+}
+
 /// 尽力通过 Claude Code CLI 登记 MCP（用户级/项目级），便于终端独立运行 `claude` 时也能发现 aiterm。
 fn try_claude_mcp_add(claude_path: Option<String>) {
     let Ok(claude) = resolve_claude_path(claude_path) else {
@@ -211,6 +236,94 @@ fn write_mcp_config(
 
     tracing::info!("MCP config written to: {}", paths.mcp_config_file.display());
     Ok(paths.mcp_config_file.clone())
+}
+
+fn merge_aiterm_server(existing: &mut Value, bridge: Option<(u16, &str)>) -> Result<(), String> {
+    let template = mcp_config_template(bridge)?;
+    let servers = template
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| "MCP 模板缺少 mcpServers".to_string())?;
+    let entry = servers
+        .get(MCP_SERVER_NAME)
+        .cloned()
+        .ok_or_else(|| "MCP 模板缺少 aiterm 条目".to_string())?;
+
+    if !existing.is_object() {
+        *existing = json!({});
+    }
+    let root = existing.as_object_mut().unwrap();
+    let mcp_servers = root
+        .entry("mcpServers")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "mcpServers 必须是对象".to_string())?;
+    mcp_servers.insert(MCP_SERVER_NAME.to_string(), entry);
+    Ok(())
+}
+
+fn write_mcp_json_at(path: &std::path::Path, bridge: Option<(u16, &str)>) -> Result<PathBuf, String> {
+    if mcp_stdio_launcher_command().is_none() {
+        return Err("无法定位 Clide 可执行文件，无法写入 MCP 配置".to_string());
+    }
+
+    let mut doc = if path.is_file() {
+        let raw = fs::read_to_string(path).map_err(|e| format!("读取 MCP 配置失败: {e}"))?;
+        if raw.trim().is_empty() {
+            json!({})
+        } else {
+            // 解析失败时拒绝覆盖，避免把用户已有的 mcp.json（含其它服务器）清空
+            serde_json::from_str::<Value>(&raw).map_err(|e| {
+                format!("现有 MCP 配置 {} 不是合法 JSON，已跳过写入: {e}", path.display())
+            })?
+        }
+    } else {
+        json!({})
+    };
+
+    merge_aiterm_server(&mut doc, bridge)?;
+
+    let config_json = serde_json::to_string_pretty(&doc).map_err(|e| {
+        let msg = format!("序列化 MCP 配置失败: {}", e);
+        tracing::error!("{}", msg);
+        msg
+    })?;
+
+    if path.is_file() {
+        if let Ok(existing) = fs::read_to_string(path) {
+            if existing == config_json {
+                tracing::info!("MCP config unchanged at {}", path.display());
+                return Ok(path.to_path_buf());
+            }
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 MCP 配置目录失败: {e}"))?;
+    }
+
+    fs::write(path, config_json).map_err(|e| {
+        let msg = format!("写入 MCP 配置失败: {}", e);
+        tracing::error!("{}", msg);
+        msg
+    })?;
+
+    tracing::info!("MCP config written to: {}", path.display());
+    Ok(path.to_path_buf())
+}
+
+/// 写入/更新 `~/.cursor/mcp.json`（Cursor Agent ACP 从此处加载 MCP）。
+pub fn ensure_cursor_mcp_json(bridge: Option<(u16, &str)>) -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| "无法解析用户主目录".to_string())?;
+    write_mcp_json_at(&home.join(".cursor").join("mcp.json"), bridge)
+}
+
+/// 写入/更新项目级 `.cursor/mcp.json`。
+pub fn ensure_workspace_cursor_mcp_json(
+    workspace: &std::path::Path,
+    bridge: Option<(u16, &str)>,
+) -> Result<PathBuf, String> {
+    write_mcp_json_at(&workspace.join(".cursor").join("mcp.json"), bridge)
 }
 
 fn config_has_aiterm(content: &str) -> bool {

@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod app_logging;
 pub mod app_paths;
 pub mod browser_policy;
@@ -12,11 +13,10 @@ pub mod shell_tool;
 pub mod state;
 pub mod terminal;
 
+use ai::{detect_ai_backend, AiDetectResult, AiProvider, GenericSessionManager};
 use app_paths::McpBundlePaths;
 use claude::bridge::ClaudeBridge;
-use claude::detect::{
-    detect_claude_binary_with_custom, ClaudeAutoDetectManager, ClaudeDetectResult,
-};
+use claude::detect::{detect_claude_binary_with_custom, ClaudeAutoDetectManager, ClaudeDetectResult};
 use claude::session::ClaudeSessionManager;
 use connect_tool::ConnectToolCoordinator;
 use parking_lot::Mutex;
@@ -41,11 +41,18 @@ pub struct AppState {
     pub connect_tools: Arc<ConnectToolCoordinator>,
     pub mcp_runtime: Arc<claude::McpRuntimeCache>,
     pub claude_auto_detect: Arc<ClaudeAutoDetectManager>,
+    pub generic_sessions: GenericSessionManager,
 }
 
 #[tauri::command]
 fn claude_detect(claude_path: Option<String>) -> Result<ClaudeDetectResult, String> {
     Ok(detect_claude_binary_with_custom(claude_path))
+}
+
+#[tauri::command]
+fn ai_detect(provider: String, cli_path: Option<String>) -> Result<AiDetectResult, String> {
+    let provider = AiProvider::parse(&provider)?;
+    Ok(detect_ai_backend(provider, cli_path))
 }
 
 #[tauri::command]
@@ -272,12 +279,16 @@ async fn claude_send_message(
     session_id: Option<String>,
     continue_session: bool,
     request_id: Option<String>,
+    thread_id: Option<String>,
+    connection_key: Option<String>,
 ) -> Result<String, String> {
     tracing::info!(
-        "claude_send_message: prompt_len={}, session_id={:?}, continue={}",
+        "claude_send_message: prompt_len={}, session_id={:?}, continue={}, thread_id={:?}, connection_key={:?}",
         prompt.len(),
         session_id,
-        continue_session
+        continue_session,
+        thread_id,
+        connection_key
     );
     let workspace_hint = claude::bridge::resolve_workspace_folders(&[]);
 
@@ -312,6 +323,10 @@ async fn claude_send_message(
     let request_id = request_id
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let thread_key = thread_id
+        .or(connection_key)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "default".to_string());
     let (bridge_port, bridge_auth_token, workspace_dir) = match &bridge_info {
         Some((p, t, _)) => (Some(*p), Some(t.clone()), workspace_dir.clone()),
         None => (None, None, workspace_dir),
@@ -373,6 +388,7 @@ async fn claude_send_message(
             bridge_auth_token,
             workspace_dir,
             Some(mcp_paths.mcp_config_file.clone()),
+            &thread_key,
         )
         .map_err(|e| {
             tracing::error!("claude_send_message: spawn failed: {e}");
@@ -380,6 +396,116 @@ async fn claude_send_message(
         })?;
     tracing::info!("claude_send_message: spawn succeeded, request_id={request_id}");
     Ok(request_id)
+}
+
+#[tauri::command]
+async fn ai_send_message(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mcp_paths: State<'_, McpBundlePaths>,
+    provider: String,
+    prompt: String,
+    cli_path: Option<String>,
+    session_id: Option<String>,
+    continue_session: bool,
+    request_id: Option<String>,
+    thread_id: Option<String>,
+    connection_key: Option<String>,
+) -> Result<String, String> {
+    let provider = AiProvider::parse(&provider)?;
+    match provider {
+        AiProvider::ClaudeCode => {
+            claude_send_message(
+                app,
+                state,
+                mcp_paths,
+                prompt,
+                cli_path,
+                session_id,
+                continue_session,
+                request_id,
+                thread_id,
+                connection_key,
+            )
+            .await
+        }
+        other => {
+            let request_id = request_id
+                .filter(|id| !id.trim().is_empty())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+            let workspace_hint = claude::bridge::resolve_workspace_folders(&[]);
+            let _ = claude::bridge::ClaudeBridge::ensure_running(
+                &app,
+                &state.bridge,
+                state.ide_context.clone(),
+                workspace_hint.clone(),
+                cli_path.clone(),
+            );
+
+            let bridge_info = {
+                let bridge_guard = state.bridge.lock();
+                bridge_guard
+                    .as_ref()
+                    .filter(|b| b.is_running())
+                    .map(|b| (b.port(), b.auth_token().to_string()))
+            };
+
+            let workspace_dir = bridge_info.as_ref().and_then(|_| {
+                claude::bridge::resolve_workspace_folders(&[])
+                    .first()
+                    .map(std::path::PathBuf::from)
+            });
+
+            if matches!(other, AiProvider::Cursor) {
+                let bridge_ref = bridge_info.as_ref().map(|(p, t)| (*p, t.as_str()));
+                if let Err(e) = claude::ensure_cursor_mcp_json(bridge_ref) {
+                    tracing::warn!("Cursor MCP 配置写入失败: {e}");
+                }
+                if let Some(dir) = workspace_dir.as_deref() {
+                    if let Err(e) = claude::ensure_workspace_cursor_mcp_json(dir, bridge_ref) {
+                        tracing::warn!("项目 Cursor MCP 配置写入失败: {e}");
+                    }
+                }
+                if let Some((port, token)) = &bridge_info {
+                    let _ = claude::sync_mcp_bridge_env(&mcp_paths, *port, token);
+                }
+            }
+
+            state.generic_sessions.spawn(
+                app,
+                other,
+                request_id.clone(),
+                prompt,
+                cli_path,
+                workspace_dir,
+                session_id,
+                bridge_info,
+                connection_key,
+            )?;
+            Ok(request_id)
+        }
+    }
+}
+
+#[tauri::command]
+fn ai_cancel_message(state: State<'_, AppState>, provider: String, request_id: String) -> Result<(), String> {
+    let provider = AiProvider::parse(&provider)?;
+    match provider {
+        AiProvider::ClaudeCode => state.sessions.cancel(&request_id),
+        _ => state.generic_sessions.cancel(&request_id),
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn ai_cancel_all_messages(state: State<'_, AppState>, provider: String) -> Result<(), String> {
+    let provider = AiProvider::parse(&provider)?;
+    match provider {
+        AiProvider::ClaudeCode => state.sessions.cancel_all(),
+        _ => state.generic_sessions.cancel_all(),
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -601,6 +727,11 @@ fn sanitize_dir(label: &str) -> String {
 }
 
 #[tauri::command]
+fn terminal_export_buffer(session_id: String) -> Result<String, String> {
+    Ok(crate::terminal::export_buffer(&session_id))
+}
+
+#[tauri::command]
 fn terminal_buffer_len(session_id: String) -> Result<usize, String> {
     Ok(crate::terminal::buffer_len(&session_id))
 }
@@ -721,6 +852,17 @@ async fn terminal_rename_path(
 }
 
 #[tauri::command]
+async fn terminal_create_directory(
+    request: terminal::ConnectRequest,
+    dir_path: String,
+    folder_name: String,
+    use_root: bool,
+) -> Result<(), String> {
+    let request = terminal::enrich_connect_request(request);
+    terminal::create_remote_directory(request, dir_path, folder_name, use_root).await
+}
+
+#[tauri::command]
 async fn terminal_delete_path(
     request: terminal::ConnectRequest,
     path: String,
@@ -731,11 +873,70 @@ async fn terminal_delete_path(
 }
 
 #[tauri::command]
+async fn terminal_search_files(
+    request: terminal::ConnectRequest,
+    base_path: String,
+    query: String,
+    max_depth: Option<u32>,
+    use_root: bool,
+) -> Result<Vec<terminal::RemoteFileEntry>, String> {
+    let request = terminal::enrich_connect_request(request);
+    terminal::search_remote_files(request, base_path, query, max_depth, use_root).await
+}
+
+#[tauri::command]
+async fn terminal_chmod_path(
+    request: terminal::ConnectRequest,
+    path: String,
+    mode: String,
+    use_root: bool,
+) -> Result<(), String> {
+    let request = terminal::enrich_connect_request(request);
+    terminal::chmod_remote_path(request, path, mode, use_root).await
+}
+
+#[tauri::command]
 async fn terminal_get_host_stats(
     request: terminal::ConnectRequest,
 ) -> Result<terminal::RemoteHostStats, String> {
     let request = terminal::enrich_connect_request(request);
     terminal::get_remote_host_stats(request).await
+}
+
+#[tauri::command]
+async fn terminal_list_processes(
+    request: terminal::ConnectRequest,
+) -> Result<Vec<terminal::RemoteProcess>, String> {
+    let request = terminal::enrich_connect_request(request);
+    terminal::list_remote_processes(request).await
+}
+
+#[tauri::command]
+async fn terminal_kill_process(
+    request: terminal::ConnectRequest,
+    pid: u32,
+    force: bool,
+) -> Result<(), String> {
+    let request = terminal::enrich_connect_request(request);
+    terminal::kill_remote_process(request, pid, force).await
+}
+
+#[tauri::command]
+async fn terminal_list_ports(
+    request: terminal::ConnectRequest,
+) -> Result<Vec<terminal::RemotePort>, String> {
+    let request = terminal::enrich_connect_request(request);
+    terminal::list_remote_ports(request).await
+}
+
+#[tauri::command]
+async fn terminal_kill_port(
+    request: terminal::ConnectRequest,
+    port: u16,
+    protocol: String,
+) -> Result<(), String> {
+    let request = terminal::enrich_connect_request(request);
+    terminal::kill_remote_port(request, port, &protocol).await
 }
 
 #[tauri::command]
@@ -765,6 +966,7 @@ pub fn run() {
                 McpBundlePaths::fallback(&handle)
             });
             handle.manage(mcp_paths);
+            terminal::init_exec_pool();
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -799,10 +1001,12 @@ pub fn run() {
             connect_tools: Arc::new(ConnectToolCoordinator::new()),
             mcp_runtime: Arc::new(claude::McpRuntimeCache::default()),
             claude_auto_detect: Arc::new(ClaudeAutoDetectManager::new()),
+            generic_sessions: GenericSessionManager::new(),
         })
         .invoke_handler(tauri::generate_handler![
             get_project_root,
             claude_detect,
+            ai_detect,
             claude_detect_async,
             claude_start_auto_detect,
             claude_stop_auto_detect,
@@ -819,6 +1023,9 @@ pub fn run() {
             complete_shell_tool_command,
             complete_connect_tool,
             claude_send_message,
+            ai_send_message,
+            ai_cancel_message,
+            ai_cancel_all_messages,
             claude_log_file_path,
             claude_cancel_message,
             claude_cancel_all_messages,
@@ -836,6 +1043,7 @@ pub fn run() {
             socks_list,
             browser_webview_open,
             terminal_buffer_len,
+            terminal_export_buffer,
             terminal_buffer_read_since,
             terminal_list_directory,
             local_list_directory,
@@ -849,8 +1057,15 @@ pub fn run() {
             terminal_get_cwd,
             terminal_move_path,
             terminal_rename_path,
+            terminal_create_directory,
+            terminal_search_files,
+            terminal_chmod_path,
             terminal_delete_path,
             terminal_get_host_stats,
+            terminal_list_processes,
+            terminal_kill_process,
+            terminal_list_ports,
+            terminal_kill_port,
         ])
         .run(tauri::generate_context!())
         .map_err(|e| {

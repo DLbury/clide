@@ -107,6 +107,8 @@ impl TunnelManager {
             authMethod: None,
             password: None,
             privateKeyPath: None,
+            jumpHost: None,
+            jumpHosts: None,
             serial_port: None,
             baud_rate: None,
             data_bits: None,
@@ -115,7 +117,7 @@ impl TunnelManager {
         };
         request = enrich_connect_request(request);
 
-        let session = super::ssh_auth::connect_and_auth(&request).await?;
+        let session = super::ssh_auth::connect_and_auth(&request, &request.sessionId).await?;
         let bind_port = local_port
             .or_else(portpicker::pick_unused_port)
             .ok_or_else(|| "无法分配本地端口".to_string())?;

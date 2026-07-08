@@ -1,5 +1,5 @@
 import { isTauriRuntime } from '@/lib/tauri-env'
-import type { Session } from '@/lib/types'
+import type { JumpHostConfig, Session } from '@/lib/types'
 
 export interface ShellSnapshot {
   id: string
@@ -25,6 +25,9 @@ export interface ProfileSnapshot {
   type: string
   status: string
   port?: number
+  /** 跳板配置（不含密码），供后端 MCP 工具直连 SSH 时复用 */
+  jumpHost?: Omit<JumpHostConfig, 'password'>
+  jumpHosts?: Omit<JumpHostConfig, 'password'>[]
 }
 
 export interface RuntimeSnapshot {
@@ -43,6 +46,13 @@ export interface ToolActivityEvent {
   displayCommand?: string
   outputPreview?: string
   error?: string
+}
+
+/** 密码永不进入 Runtime 同步；跳板密码缺失时后端会回退目标会话凭据 */
+function stripJumpPassword(jump?: JumpHostConfig): Omit<JumpHostConfig, 'password'> | undefined {
+  if (!jump) return undefined
+  const { password: _password, ...rest } = jump
+  return rest
 }
 
 export function buildRuntimeSnapshot(input: {
@@ -66,6 +76,8 @@ export function buildRuntimeSnapshot(input: {
         type: s.type,
         status: s.status,
         port: s.port,
+        jumpHost: stripJumpPassword(s.jumpHost),
+        jumpHosts: s.jumpHosts?.map(h => stripJumpPassword(h)!),
       })
     }
   }

@@ -1,4 +1,4 @@
-export type SettingsTab = 'ai' | 'shortcuts' | 'update'
+export type SettingsTab = 'ai' | 'shortcuts' | 'update' | 'audit'
 
 export interface LayoutShortcut {
   id: string
@@ -17,6 +17,7 @@ export const LAYOUT_SHORTCUTS: LayoutShortcut[] = [
   { id: 'focus-editor', label: '聚焦编辑器', keys: ['Ctrl', '1'], category: '焦点切换' },
   { id: 'save-file', label: '保存当前文件', keys: ['Ctrl', 'S'], category: '全局' },
   { id: 'open-settings', label: '打开设置', keys: ['Ctrl', ','], category: '全局' },
+  { id: 'command-history', label: '命令历史搜索', keys: ['Ctrl', 'Shift', 'H'], category: '焦点切换' },
 ]
 
 export type LayoutShortcutAction =
@@ -28,6 +29,7 @@ export type LayoutShortcutAction =
   | 'focus-terminal'
   | 'focus-editor'
   | 'open-settings'
+  | 'command-history'
 
 export function matchShortcutAction(event: KeyboardEvent): LayoutShortcutAction | null {
   const mod = event.ctrlKey || event.metaKey
@@ -42,6 +44,7 @@ export function matchShortcutAction(event: KeyboardEvent): LayoutShortcutAction 
   if (key === '\\' && event.shiftKey) return 'split-editor-below'
   if (key === '`') return 'focus-terminal'
   if (key === '1' && !event.shiftKey) return 'focus-editor'
+  if (key === 'h' && event.shiftKey) return 'command-history'
   if (key === ',') return 'open-settings'
 
   return null

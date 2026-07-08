@@ -47,9 +47,24 @@ function shellCommandFromToolInput(input: unknown): string | undefined {
 }
 
 /** 正文可能在 message.content 或 timeline parts 中 */
+export function assistantTextContent(message: ChatMessage): string {
+  const fromParts =
+    message.parts
+      ?.filter((p): p is Extract<ChatMessagePart, { kind: 'text' }> => p.kind === 'text')
+      .map(p => p.content)
+      .join('') ?? ''
+  return fromParts || message.content || ''
+}
+
+export function syncAssistantContentFromParts(message: ChatMessage): ChatMessage {
+  if (message.role !== 'assistant') return message
+  const synced = assistantTextContent(message)
+  if (synced === (message.content ?? '')) return message
+  return { ...message, content: synced }
+}
+
 export function messageHasTextContent(message: ChatMessage): boolean {
-  if (message.content?.trim()) return true
-  return message.parts?.some(p => p.kind === 'text' && p.content.trim()) ?? false
+  return !!assistantTextContent(message).trim()
 }
 
 export function messageHasRunningTools(message: ChatMessage): boolean {
@@ -123,7 +138,7 @@ export function finalizeAssistantTurn(message: ChatMessage): ChatMessage {
     task.status === 'pending' ? { ...task, status: 'completed' as const } : task
   )
 
-  return { ...message, tools, tasks }
+  return syncAssistantContentFromParts({ ...message, tools, tasks })
 }
 
 export function appendAssistantTextPart(message: ChatMessage, chunk: string): ChatMessage {

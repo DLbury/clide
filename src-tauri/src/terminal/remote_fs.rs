@@ -1,4 +1,4 @@
-use super::{ssh_auth, ConnectRequest};
+use super::{ConnectRequest};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use russh::ChannelMsg;
 use std::time::Duration;
@@ -28,13 +28,45 @@ fn ensure_ssh(request: &ConnectRequest) -> Result<(), String> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RemotePlatform {
+pub(crate) enum RemotePlatform {
     Unix,
     Windows,
 }
 
 fn normalize_path_slashes(path: &str) -> String {
     path.replace('\\', "/")
+}
+
+pub fn normalize_path_slashes_public(path: &str) -> String {
+    normalize_path_slashes(path)
+}
+
+pub async fn detect_platform_public(request: &ConnectRequest) -> RemotePlatform {
+    detect_platform(request).await
+}
+
+async fn resolve_path(request: &ConnectRequest, path: &str) -> Result<String, String> {
+    if path.contains(':') || path.starts_with("\\\\") {
+        return Ok(normalize_path_slashes(path));
+    }
+    let platform = detect_platform(request).await;
+    match platform {
+        RemotePlatform::Windows => resolve_windows_path(request, path).await,
+        RemotePlatform::Unix => {
+            if path.is_empty() || path == "~" {
+                return super::exec_pool::global_exec_pool()
+                    .get_remote_home(request)
+                    .await;
+            }
+            if path.starts_with("~/") {
+                let home = super::exec_pool::global_exec_pool()
+                    .get_remote_home(request)
+                    .await?;
+                return Ok(join_remote_entry_path(&home, &path[2..]));
+            }
+            Ok(path.to_string())
+        }
+    }
 }
 
 fn join_remote_entry_path(base: &str, name: &str) -> String {
@@ -50,29 +82,14 @@ fn escape_powershell_single(value: &str) -> String {
 }
 
 async fn detect_platform(request: &ConnectRequest) -> RemotePlatform {
-    if let Ok(out) = exec_capture(
-        request,
-        "powershell -NoProfile -NoLogo -NonInteractive -Command \"if ($env:OS -eq 'Windows_NT') { Write-Output 'windows' } else { Write-Output 'unix' }\"",
-        false,
-    )
-    .await
-    {
-        if out.trim().eq_ignore_ascii_case("windows") {
-            return RemotePlatform::Windows;
-        }
+    let cached = super::exec_pool::global_exec_pool()
+        .get_platform(request)
+        .await;
+    if cached.is_windows() {
+        RemotePlatform::Windows
+    } else {
+        RemotePlatform::Unix
     }
-    if let Ok(out) = exec_capture(
-        request,
-        "cmd /c \"if %OS%==Windows_NT (echo windows) else (echo unix)\"",
-        false,
-    )
-    .await
-    {
-        if out.trim().eq_ignore_ascii_case("windows") {
-            return RemotePlatform::Windows;
-        }
-    }
-    RemotePlatform::Unix
 }
 
 async fn resolve_windows_path(request: &ConnectRequest, path: &str) -> Result<String, String> {
@@ -153,25 +170,6 @@ fn map_root_error(err: String, elevated: bool) -> String {
     err
 }
 
-fn resolve_remote_path(request: &ConnectRequest, path: &str) -> String {
-    if path.contains(':') || path.starts_with("\\\\") {
-        return normalize_path_slashes(path);
-    }
-    if path.is_empty() || path == "~" {
-        if let Some(user) = &request.user {
-            return format!("/home/{user}");
-        }
-        return "/".to_string();
-    }
-    if path.starts_with("~/") {
-        if let Some(user) = &request.user {
-            return format!("/home/{}/{}", user, path.trim_start_matches("~/"));
-        }
-        return path.trim_start_matches('~').to_string();
-    }
-    path.to_string()
-}
-
 async fn list_directory_unix(
     request: &ConnectRequest,
     path: String,
@@ -192,7 +190,7 @@ async fn list_directory_unix(
     };
 
     let output = exec_capture(request, &cmd, elevated).await?;
-    let base = resolve_remote_path(request, &path);
+    let base = resolve_path(request, &path).await?;
     parse_directory_output(&output, &base)
 }
 
@@ -201,51 +199,16 @@ pub(crate) async fn exec_capture(
     cmd: &str,
     elevated: bool,
 ) -> Result<String, String> {
-    let remote_cmd = if elevated {
+    let platform = detect_platform(request).await;
+    let remote_cmd = if elevated && platform == RemotePlatform::Unix {
         format_sudo_bash(cmd)
     } else {
         cmd.to_string()
     };
-    let session = ssh_auth::connect_and_auth(request).await?;
-    let mut channel = session
-        .channel_open_session()
+    super::exec_pool::global_exec_pool()
+        .exec_raw(request, &remote_cmd)
         .await
-        .map_err(|e| format!("无法打开 SSH 通道: {e}"))?;
-
-    channel
-        .exec(true, remote_cmd)
-        .await
-        .map_err(|e| format!("无法执行远程命令: {e}"))?;
-
-    let mut output = String::new();
-    let mut exit_code: u32 = 0;
-
-    loop {
-        match tokio::time::timeout(EXEC_TIMEOUT, channel.wait()).await {
-            Ok(Some(ChannelMsg::Data { data })) => {
-                output.push_str(&String::from_utf8_lossy(&data));
-            }
-            Ok(Some(ChannelMsg::ExitStatus { exit_status })) => {
-                exit_code = exit_status;
-                break;
-            }
-            Ok(None) => break,
-            Ok(Some(_)) => {}
-            Err(_) => return Err("远程命令执行超时".to_string()),
-        }
-    }
-
-    let _ = channel.close().await;
-
-    if exit_code != 0 {
-        let detail = output.trim();
-        if detail.is_empty() {
-            return Err(format!("远程命令失败 (exit {exit_code})"));
-        }
-        return Err(map_root_error(detail.to_string(), elevated));
-    }
-
-    Ok(output)
+        .map_err(|e| map_root_error(e, elevated))
 }
 
 async fn write_bytes(
@@ -261,9 +224,24 @@ async fn write_bytes(
             MAX_FILE_BYTES / 1024 / 1024
         ));
     }
+    let platform = detect_platform(request).await;
+    match platform {
+        RemotePlatform::Windows => write_bytes_windows(request, path, content).await,
+        RemotePlatform::Unix => write_bytes_unix(request, path, content, elevated).await,
+    }
+}
 
-    let session = ssh_auth::connect_and_auth(request).await?;
-    let mut channel = session
+async fn write_bytes_unix(
+    request: &ConnectRequest,
+    path: &str,
+    content: &[u8],
+    elevated: bool,
+) -> Result<(), String> {
+    let session = super::exec_pool::global_exec_pool()
+        .get_or_connect(request)
+        .await?;
+    let handle = session.lock().await;
+    let mut channel = handle
         .channel_open_session()
         .await
         .map_err(|e| format!("无法打开 SSH 通道: {e}"))?;
@@ -319,6 +297,52 @@ async fn write_bytes(
     Ok(())
 }
 
+async fn write_bytes_windows(request: &ConnectRequest, path: &str, content: &[u8]) -> Result<(), String> {
+    let b64 = BASE64.encode(content);
+    let win_path = path.replace('/', "\\");
+    let safe = escape_powershell_single(&win_path);
+    let cmd = format!(
+        "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ $p = '{safe}'; $dir = Split-Path -Parent $p; if ($dir -and -not (Test-Path -LiteralPath $dir)) {{ New-Item -ItemType Directory -Path $dir -Force | Out-Null }}; [IO.File]::WriteAllBytes($p, [Convert]::FromBase64String('{b64}')) }}\""
+    );
+    exec_capture(request, &cmd, false).await?;
+    Ok(())
+}
+
+async fn read_file_base64_unix(
+    request: &ConnectRequest,
+    resolved: &str,
+    elevated: bool,
+) -> Result<String, String> {
+    let safe = escape_single_quotes(resolved);
+    let read_cmd = format!(
+        "if [ -f '{safe}' ]; then base64 -w0 '{safe}' 2>/dev/null || base64 '{safe}' 2>/dev/null | tr -d '\\n'; elif [ -d '{safe}' ]; then echo __IS_DIRECTORY__; exit 2; else echo __NOT_FOUND__; exit 1; fi"
+    );
+    exec_capture(request, &read_cmd, elevated)
+        .await
+        .map_err(|e| map_read_error(e))
+}
+
+async fn read_file_base64_windows(request: &ConnectRequest, resolved: &str) -> Result<String, String> {
+    let win_path = resolved.replace('/', "\\");
+    let safe = escape_powershell_single(&win_path);
+    let cmd = format!(
+        "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ $p = '{safe}'; if (-not (Test-Path -LiteralPath $p)) {{ Write-Output '__NOT_FOUND__'; exit 1 }}; if ((Get-Item -LiteralPath $p).PSIsContainer) {{ Write-Output '__IS_DIRECTORY__'; exit 2 }}; [Convert]::ToBase64String([IO.File]::ReadAllBytes($p)) }}\""
+    );
+    exec_capture(request, &cmd, false)
+        .await
+        .map_err(|e| map_read_error(e))
+}
+
+fn map_read_error(e: String) -> String {
+    if e.contains("__NOT_FOUND__") {
+        "远程文件不存在".to_string()
+    } else if e.contains("__IS_DIRECTORY__") {
+        "无法打开目录，请选择文件".to_string()
+    } else {
+        e
+    }
+}
+
 pub async fn list_directory(
     request: ConnectRequest,
     path: String,
@@ -338,25 +362,12 @@ pub async fn read_file(
     elevated: bool,
 ) -> Result<String, String> {
     ensure_ssh(&request)?;
-
-    let resolved = resolve_remote_path(&request, &path);
-    let safe = escape_single_quotes(&resolved);
-
-    let read_cmd = format!(
-        "if [ -f '{safe}' ]; then base64 -w0 '{safe}' 2>/dev/null || base64 '{safe}' 2>/dev/null | tr -d '\\n'; elif [ -d '{safe}' ]; then echo __IS_DIRECTORY__; exit 2; else echo __NOT_FOUND__; exit 1; fi"
-    );
-
-    let encoded = exec_capture(&request, &read_cmd, elevated)
-        .await
-        .map_err(|e| {
-            if e.contains("__NOT_FOUND__") {
-                "远程文件不存在".to_string()
-            } else if e.contains("__IS_DIRECTORY__") {
-                "无法打开目录，请选择文件".to_string()
-            } else {
-                e
-            }
-        })?;
+    let platform = detect_platform(&request).await;
+    let resolved = resolve_path(&request, &path).await?;
+    let encoded = match platform {
+        RemotePlatform::Windows => read_file_base64_windows(&request, &resolved).await?,
+        RemotePlatform::Unix => read_file_base64_unix(&request, &resolved, elevated).await?,
+    };
     let bytes = BASE64
         .decode(encoded.trim())
         .map_err(|e| format!("解码远程文件失败: {e}"))?;
@@ -380,8 +391,7 @@ pub async fn write_file(
     elevated: bool,
 ) -> Result<(), String> {
     ensure_ssh(&request)?;
-
-    let resolved = resolve_remote_path(&request, &path);
+    let resolved = resolve_path(&request, &path).await?;
     write_bytes(&request, &resolved, content.as_bytes(), elevated).await
 }
 
@@ -391,25 +401,12 @@ pub async fn read_file_base64(
     elevated: bool,
 ) -> Result<String, String> {
     ensure_ssh(&request)?;
-
-    let resolved = resolve_remote_path(&request, &path);
-    let safe = escape_single_quotes(&resolved);
-
-    let read_cmd = format!(
-        "if [ -f '{safe}' ]; then base64 -w0 '{safe}' 2>/dev/null || base64 '{safe}' 2>/dev/null | tr -d '\\n'; elif [ -d '{safe}' ]; then echo __IS_DIRECTORY__; exit 2; else echo __NOT_FOUND__; exit 1; fi"
-    );
-
-    exec_capture(&request, &read_cmd, elevated)
-        .await
-        .map_err(|e| {
-            if e.contains("__NOT_FOUND__") {
-                "远程文件不存在".to_string()
-            } else if e.contains("__IS_DIRECTORY__") {
-                "无法下载目录".to_string()
-            } else {
-                e
-            }
-        })
+    let platform = detect_platform(&request).await;
+    let resolved = resolve_path(&request, &path).await?;
+    match platform {
+        RemotePlatform::Windows => read_file_base64_windows(&request, &resolved).await,
+        RemotePlatform::Unix => read_file_base64_unix(&request, &resolved, elevated).await,
+    }
 }
 
 pub async fn write_file_base64(
@@ -419,12 +416,10 @@ pub async fn write_file_base64(
     elevated: bool,
 ) -> Result<(), String> {
     ensure_ssh(&request)?;
-
     let bytes = BASE64
         .decode(content_base64.trim())
         .map_err(|e| format!("无效的文件数据: {e}"))?;
-
-    let resolved = resolve_remote_path(&request, &path);
+    let resolved = resolve_path(&request, &path).await?;
     write_bytes(&request, &resolved, &bytes, elevated).await
 }
 
@@ -435,13 +430,42 @@ pub async fn rename_path(
     elevated: bool,
 ) -> Result<(), String> {
     ensure_ssh(&request)?;
-
+    let platform = detect_platform(&request).await;
     let trimmed = new_name.trim();
-    if trimmed.is_empty() || trimmed.contains('/') {
-        return Err("新名称不能为空或包含 /".to_string());
+    if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') {
+        return Err("新名称不能为空或包含路径分隔符".to_string());
     }
 
-    let src = resolve_remote_path(&request, &source);
+    let src = resolve_path(&request, &source).await?;
+    if platform == RemotePlatform::Windows {
+        let parent = src.rfind('/').or_else(|| src.rfind('\\')).map(|i| &src[..i]).unwrap_or("");
+        let dest = if parent.is_empty() {
+            trimmed.to_string()
+        } else {
+            format!("{}/{}", parent.replace('\\', "/"), trimmed)
+        };
+        if src == dest {
+            return Ok(());
+        }
+        let src_safe = escape_powershell_single(&src.replace('/', "\\"));
+        let dest_safe = escape_powershell_single(&dest.replace('/', "\\"));
+        let cmd = format!(
+            "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ if (-not (Test-Path -LiteralPath '{src_safe}')) {{ Write-Error NOTFOUND; exit 1 }}; if (Test-Path -LiteralPath '{dest_safe}') {{ Write-Error EXISTS; exit 2 }}; Move-Item -LiteralPath '{src_safe}' -Destination '{dest_safe}' }}\""
+        );
+        return exec_capture(&request, &cmd, false)
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+            if e.to_lowercase().contains("notfound") {
+                "源路径不存在".to_string()
+            } else if e.to_lowercase().contains("exists") {
+                "目标名称已存在".to_string()
+            } else {
+                e
+            }
+        });
+    }
+
     let parent = src.rfind('/').map(|i| &src[..i]).unwrap_or("");
     let dest = if parent.is_empty() {
         format!("/{trimmed}")
@@ -482,9 +506,30 @@ pub async fn move_path(
     elevated: bool,
 ) -> Result<(), String> {
     ensure_ssh(&request)?;
+    let platform = detect_platform(&request).await;
+    let src = resolve_path(&request, &source).await?;
+    let dest = resolve_path(&request, &dest_dir).await?;
 
-    let src = resolve_remote_path(&request, &source);
-    let dest = resolve_remote_path(&request, &dest_dir);
+    if platform == RemotePlatform::Windows {
+        let src_safe = escape_powershell_single(&src.replace('/', "\\"));
+        let dest_safe = escape_powershell_single(&dest.replace('/', "\\"));
+        let cmd = format!(
+            "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ if (-not (Test-Path -LiteralPath '{src_safe}')) {{ Write-Error NOTFOUND; exit 1 }}; if (-not (Test-Path -LiteralPath '{dest_safe}')) {{ Write-Error NODIR; exit 2 }}; Move-Item -LiteralPath '{src_safe}' -Destination '{dest_safe}' }}\""
+        );
+        return exec_capture(&request, &cmd, false)
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+            if e.to_lowercase().contains("notfound") {
+                "源路径不存在".to_string()
+            } else if e.to_lowercase().contains("nodir") {
+                "目标必须是目录".to_string()
+            } else {
+                e
+            }
+        });
+    }
+
     let src_safe = escape_single_quotes(&src);
     let dest_safe = escape_single_quotes(&dest);
 
@@ -510,17 +555,251 @@ pub async fn move_path(
     Ok(())
 }
 
+pub async fn chmod_path(
+    request: ConnectRequest,
+    path: String,
+    mode: String,
+    elevated: bool,
+) -> Result<(), String> {
+    ensure_ssh(&request)?;
+    if detect_platform(&request).await == RemotePlatform::Windows {
+        return Err("Windows 远程主机不支持 chmod".to_string());
+    }
+
+    let mode_trimmed = mode.trim();
+    if mode_trimmed.is_empty() || mode_trimmed.len() > 4 || !mode_trimmed.chars().all(|c| c.is_ascii_digit()) {
+        return Err("权限模式必须是 3–4 位八进制数字（如 755、644）".to_string());
+    }
+
+    let resolved = resolve_path(&request, &path).await?;
+    let safe = escape_single_quotes(&resolved);
+    let mode_safe = escape_single_quotes(mode_trimmed);
+
+    let cmd = format!(
+        "target='{safe}'; mode='{mode_safe}'; \
+         if [ ! -e \"$target\" ]; then echo __NOT_FOUND__; exit 1; fi; \
+         chmod \"$mode\" -- \"$target\""
+    );
+
+    exec_capture(&request, &cmd, elevated).await.map_err(|e| {
+        if e.contains("__NOT_FOUND__") {
+            "路径不存在".to_string()
+        } else {
+            e
+        }
+    })?;
+    Ok(())
+}
+
+pub async fn search_files(
+    request: ConnectRequest,
+    base_path: String,
+    query: String,
+    max_depth: Option<u32>,
+    elevated: bool,
+) -> Result<Vec<RemoteFileEntry>, String> {
+    ensure_ssh(&request)?;
+
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Err("搜索关键词不能为空".to_string());
+    }
+    if trimmed.contains('\'') || trimmed.contains('\0') {
+        return Err("搜索关键词包含非法字符".to_string());
+    }
+
+    let depth = max_depth.unwrap_or(5).clamp(1, 15);
+    let platform = detect_platform(&request).await;
+    match platform {
+        RemotePlatform::Windows => search_files_windows(&request, &base_path, trimmed, depth).await,
+        RemotePlatform::Unix => search_files_unix(&request, &base_path, trimmed, depth, elevated).await,
+    }
+}
+
+async fn search_files_unix(
+    request: &ConnectRequest,
+    base_path: &str,
+    query: &str,
+    depth: u32,
+    elevated: bool,
+) -> Result<Vec<RemoteFileEntry>, String> {
+    let base = resolve_path(request, base_path).await?;
+    let safe_base = escape_single_quotes(&base);
+    let safe_query = query.replace('*', "\\*").replace('?', "\\?");
+    let cmd = format!(
+        "base='{safe_base}'; \
+         if [ ! -d \"$base\" ]; then echo __NOT_FOUND__; exit 1; fi; \
+         cd \"$base\" && LC_ALL=C find . -maxdepth {depth} -iname '*{safe_query}*' 2>/dev/null | head -200 | while IFS= read -r p; do \
+           rel=\"${{p#./}}\"; \
+           if [ -d \"$p\" ]; then echo -e \"d\\t0\\t755\\t$rel\"; \
+           elif [ -f \"$p\" ]; then sz=$(wc -c < \"$p\" 2>/dev/null | tr -d ' '); echo -e \"f\\t${{sz:-0}}\\t644\\t$rel\"; fi; \
+         done"
+    );
+
+    let output = exec_capture(request, &cmd, elevated)
+        .await
+        .map_err(|e| {
+            if e.contains("__NOT_FOUND__") {
+                "搜索目录不存在".to_string()
+            } else {
+                e
+            }
+        })?;
+
+    parse_search_output(&output, &base)
+}
+
+async fn search_files_windows(
+    request: &ConnectRequest,
+    base_path: &str,
+    query: &str,
+    depth: u32,
+) -> Result<Vec<RemoteFileEntry>, String> {
+    let base = resolve_windows_path(request, base_path).await?;
+    let safe_base = escape_powershell_single(&base.replace('/', "\\"));
+    let safe_query = escape_powershell_single(query);
+    // PowerShell -Depth 0 等价于 find -maxdepth 1（仅直接子项），故减一换算
+    let ps_depth = depth.saturating_sub(1);
+    let cmd = format!(
+        "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ \
+         $root = '{safe_base}'; \
+         if (-not (Test-Path -LiteralPath $root)) {{ Write-Error 'NOTFOUND'; exit 1 }}; \
+         Get-ChildItem -LiteralPath $root -Recurse -Depth {ps_depth} -Force -ErrorAction SilentlyContinue | \
+         Where-Object {{ $_.Name -like '*{safe_query}*' }} | \
+         Select-Object -First 200 | ForEach-Object {{ \
+           $k = if ($_.PSIsContainer) {{ 'd' }} else {{ 'f' }}; \
+           $rel = $_.FullName.Substring($root.Length).TrimStart('\\','/'); \
+           $s = if ($_.PSIsContainer) {{ 0 }} else {{ $_.Length }}; \
+           Write-Output ($k + [char]9 + $s + [char]9 + '000' + [char]9 + $rel) \
+         }} }}\""
+    );
+
+    let output = exec_capture(request, &cmd, false).await.map_err(|e| {
+        if e.to_lowercase().contains("notfound") {
+            "搜索目录不存在".to_string()
+        } else {
+            e
+        }
+    })?;
+
+    parse_search_output(&output, &base.replace('\\', "/"))
+}
+
+fn parse_search_output(output: &str, base: &str) -> Result<Vec<RemoteFileEntry>, String> {
+    let mut entries = Vec::new();
+    let base_norm = base.trim_end_matches('/');
+
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() || !line.contains('\t') {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(4, '\t').collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let kind = parts[0];
+        let size = parts[1].parse::<u64>().ok();
+        let mode = parts[2];
+        let rel = parts[3].trim_start_matches("./").replace('\\', "/");
+        if rel.is_empty() || rel == "." {
+            continue;
+        }
+        let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+        let entry_type = if kind == "d" { "directory" } else { "file" };
+        let permissions = mode_to_permissions(mode, entry_type == "directory");
+        entries.push(RemoteFileEntry {
+            name,
+            path: join_remote_entry_path(base_norm, &rel),
+            entry_type: entry_type.to_string(),
+            size: if entry_type == "file" { size } else { None },
+            permissions: Some(permissions),
+        });
+    }
+
+    entries.sort_by(|a, b| a.path.len().cmp(&b.path.len()));
+    Ok(entries)
+}
+
+pub async fn create_directory(
+    request: ConnectRequest,
+    dir_path: String,
+    folder_name: String,
+    elevated: bool,
+) -> Result<(), String> {
+    ensure_ssh(&request)?;
+
+    let trimmed = folder_name.trim();
+    if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') {
+        return Err("文件夹名称不能为空或包含路径分隔符".to_string());
+    }
+
+    let platform = detect_platform(&request).await;
+    match platform {
+        RemotePlatform::Windows => {
+            let base = resolve_windows_path(&request, &dir_path).await?;
+            let full = join_remote_entry_path(&base, trimmed);
+            let safe = escape_powershell_single(&full.replace('/', "\\"));
+            let cmd = format!(
+                "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ $p = '{safe}'; if (Test-Path -LiteralPath $p) {{ Write-Output __DEST_EXISTS__; exit 2 }}; New-Item -ItemType Directory -Path $p -Force | Out-Null }}\""
+            );
+            exec_capture(&request, &cmd, elevated).await.map_err(|e| {
+                if e.contains("__DEST_EXISTS__") {
+                    "文件夹已存在".to_string()
+                } else {
+                    e
+                }
+            })?;
+        }
+        RemotePlatform::Unix => {
+            let base = resolve_path(&request, &dir_path).await?;
+            let full = join_remote_entry_path(&base, trimmed);
+            let safe = escape_single_quotes(&full);
+            let cmd = format!(
+                "target='{safe}'; \
+                 if [ -e \"$target\" ]; then echo __DEST_EXISTS__; exit 2; fi; \
+                 mkdir -p -- \"$target\""
+            );
+            exec_capture(&request, &cmd, elevated).await.map_err(|e| {
+                if e.contains("__DEST_EXISTS__") {
+                    "文件夹已存在".to_string()
+                } else {
+                    e
+                }
+            })?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn delete_path(
     request: ConnectRequest,
     path: String,
     elevated: bool,
 ) -> Result<(), String> {
     ensure_ssh(&request)?;
-
-    let resolved = resolve_remote_path(&request, &path);
+    let platform = detect_platform(&request).await;
+    let resolved = resolve_path(&request, &path).await?;
     let trimmed = resolved.trim();
     if trimmed.is_empty() || trimmed == "/" {
         return Err("无法删除根目录".to_string());
+    }
+
+    if platform == RemotePlatform::Windows {
+        let safe = escape_powershell_single(&trimmed.replace('/', "\\"));
+        let cmd = format!(
+            "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ if (-not (Test-Path -LiteralPath '{safe}')) {{ Write-Error NOTFOUND; exit 1 }}; Remove-Item -LiteralPath '{safe}' -Recurse -Force }}\""
+        );
+        return exec_capture(&request, &cmd, false)
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+            if e.to_lowercase().contains("notfound") {
+                "路径不存在".to_string()
+            } else {
+                e
+            }
+        });
     }
 
     let safe = escape_single_quotes(trimmed);
@@ -550,7 +829,7 @@ pub async fn get_cwd(request: ConnectRequest, elevated: bool) -> Result<String, 
         RemotePlatform::Windows => {
             exec_capture(
                 &request,
-                "powershell -NoProfile -NoLogo -NonInteractive -Command \"Write-Output $env:USERPROFILE\"",
+                "powershell -NoProfile -NoLogo -NonInteractive -Command \"(Get-Location).ProviderPath\"",
                 false,
             )
             .await?
