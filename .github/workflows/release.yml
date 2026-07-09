@@ -86,17 +86,13 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.76
+            ## Clide v0.1.77
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **布局快照**：保存前探测各 shell 真实工作目录；加载时自动连接服务器并恢复布局
-            - **AI 启动**：若上次对话非空，启动时自动新建空对话线程
-            - **多机同步输入**：选择多台服务器一键开 tab，终端按键/粘贴同步广播到全部 shell
-            - **同步组布局**：创建同步组时自动平铺各 shell 窗口
-            - **面板记忆**：服务器列表、文件树、AI 面板折叠/展开状态跨重启保留
-            - **Windows 免安装版**：新增 `*-portable.zip`，解压后双击 `clide.exe` 即可运行
+            - **修复**：空文件夹展开后一直显示「加载中」
+            - **修复**：部分 SSH 主机监控输出粘连（`\r` 换行）导致解析失败
 
             ### 平台说明
             - **Windows**: `.exe` 安装包 / `*-portable.zip` 免安装版（支持应用内更新）

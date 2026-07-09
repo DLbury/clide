@@ -351,6 +351,8 @@ function FileTreeItem({
   const showNewFolderInput = pendingFolder?.parentId === item.id
   const showRenameInput = pendingRename?.itemId === item.id
   const childCount = item.children?.length ?? 0
+  const childrenLoading = remoteMode && isDirectory && item.isExpanded && item.children === undefined
+  const childrenEmpty = remoteMode && isDirectory && item.isExpanded && item.children !== undefined && childCount === 0
   const [isDropTarget, setIsDropTarget] = useState(false)
   const canDragRemote = remoteMode && !!onMove && !transferBusy
 
@@ -488,12 +490,19 @@ function FileTreeItem({
 
           {!showRenameInput && isDirectory && item.isExpanded && !hideChildren && (
             <div>
-              {childCount === 0 && remoteMode ? (
+              {childrenLoading ? (
                 <div
                   style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
                   className="py-1 text-xs text-muted-foreground italic"
                 >
                   加载中…
+                </div>
+              ) : childrenEmpty ? (
+                <div
+                  style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
+                  className="py-1 text-xs text-muted-foreground/70 italic"
+                >
+                  （空文件夹）
                 </div>
               ) : (
                 item.children?.map(child => (
@@ -729,7 +738,7 @@ export function FileTree({
         if (
           item?.type === 'directory' &&
           nextExpanded &&
-          (!item.children || item.children.length === 0)
+          item.children === undefined
         ) {
           onDirectoryExpand?.(item)
         }
@@ -740,7 +749,7 @@ export function FileTree({
         if (
           item?.type === 'directory' &&
           !item.isExpanded &&
-          (!item.children || item.children.length === 0)
+          item.children === undefined
         ) {
           onDirectoryExpand?.(item)
         }

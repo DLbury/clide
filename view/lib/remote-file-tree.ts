@@ -27,7 +27,7 @@ export function remoteEntriesToFileTree(entries: RemoteFileEntry[]): FileItem[] 
     size: entry.size,
     permissions: entry.permissions,
     isExpanded: false,
-    children: entry.type === 'directory' ? [] : undefined,
+    children: entry.type === 'directory' ? undefined : undefined,
   }))
 }
 
@@ -47,7 +47,7 @@ export function mergeRemoteChildren(
           children,
         }
       }
-      if (item.children?.length) {
+      if (item.children) {
         return { ...item, children: walk(item.children) }
       }
       return item

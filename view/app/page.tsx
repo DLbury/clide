@@ -872,11 +872,22 @@ export default function AITerminal() {
         console.error('loadRemoteFiles failed', message)
         if (targetConnectionId) {
           setConnections(prev =>
-            prev.map(conn =>
-              conn.id === targetConnectionId
-                ? { ...conn, remoteFileError: message }
-                : conn
-            )
+            prev.map(conn => {
+              if (conn.id !== targetConnectionId) return conn
+              const patch: Partial<typeof conn> = { remoteFileError: message }
+              if (options?.mergeParentPath) {
+                return {
+                  ...conn,
+                  ...patch,
+                  remoteFiles: mergeRemoteChildren(
+                    conn.remoteFiles ?? [],
+                    options.mergeParentPath,
+                    []
+                  ),
+                }
+              }
+              return { ...conn, ...patch }
+            })
           )
         }
       } finally {
@@ -1360,7 +1371,7 @@ export default function AITerminal() {
       const t = activeConnection.session.type
       if (t !== 'ssh' && t !== 'local' && t !== 'wsl') return
       if (item.type !== 'directory') return
-      const hasLoadedChildren = item.children && item.children.length > 0
+      const hasLoadedChildren = item.children !== undefined
       if (hasLoadedChildren) return
       void loadRemoteFiles(activeConnection.session, item.path, {
         mergeParentPath: item.path,

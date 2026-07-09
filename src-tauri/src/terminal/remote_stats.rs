@@ -59,6 +59,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     fi
   fi
 fi
+exit 0
 "#;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -88,8 +89,61 @@ fn ensure_ssh(request: &ConnectRequest) -> Result<(), String> {
 fn parse_u64(value: &str, field: &str) -> Result<u64, String> {
     value
         .trim()
+        .trim_matches(|c: char| !c.is_ascii_digit())
         .parse::<u64>()
         .map_err(|_| format!("无法解析 {field}: {value}"))
+}
+
+const STAT_KEYS: &[&str] = &[
+    "CPU_PCT",
+    "MEM_TOTAL",
+    "MEM_USED",
+    "DISK_TOTAL",
+    "DISK_USED",
+    "DISK_READ_BPS",
+    "DISK_WRITE_BPS",
+    "NET_RX_BPS",
+    "NET_TX_BPS",
+    "GPU_PCT",
+    "GPU_MEM_USED",
+    "GPU_MEM_TOTAL",
+];
+
+/// Normalize CRLF / glued stdout (some SSH hosts emit `\r` without `\n`).
+fn normalize_stats_blob(output: &str) -> String {
+    output
+        .replace('\r', "\n")
+        .replace("DISK_USED-", "DISK_USED=")
+}
+
+fn extract_stat_pairs(output: &str) -> Vec<(String, String)> {
+    let normalized = normalize_stats_blob(output);
+    let mut hits: Vec<(usize, &str)> = Vec::new();
+    for key in STAT_KEYS {
+        let needle = format!("{key}=");
+        let mut start = 0usize;
+        while let Some(pos) = normalized[start..].find(&needle) {
+            let abs = start + pos;
+            hits.push((abs, key));
+            start = abs + needle.len();
+        }
+    }
+    hits.sort_by_key(|(pos, _)| *pos);
+    hits.dedup_by_key(|(pos, _)| *pos);
+
+    let mut pairs = Vec::new();
+    for (idx, (pos, key)) in hits.iter().enumerate() {
+        let value_start = pos + key.len() + 1;
+        let value_end = hits
+            .get(idx + 1)
+            .map(|(next_pos, _)| *next_pos)
+            .unwrap_or(normalized.len());
+        let value = normalized[value_start..value_end]
+            .trim()
+            .trim_end_matches(|c: char| c == '=' || c == '-' || c.is_whitespace());
+        pairs.push(((*key).to_string(), value.to_string()));
+    }
+    pairs
 }
 
 fn parse_stats_output(output: &str) -> Result<RemoteHostStats, String> {
@@ -106,43 +160,23 @@ fn parse_stats_output(output: &str) -> Result<RemoteHostStats, String> {
     let mut net_rx_bps = None;
     let mut net_tx_bps = None;
 
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        match key {
-            "CPU_PCT" => {
-                cpu_percent = Some(
-                    value
-                        .trim()
-                        .parse::<f64>()
-                        .map_err(|_| format!("无法解析 CPU 使用率: {value}"))?,
-                );
-            }
-            "MEM_TOTAL" => mem_total_bytes = Some(parse_u64(value, "内存总量")?),
-            "MEM_USED" => mem_used_bytes = Some(parse_u64(value, "内存已用")?),
-            "DISK_TOTAL" => disk_total_bytes = Some(parse_u64(value, "磁盘总量")?),
-            "DISK_USED" => disk_used_bytes = Some(parse_u64(value, "磁盘已用")?),
-            "GPU_MEM_TOTAL" => gpu_mem_total_bytes = Some(parse_u64(value, "显存总量")?),
-            "GPU_MEM_USED" => gpu_mem_used_bytes = Some(parse_u64(value, "显存已用")?),
-            "GPU_PCT" => {
-                gpu_percent = Some(
-                    value
-                        .trim()
-                        .parse::<f64>()
-                        .map_err(|_| format!("无法解析 GPU 使用率: {value}"))?,
-                );
-            }
-            "DISK_READ_BPS" => disk_read_bps = Some(parse_u64(value, "磁盘读速率")?),
-            "DISK_WRITE_BPS" => disk_write_bps = Some(parse_u64(value, "磁盘写速率")?),
-            "NET_RX_BPS" => net_rx_bps = Some(parse_u64(value, "网络接收速率")?),
-            "NET_TX_BPS" => net_tx_bps = Some(parse_u64(value, "网络发送速率")?),
-            _ => {}
-        }
+    for (key, value) in extract_stat_pairs(output) {
+        ingest_key(
+            &key,
+            &value,
+            &mut cpu_percent,
+            &mut mem_total_bytes,
+            &mut mem_used_bytes,
+            &mut disk_total_bytes,
+            &mut disk_used_bytes,
+            &mut gpu_mem_total_bytes,
+            &mut gpu_mem_used_bytes,
+            &mut gpu_percent,
+            &mut disk_read_bps,
+            &mut disk_write_bps,
+            &mut net_rx_bps,
+            &mut net_tx_bps,
+        )?;
     }
 
     Ok(RemoteHostStats {
@@ -161,6 +195,55 @@ fn parse_stats_output(output: &str) -> Result<RemoteHostStats, String> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn ingest_key(
+    key: &str,
+    value: &str,
+    cpu_percent: &mut Option<f64>,
+    mem_total_bytes: &mut Option<u64>,
+    mem_used_bytes: &mut Option<u64>,
+    disk_total_bytes: &mut Option<u64>,
+    disk_used_bytes: &mut Option<u64>,
+    gpu_mem_total_bytes: &mut Option<u64>,
+    gpu_mem_used_bytes: &mut Option<u64>,
+    gpu_percent: &mut Option<f64>,
+    disk_read_bps: &mut Option<u64>,
+    disk_write_bps: &mut Option<u64>,
+    net_rx_bps: &mut Option<u64>,
+    net_tx_bps: &mut Option<u64>,
+) -> Result<(), String> {
+    match key {
+        "CPU_PCT" => {
+            *cpu_percent = Some(
+                value
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| format!("无法解析 CPU 使用率: {value}"))?,
+            );
+        }
+        "MEM_TOTAL" => *mem_total_bytes = Some(parse_u64(value, "内存总量")?),
+        "MEM_USED" => *mem_used_bytes = Some(parse_u64(value, "内存已用")?),
+        "DISK_TOTAL" => *disk_total_bytes = Some(parse_u64(value, "磁盘总量")?),
+        "DISK_USED" => *disk_used_bytes = Some(parse_u64(value, "磁盘已用")?),
+        "GPU_MEM_TOTAL" => *gpu_mem_total_bytes = Some(parse_u64(value, "显存总量")?),
+        "GPU_MEM_USED" => *gpu_mem_used_bytes = Some(parse_u64(value, "显存已用")?),
+        "GPU_PCT" => {
+            *gpu_percent = Some(
+                value
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| format!("无法解析 GPU 使用率: {value}"))?,
+            );
+        }
+        "DISK_READ_BPS" => *disk_read_bps = Some(parse_u64(value, "磁盘读速率")?),
+        "DISK_WRITE_BPS" => *disk_write_bps = Some(parse_u64(value, "磁盘写速率")?),
+        "NET_RX_BPS" => *net_rx_bps = Some(parse_u64(value, "网络接收速率")?),
+        "NET_TX_BPS" => *net_tx_bps = Some(parse_u64(value, "网络发送速率")?),
+        _ => {}
+    }
+    Ok(())
+}
+
 pub async fn get_host_stats(request: ConnectRequest) -> Result<RemoteHostStats, String> {
     ensure_ssh(&request)?;
     if global_exec_pool().get_platform(&request).await.is_windows() {
@@ -173,6 +256,34 @@ pub async fn get_host_stats(request: ConnectRequest) -> Result<RemoteHostStats, 
         return Err("远程资源监控暂不支持 macOS SSH 主机（依赖 Linux /proc）".into());
     }
     let cmd = format!("bash -s <<'__CLIDE_STATS__'\n{STATS_SCRIPT}\n__CLIDE_STATS__");
-    let output = remote_fs::exec_capture(&request, &cmd, false).await?;
+    let output = match remote_fs::exec_capture(&request, &cmd, false).await {
+        Ok(out) => out,
+        Err(err) => {
+            // Some hosts return non-zero exit while still printing metrics on stdout.
+            if err.contains("CPU_PCT=") || err.contains("MEM_TOTAL=") {
+                err
+            } else {
+                return Err(err);
+            }
+        }
+    };
     parse_stats_output(&output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_stats_output;
+
+    #[test]
+    fn parses_glued_crlf_stats_blob() {
+        let raw = "CPU_PCT=0.2 MEM_TOTAL=128526344192 MEM_USED=118732886016DISK_TOTAL=4030802149376 DISK_USED-1806357651456 DISK_READ_BPS=0DISK_WRITE_BPS=0 NET_RX_BPS=422 NET_TX_BPS=325 GPU_PCT=0";
+        let stats = parse_stats_output(raw).expect("should parse glued output");
+        assert!((stats.cpu_percent - 0.2).abs() < f64::EPSILON);
+        assert_eq!(stats.mem_total_bytes, 128_526_344_192);
+        assert_eq!(stats.mem_used_bytes, 118_732_886_016);
+        assert_eq!(stats.disk_total_bytes, 4_030_802_149_376);
+        assert_eq!(stats.disk_used_bytes, 1_806_357_651_456);
+        assert_eq!(stats.net_rx_bps, Some(422));
+        assert_eq!(stats.net_tx_bps, Some(325));
+    }
 }
