@@ -12,7 +12,21 @@ export interface HostStatsSample {
   gpuPercent?: number
 }
 
-const MAX_SAMPLES = 60
+export const HOST_STATS_MAX_SAMPLES = 60
+
+export function mergeHostStatsHistory(
+  local: HostStatsSample[],
+  incoming: HostStatsSample[]
+): HostStatsSample[] {
+  if (incoming.length === 0) return local
+  const byTs = new Map<number, HostStatsSample>()
+  for (const s of local) byTs.set(s.ts, s)
+  for (const s of incoming) byTs.set(s.ts, s)
+  const merged = Array.from(byTs.values()).sort((a, b) => a.ts - b.ts)
+  return merged.length > HOST_STATS_MAX_SAMPLES
+    ? merged.slice(-HOST_STATS_MAX_SAMPLES)
+    : merged
+}
 
 export function appendHostStatsSample(
   history: HostStatsSample[],
@@ -38,7 +52,9 @@ export function appendHostStatsSample(
     gpuPercent: stats.gpuPercent,
   }
   const merged = [...history, next]
-  return merged.length > MAX_SAMPLES ? merged.slice(-MAX_SAMPLES) : merged
+  return merged.length > HOST_STATS_MAX_SAMPLES
+    ? merged.slice(-HOST_STATS_MAX_SAMPLES)
+    : merged
 }
 
 export function sparklinePoints(

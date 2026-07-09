@@ -14,17 +14,21 @@ if [ "$delta_total" -gt 0 ]; then
 else
   cpu_pct=0
 fi
-mem_total_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
-mem_avail_kb=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+mem_total_kb=$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo)
+mem_avail_kb=$(awk '/MemAvailable:/ {print $2; exit}' /proc/meminfo)
+if [ -z "$mem_avail_kb" ] || [ "$mem_avail_kb" -eq 0 ] 2>/dev/null; then
+  mem_avail_kb=$(awk '/MemFree:/ {f=$2} /Buffers:/ {b=$2} /^Cached:/ {c=$2} END {print f+b+c+0}' /proc/meminfo)
+fi
 mem_used_kb=$((mem_total_kb - mem_avail_kb))
-read -r _ disk_total disk_used _ _ _ _ <<< "$(df -P -B1 / 2>/dev/null | tail -1)"
-disk_read1=$(awk '/^sda / {print $6}' /proc/diskstats 2>/dev/null || awk 'NR>2 {print $6; exit}' /proc/diskstats 2>/dev/null)
-disk_write1=$(awk '/^sda / {print $10}' /proc/diskstats 2>/dev/null || awk 'NR>2 {print $10; exit}' /proc/diskstats 2>/dev/null)
+disk_total=$(df -P -B1 / 2>/dev/null | awk 'NR==2 {print $2+0}')
+disk_used=$(df -P -B1 / 2>/dev/null | awk 'NR==2 {print $3+0}')
+disk_read1=$(awk 'NR>2 {r+=$6} END {print r+0}' /proc/diskstats 2>/dev/null)
+disk_write1=$(awk 'NR>2 {w+=$10} END {print w+0}' /proc/diskstats 2>/dev/null)
 net_rx1=$(awk 'NR>2 && $1!="lo:" {gsub(":","",$1); rx+=$2} END{print rx+0}' /proc/net/dev)
 net_tx1=$(awk 'NR>2 && $1!="lo:" {gsub(":","",$1); tx+=$10} END{print tx+0}' /proc/net/dev)
 sleep 1
-disk_read2=$(awk '/^sda / {print $6}' /proc/diskstats 2>/dev/null || awk 'NR>2 {print $6; exit}' /proc/diskstats 2>/dev/null)
-disk_write2=$(awk '/^sda / {print $10}' /proc/diskstats 2>/dev/null || awk 'NR>2 {print $10; exit}' /proc/diskstats 2>/dev/null)
+disk_read2=$(awk 'NR>2 {r+=$6} END {print r+0}' /proc/diskstats 2>/dev/null)
+disk_write2=$(awk 'NR>2 {w+=$10} END {print w+0}' /proc/diskstats 2>/dev/null)
 net_rx2=$(awk 'NR>2 && $1!="lo:" {gsub(":","",$1); rx+=$2} END{print rx+0}' /proc/net/dev)
 net_tx2=$(awk 'NR>2 && $1!="lo:" {gsub(":","",$1); tx+=$10} END{print tx+0}' /proc/net/dev)
 disk_read_bps=$(( (disk_read2 - disk_read1) * 512 ))
@@ -87,11 +91,47 @@ fn ensure_ssh(request: &ConnectRequest) -> Result<(), String> {
 }
 
 fn parse_u64(value: &str, field: &str) -> Result<u64, String> {
-    value
-        .trim()
-        .trim_matches(|c: char| !c.is_ascii_digit())
+    let trimmed = value.trim();
+    let digits: String = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    if digits.is_empty() {
+        return Err(format!("无法解析 {field}: {value}"));
+    }
+    if let Ok(v) = digits.parse::<f64>() {
+        return Ok(v.max(0.0) as u64);
+    }
+    digits
         .parse::<u64>()
         .map_err(|_| format!("无法解析 {field}: {value}"))
+}
+
+fn parse_f64(value: &str, field: &str) -> Result<f64, String> {
+    let trimmed = value.trim().trim_end_matches('%');
+    trimmed
+        .parse::<f64>()
+        .map_err(|_| format!("无法解析 {field}: {value}"))
+}
+
+fn output_has_stats(output: &str) -> bool {
+    output.contains("CPU_PCT=") || output.contains("MEM_TOTAL=")
+}
+
+async fn run_stats_script(request: &ConnectRequest) -> Result<String, String> {
+    let sh_cmd = format!("sh -s <<'__CLIDE_STATS__'\n{STATS_SCRIPT}\n__CLIDE_STATS__");
+    match remote_fs::exec_capture(request, &sh_cmd, false).await {
+        Ok(out) => Ok(out),
+        Err(err) if output_has_stats(&err) => Ok(err),
+        Err(sh_err) => {
+            let bash_cmd = format!("bash -s <<'__CLIDE_STATS__'\n{STATS_SCRIPT}\n__CLIDE_STATS__");
+            match remote_fs::exec_capture(request, &bash_cmd, false).await {
+                Ok(out) => Ok(out),
+                Err(err) if output_has_stats(&err) => Ok(err),
+                Err(bash_err) => Err(format!("{sh_err}; bash fallback: {bash_err}")),
+            }
+        }
+    }
 }
 
 const STAT_KEYS: &[&str] = &[
@@ -214,12 +254,7 @@ fn ingest_key(
 ) -> Result<(), String> {
     match key {
         "CPU_PCT" => {
-            *cpu_percent = Some(
-                value
-                    .trim()
-                    .parse::<f64>()
-                    .map_err(|_| format!("无法解析 CPU 使用率: {value}"))?,
-            );
+            *cpu_percent = Some(parse_f64(value, "CPU 使用率")?);
         }
         "MEM_TOTAL" => *mem_total_bytes = Some(parse_u64(value, "内存总量")?),
         "MEM_USED" => *mem_used_bytes = Some(parse_u64(value, "内存已用")?),
@@ -228,12 +263,7 @@ fn ingest_key(
         "GPU_MEM_TOTAL" => *gpu_mem_total_bytes = Some(parse_u64(value, "显存总量")?),
         "GPU_MEM_USED" => *gpu_mem_used_bytes = Some(parse_u64(value, "显存已用")?),
         "GPU_PCT" => {
-            *gpu_percent = Some(
-                value
-                    .trim()
-                    .parse::<f64>()
-                    .map_err(|_| format!("无法解析 GPU 使用率: {value}"))?,
-            );
+            *gpu_percent = Some(parse_f64(value, "GPU 使用率")?);
         }
         "DISK_READ_BPS" => *disk_read_bps = Some(parse_u64(value, "磁盘读速率")?),
         "DISK_WRITE_BPS" => *disk_write_bps = Some(parse_u64(value, "磁盘写速率")?),
@@ -255,18 +285,7 @@ pub async fn get_host_stats(request: ConnectRequest) -> Result<RemoteHostStats, 
     if uname.trim().eq_ignore_ascii_case("Darwin") {
         return Err("远程资源监控暂不支持 macOS SSH 主机（依赖 Linux /proc）".into());
     }
-    let cmd = format!("bash -s <<'__CLIDE_STATS__'\n{STATS_SCRIPT}\n__CLIDE_STATS__");
-    let output = match remote_fs::exec_capture(&request, &cmd, false).await {
-        Ok(out) => out,
-        Err(err) => {
-            // Some hosts return non-zero exit while still printing metrics on stdout.
-            if err.contains("CPU_PCT=") || err.contains("MEM_TOTAL=") {
-                err
-            } else {
-                return Err(err);
-            }
-        }
-    };
+    let output = run_stats_script(&request).await?;
     parse_stats_output(&output)
 }
 
@@ -285,5 +304,12 @@ mod tests {
         assert_eq!(stats.disk_used_bytes, 1_806_357_651_456);
         assert_eq!(stats.net_rx_bps, Some(422));
         assert_eq!(stats.net_tx_bps, Some(325));
+    }
+
+    #[test]
+    fn parses_cpu_percent_with_suffix() {
+        let raw = "CPU_PCT=12.5%\nMEM_TOTAL=1000\nMEM_USED=500\nDISK_TOTAL=2000\nDISK_USED=1000\n";
+        let stats = parse_stats_output(raw).expect("should parse percent suffix");
+        assert!((stats.cpu_percent - 12.5).abs() < f64::EPSILON);
     }
 }

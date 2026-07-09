@@ -14,10 +14,13 @@ import { cn } from '@/lib/utils'
 import { formatUsagePair } from '@/lib/format-bytes'
 import type { RemoteHostStats } from '@/lib/terminal-client'
 import type { Session } from '@/lib/types'
+import type { HostStatsSample } from '@/lib/host-stats-history'
+import { HostStatsPanel } from '@/components/terminal/host-stats-panel'
 
 interface StatusBarProps {
   session?: Session
   hostStats?: RemoteHostStats | null
+  hostStatsHistory?: HostStatsSample[]
   hostStatsError?: string | null
   aiSidebarVisible: boolean
   aiThinking?: boolean
@@ -97,6 +100,7 @@ function IconAction({
 export function StatusBar({
   session,
   hostStats,
+  hostStatsHistory = [],
   hostStatsError = null,
   aiSidebarVisible,
   aiThinking = false,
@@ -151,28 +155,33 @@ export function StatusBar({
 
       <div className="flex items-center gap-1 shrink-0">
         {showRemoteMonitor && onOpenMonitor && (
-          <button
-            type="button"
-            onClick={onOpenMonitor}
-            className={cn(
-              'flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-accent-foreground max-w-[220px]',
-              hostStatsError ? 'text-amber-600' : 'hover:text-foreground'
+          <div className="flex items-center gap-0.5 max-w-[260px]">
+            {hostStats && (
+              <HostStatsPanel hostStats={hostStats} history={hostStatsHistory} />
             )}
-            title={metricsTitle}
-          >
-            <Activity className="w-3 h-3 shrink-0" />
-            {hostStats ? (
-              <span className="truncate font-mono text-[11px]">
-                <Cpu className="w-2.5 h-2.5 inline mr-0.5 -mt-px" />
-                {hostStats.cpuPercent.toFixed(0)}%
-                <span className="mx-1 text-border">·</span>
-                <MemoryStick className="w-2.5 h-2.5 inline mr-0.5 -mt-px" />
-                {formatUsagePair(hostStats.memUsedBytes, hostStats.memTotalBytes)}
-              </span>
-            ) : (
-              <span className="text-[11px]">{hostStatsError ? '监控不可用' : '监控'}</span>
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={onOpenMonitor}
+              className={cn(
+                'flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-accent-foreground min-w-0',
+                hostStatsError ? 'text-amber-600' : 'hover:text-foreground'
+              )}
+              title={metricsTitle}
+            >
+              <Activity className="w-3 h-3 shrink-0" />
+              {hostStats ? (
+                <span className="truncate font-mono text-[11px]">
+                  <Cpu className="w-2.5 h-2.5 inline mr-0.5 -mt-px" />
+                  {hostStats.cpuPercent.toFixed(0)}%
+                  <span className="mx-1 text-border">·</span>
+                  <MemoryStick className="w-2.5 h-2.5 inline mr-0.5 -mt-px" />
+                  {formatUsagePair(hostStats.memUsedBytes, hostStats.memTotalBytes)}
+                </span>
+              ) : (
+                <span className="text-[11px]">{hostStatsError ? '监控不可用' : '监控'}</span>
+              )}
+            </button>
+          </div>
         )}
 
         {onOpenMultiServerSync && connectedTerminalCount >= 2 && !isSyncGroup && (

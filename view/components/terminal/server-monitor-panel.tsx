@@ -18,7 +18,12 @@ import {
   type RemotePort,
 } from '@/lib/terminal-client'
 import type { Session } from '@/lib/types'
-import { type HostStatsSample, sparklinePoints, appendHostStatsSample } from '@/lib/host-stats-history'
+import {
+  type HostStatsSample,
+  sparklinePoints,
+  appendHostStatsSample,
+  mergeHostStatsHistory,
+} from '@/lib/host-stats-history'
 
 export interface ServerMonitorPanelProps {
   session: Session | null
@@ -200,7 +205,19 @@ export function ServerMonitorPanel({
       void refreshStats()
       void refreshProcesses()
     }
-  }, [active, session?.id, initialHistory, refreshStats, refreshProcesses, session])
+  }, [active, session?.id, refreshStats, refreshProcesses, session])
+
+  // Merge background polling history from the status bar / page layer.
+  useEffect(() => {
+    if (!active) return
+    setHistory(prev => mergeHostStatsHistory(prev, initialHistory))
+  }, [active, initialHistory])
+
+  useEffect(() => {
+    if (!active || !session || session.type !== 'ssh') return
+    const timer = window.setInterval(() => void refreshStats(), 30_000)
+    return () => window.clearInterval(timer)
+  }, [active, session, refreshStats])
 
   useEffect(() => {
     if (isPortQuery(procFilter)) {

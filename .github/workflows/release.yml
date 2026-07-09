@@ -86,13 +86,13 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.77
+            ## Clide v0.1.78
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **修复**：空文件夹展开后一直显示「加载中」
-            - **修复**：部分 SSH 主机监控输出粘连（`\r` 换行）导致解析失败
+            - **修复**：服务器监控曲线不显示（恢复状态栏曲线弹窗、监控面板自动轮询）
+            - **修复**：更多 Linux 主机无法加载资源监控（POSIX sh、MemAvailable 回退、磁盘 IO 汇总）
 
             ### 平台说明
             - **Windows**: `.exe` 安装包 / `*-portable.zip` 免安装版（支持应用内更新）
@@ -109,6 +109,10 @@ jobs:
 
       - name: Upload Windows portable zip
         if: matrix.platform == 'windows-latest'
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" "src-tauri/target/release/bundle/Clide_*_x64-portable.zip" --clobber
+        run: |
+          $zip = Get-ChildItem -Path "src-tauri/target/release/bundle" -Filter "Clide_*_x64-portable.zip" | Select-Object -First 1
+          if (-not $zip) { throw "Portable zip not found under src-tauri/target/release/bundle" }
+          gh release upload "${{ github.ref_name }}" $zip.FullName --clobber

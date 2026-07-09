@@ -4900,6 +4900,7 @@ export default function AITerminal() {
       <StatusBar
         session={activeSession}
         hostStats={hostStats}
+        hostStatsHistory={hostStatsHistory}
         hostStatsError={hostStatsError}
         aiSidebarVisible={showAiPane}
         aiThinking={activeThread?.status === 'running'}
