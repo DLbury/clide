@@ -95,17 +95,25 @@ export function extractCwdFromProbeOutput(
 
   for (const line of lines) {
     if (line === marker) continue
-    if (line === 'pwd' || line === 'Get-Location' || /ProviderPath/i.test(line)) {
+    if (
+      line === 'pwd' ||
+      line === 'cd' ||
+      line === 'Get-Location' ||
+      /^Path$/i.test(line) ||
+      /^----+$/.test(line) ||
+      /ProviderPath/i.test(line)
+    ) {
       continue
     }
-    if (line.startsWith('/') || isWindowsShellPath(line)) {
-      return normalizeRemoteCwd(line.replace(/\\/g, '/'))
+    const normalized = line.replace(/\\/g, '/')
+    if (normalized.startsWith('/') || isWindowsShellPath(normalized)) {
+      return normalizeRemoteCwd(normalized)
     }
   }
   return null
 }
 
-/** 向 PTY 写入以探测当前 cwd 的命令（带唯一标记） */
+/** 向 PTY 写入以探测当前 cwd 的命令（带唯一标记；不含行尾，由 normalizeShellCommandForPty 补 \\r） */
 export function formatShellPwdProbeCommand(
   marker: string,
   sessionType?: string,
@@ -116,11 +124,17 @@ export function formatShellPwdProbeCommand(
     return (
       `Write-Output '${safe}'; ` +
       `(Get-Location).ProviderPath; ` +
-      `Write-Output '${safe}'\n`
+      `Write-Output '${safe}'`
     )
   }
   const unixSafe = marker.replace(/'/g, `'\\''`)
-  return `printf '%s\\n' '${unixSafe}'; pwd; printf '%s\\n' '${unixSafe}'\n`
+  return `printf '%s\\n' '${unixSafe}'; pwd; printf '%s\\n' '${unixSafe}'`
+}
+
+/** Windows cmd.exe：cd 无参数时会打印当前目录 */
+export function formatCmdPwdProbeCommand(marker: string): string {
+  const safe = marker.replace(/[&|<>^%]/g, '')
+  return `echo ${safe} & cd & echo ${safe}`
 }
 
 function normalizeRemoteCwd(path: string): string {
@@ -151,17 +165,22 @@ export function parseCdTargetFromCommand(
     ?.trim()
   if (!line) return null
 
-  const cdOnly = line.match(/^cd\s+(.+)$/)
+  const cdOnly = line.match(/^cd\s+(.+)$/i)
   if (cdOnly) {
     return resolveCdOperand(cdOnly[1].trim(), currentCwd, homeDir)
   }
 
-  const cdChain = line.match(/^cd\s+([^;&|]+)(?:\s*[;&|]|$)/)
+  const setLocation = line.match(/^(?:Set-Location|sl)\s+(.+)$/i)
+  if (setLocation) {
+    return resolveCdOperand(setLocation[1].trim(), currentCwd, homeDir)
+  }
+
+  const cdChain = line.match(/^cd\s+([^;&|]+)(?:\s*[;&|]|$)/i)
   if (cdChain) {
     return resolveCdOperand(cdChain[1].trim(), currentCwd, homeDir)
   }
 
-  if (/^cd\s*$/.test(line)) {
+  if (/^cd\s*$/i.test(line) || /^Set-Location\s*$/i.test(line)) {
     return homeDir
   }
 
@@ -241,10 +260,10 @@ export function formatShellCdCommand(
     isWindowsShellPath(normalized)
   ) {
     const escaped = normalized.replace(/'/g, "''")
-    return `Set-Location '${escaped}'\n`
+    return `Set-Location '${escaped}'`
   }
   const escaped = normalized.replace(/'/g, "'\\''")
-  return `cd '${escaped}'\n`
+  return `cd '${escaped}'`
 }
 
 /** 将远程绝对路径转为 loadRemoteFiles 可用的 path 参数 */

@@ -1196,8 +1196,16 @@ export default function AITerminal() {
       const shell = conn.shells.find(s => s.id === conn.activeShellId)
       if (!shell || shell.terminalStatus !== 'connected') return
       const cdPath = isDirectory ? path : getParentPath(path)
-      const escaped = cdPath.replace(/'/g, "'\\''")
-      void writeTerminal(shell.terminalSessionId, `cd '${escaped}'\n`).catch(() => {})
+      void writeTerminal(
+        shell.terminalSessionId,
+        normalizeShellCommandForPty(
+          formatShellCdCommand(
+            cdPath,
+            conn.session.type,
+            conn.remotePlatform
+          )
+        )
+      ).catch(() => {})
     },
     [activeConnectionId]
   )
@@ -1635,10 +1643,12 @@ export default function AITerminal() {
             window.setTimeout(() => {
               void writeTerminal(
                 event.sessionId,
-                formatShellCdCommand(
-                  pendingLayoutCwd,
-                  connectedConn.session.type,
-                  connectedConn.remotePlatform
+                normalizeShellCommandForPty(
+                  formatShellCdCommand(
+                    pendingLayoutCwd,
+                    connectedConn.session.type,
+                    connectedConn.remotePlatform
+                  )
                 )
               ).catch(() => {})
               applyShellCwd(connectedConn.id, event.sessionId, pendingLayoutCwd)

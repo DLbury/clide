@@ -4,10 +4,13 @@ import { resolveRemoteDisplayPath } from '@/lib/remote-file-tree'
 import {
   extractCwdFromTerminalChunk,
   extractCwdFromProbeOutput,
+  formatCmdPwdProbeCommand,
   formatShellPwdProbeCommand,
   remotePathForListApi,
+  usesWindowsShellCommands,
   type RemoteShellPlatform,
 } from '@/lib/terminal-cwd'
+import { normalizeShellCommandForPty } from '@/lib/terminal-client'
 import { getTerminalOutputBuffer } from '@/lib/terminal-stream'
 import type { Session } from '@/lib/types'
 
@@ -138,36 +141,62 @@ export async function probeShellCwds(
   const connected = shells.filter(s => s.terminalStatus === 'connected')
   if (connected.length === 0) return results
 
+  const windowsShell = usesWindowsShellCommands(sessionType, remotePlatform)
+
+  const waitForProbe = async (
+    terminalSessionId: string,
+    marker: string,
+    beforeLen: number,
+    timeoutMs = windowsShell ? 3500 : 2500
+  ): Promise<string | null> => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const buf = getTerminalOutputBuffer(terminalSessionId)
+      const delta = buf.slice(Math.max(0, beforeLen - 64))
+      const probed = extractCwdFromProbeOutput(delta, marker)
+      if (probed) return probed
+      const fromTail = extractCwdFromProbeOutput(buf.slice(-4096), marker)
+      if (fromTail) return fromTail
+      await new Promise(r => setTimeout(r, 80))
+    }
+    return null
+  }
+
+  const runProbe = async (
+    shell: (typeof connected)[number],
+    command: string,
+    marker: string
+  ): Promise<string | null> => {
+    const beforeLen = getTerminalOutputBuffer(shell.terminalSessionId).length
+    try {
+      await write(
+        shell.terminalSessionId,
+        normalizeShellCommandForPty(command)
+      )
+    } catch {
+      return null
+    }
+    return waitForProbe(shell.terminalSessionId, marker, beforeLen)
+  }
+
   await Promise.all(
     connected.map(async shell => {
       const marker = `__CLIDE_CWD_${shell.id.replace(/[^a-zA-Z0-9_-]/g, '')}_${Date.now()}__`
-      const beforeLen = getTerminalOutputBuffer(shell.terminalSessionId).length
-      try {
-        await write(
-          shell.terminalSessionId,
-          formatShellPwdProbeCommand(marker, sessionType, remotePlatform)
-        )
-      } catch {
-        if (shell.shellCwd) results.set(shell.id, shell.shellCwd.replace(/\\/g, '/'))
-        return
+
+      const commands: string[] = []
+      if (windowsShell) {
+        commands.push(formatShellPwdProbeCommand(marker, sessionType, remotePlatform))
+        commands.push(formatCmdPwdProbeCommand(marker))
+      } else {
+        commands.push(formatShellPwdProbeCommand(marker, sessionType, remotePlatform))
       }
 
-      const deadline = Date.now() + 2500
-      while (Date.now() < deadline) {
-        const buf = getTerminalOutputBuffer(shell.terminalSessionId)
-        const delta = buf.slice(Math.max(0, beforeLen - 64))
-        const probed = extractCwdFromProbeOutput(delta, marker)
+      for (const command of commands) {
+        const probed = await runProbe(shell, command, marker)
         if (probed) {
           results.set(shell.id, probed)
           return
         }
-        // 有些环境可能回显不全，回退扫整段尾部
-        const fromTail = extractCwdFromProbeOutput(buf.slice(-4096), marker)
-        if (fromTail) {
-          results.set(shell.id, fromTail)
-          return
-        }
-        await new Promise(r => setTimeout(r, 80))
       }
 
       const fallback =
