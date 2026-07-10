@@ -16,8 +16,36 @@ export function joinRemotePath(base: string, segment: string): string {
   return `${cleanBase}/${cleanSeg}`
 }
 
-export function defaultRemoteHome(user?: string): string {
+export type RemoteShellPlatform = 'windows' | 'unix'
+
+export function usesWindowsShellCommands(
+  sessionType?: string,
+  remotePlatform?: RemoteShellPlatform
+): boolean {
+  return sessionType === 'local' || (sessionType === 'ssh' && remotePlatform === 'windows')
+}
+
+export function defaultRemoteHome(
+  user?: string,
+  remotePlatform?: RemoteShellPlatform
+): string {
+  if (remotePlatform === 'windows') {
+    return user ? `C:/Users/${user}` : 'C:/Users'
+  }
   return user ? `/home/${user}` : '~'
+}
+
+export function shellHomeDir(
+  sessionType: string,
+  options?: { user?: string; remotePath?: string; remotePlatform?: RemoteShellPlatform }
+): string {
+  if (sessionType === 'local') {
+    return options?.remotePath?.replace(/\\/g, '/') ?? '~'
+  }
+  if (sessionType === 'ssh') {
+    return defaultRemoteHome(options?.user, options?.remotePlatform)
+  }
+  return '~'
 }
 
 function stripAnsi(text: string): string {
@@ -80,10 +108,11 @@ export function extractCwdFromProbeOutput(
 /** 向 PTY 写入以探测当前 cwd 的命令（带唯一标记） */
 export function formatShellPwdProbeCommand(
   marker: string,
-  sessionType?: string
+  sessionType?: string,
+  remotePlatform?: RemoteShellPlatform
 ): string {
   const safe = marker.replace(/'/g, "''")
-  if (sessionType === 'local') {
+  if (usesWindowsShellCommands(sessionType, remotePlatform)) {
     return (
       `Write-Output '${safe}'; ` +
       `(Get-Location).ProviderPath; ` +
@@ -201,9 +230,16 @@ export function consumeTerminalInputLine(
 }
 
 /** 生成写入 PTY 的 cd 命令 */
-export function formatShellCdCommand(cwd: string, sessionType?: string): string {
+export function formatShellCdCommand(
+  cwd: string,
+  sessionType?: string,
+  remotePlatform?: RemoteShellPlatform
+): string {
   const normalized = cwd.replace(/\\/g, '/')
-  if (sessionType === 'local' && isWindowsShellPath(normalized)) {
+  if (
+    usesWindowsShellCommands(sessionType, remotePlatform) ||
+    isWindowsShellPath(normalized)
+  ) {
     const escaped = normalized.replace(/'/g, "''")
     return `Set-Location '${escaped}'\n`
   }

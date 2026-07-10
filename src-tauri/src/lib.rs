@@ -830,6 +830,14 @@ async fn terminal_get_cwd(
 }
 
 #[tauri::command]
+async fn terminal_detect_platform(
+    request: terminal::ConnectRequest,
+) -> Result<String, String> {
+    let request = terminal::enrich_connect_request(request);
+    Ok(terminal::detect_remote_platform_name(&request).await)
+}
+
+#[tauri::command]
 async fn terminal_move_path(
     request: terminal::ConnectRequest,
     source: String,
@@ -1085,6 +1093,7 @@ pub fn run() {
             terminal_read_file_binary,
             terminal_write_file_binary,
             terminal_get_cwd,
+            terminal_detect_platform,
             terminal_move_path,
             terminal_rename_path,
             terminal_create_directory,

@@ -86,13 +86,15 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.78
+            ## Clide v0.1.79
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **修复**：服务器监控曲线不显示（恢复状态栏曲线弹窗、监控面板自动轮询）
-            - **修复**：更多 Linux 主机无法加载资源监控（POSIX sh、MemAvailable 回退、磁盘 IO 汇总）
+            - **修复**：左侧服务器连接状态与真实终端不同步（多 Shell 聚合状态）
+            - **修复**：Windows SSH 主机保存布局时无法记录 Shell 路径
+            - **增强**：服务器监控面板（负载/运行时间/Swap/进度条、磁盘与网络分项曲线）
+            - **增强**：进程/端口表格列宽可拖拽调整并记忆
 
             ### 平台说明
             - **Windows**: `.exe` 安装包 / `*-portable.zip` 免安装版（支持应用内更新）

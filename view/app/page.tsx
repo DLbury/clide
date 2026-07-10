@@ -46,8 +46,10 @@ import {
   writeLocalFile,
   getLocalHomeDir,
   getRemoteCwd,
+  detectRemotePlatform,
   getRemoteHostStats,
   type RemoteHostStats,
+  type RemoteShellPlatform,
   onTerminalWrite,
   isTerminalBackendSupported,
 } from '@/lib/terminal-client'
@@ -87,7 +89,7 @@ import {
   saveAiPaneVisible,
 } from '@/lib/panel-layout-settings'
 import {
-  defaultRemoteHome,
+  shellHomeDir,
   extractCwdFromTerminalChunk,
   parseCdTargetFromCommand,
   remotePathForListApi,
@@ -124,6 +126,11 @@ import {
   dockviewHasMonitorPanel,
   type ServerLayoutSnapshot,
 } from '@/lib/layout-snapshots'
+import {
+  connectionSessionStatus,
+  foldersNeedStatusSync,
+  mergeFolderSessionStatuses,
+} from '@/lib/connection-status'
 import { listTunnels, stopTunnel, stopSocksForProfile } from '@/lib/tunnel-client'
 import { tabTitleFromUrl } from '@/lib/browser-address'
 import { makeBrowserWebviewLabel } from '@/lib/tauri-child-webview'
@@ -281,6 +288,8 @@ interface ServerConnection {
   /** SSH 远程目录列表 */
   remoteFiles?: FileItem[]
   remotePath?: string
+  /** SSH 远程 Shell 平台（Linux / Windows OpenSSH） */
+  remotePlatform?: RemoteShellPlatform
   remoteFileError?: string | null
   browserTabs?: BrowserTab[]
   activeBrowserTabId?: string | null
@@ -410,12 +419,6 @@ function setSessionStatusInFolders(
       s.id === sessionId ? { ...s, status } : s
     ),
   }))
-}
-
-function connectionSessionStatus(shells: Shell[]): Session['status'] {
-  if (shells.some(s => s.terminalStatus === 'connected')) return 'connected'
-  if (shells.some(s => s.terminalStatus === 'connecting')) return 'connecting'
-  return 'disconnected'
 }
 
 function updateConnectionShellByTerminalId(
@@ -668,6 +671,18 @@ export default function AITerminal() {
   useEffect(() => {
     saveAiPaneVisible(showAiPane)
   }, [showAiPane])
+
+  const sidebarFolders = useMemo(
+    () => mergeFolderSessionStatuses(folders, connections),
+    [folders, connections]
+  )
+
+  useEffect(() => {
+    setFolders(prev => {
+      if (!foldersNeedStatusSync(prev, connections)) return prev
+      return mergeFolderSessionStatuses(prev, connections)
+    })
+  }, [connections, setFolders])
 
   const activeConnection = connections.find(c => c.id === activeConnectionId)
   const activeSession = activeConnection?.session
@@ -1340,10 +1355,11 @@ export default function AITerminal() {
       }
       const shell = conn.shells.find(s => s.terminalSessionId === terminalSessionId)
       if (!shell) return
-      const home =
-        sessionType === 'local'
-          ? conn.remotePath?.replace(/\\/g, '/') ?? '~'
-          : defaultRemoteHome(conn.session.user)
+      const home = shellHomeDir(sessionType, {
+        user: conn.session.user,
+        remotePath: conn.remotePath,
+        remotePlatform: conn.remotePlatform,
+      })
       const current = shell.shellCwd ?? home
 
       const completedLine = consumeTerminalInputLine(
@@ -1442,36 +1458,39 @@ export default function AITerminal() {
       sessionId: string,
       systemMessage?: string
     ) => {
+      let nextStatus: Session['status'] = 'connecting'
       setConnections(prev =>
         prev.map(conn => {
           if (conn.id !== connectionId) return conn
+          const shells = conn.shells.map(shell =>
+            shell.id === shellId
+              ? {
+                  ...shell,
+                  terminalStatus: 'connecting' as const,
+                  history: systemMessage
+                    ? [
+                        ...shell.history,
+                        {
+                          id: `retry-${Date.now()}`,
+                          type: 'system' as const,
+                          content: systemMessage,
+                          timestamp: new Date(),
+                        },
+                      ]
+                    : shell.history,
+                }
+              : shell
+          )
+          nextStatus = connectionSessionStatus(shells)
           return {
             ...conn,
-            session: { ...conn.session, status: 'connecting' },
+            shells,
+            session: { ...conn.session, status: nextStatus },
             terminalLive: true,
-            shells: conn.shells.map(shell =>
-              shell.id === shellId
-                ? {
-                    ...shell,
-                    terminalStatus: 'connecting' as const,
-                    history: systemMessage
-                      ? [
-                          ...shell.history,
-                          {
-                            id: `retry-${Date.now()}`,
-                            type: 'system' as const,
-                            content: systemMessage,
-                            timestamp: new Date(),
-                          },
-                        ]
-                      : shell.history,
-                  }
-                : shell
-            ),
           }
         })
       )
-      setFolders(prev => setSessionStatusInFolders(prev, sessionId, 'connecting'))
+      setFolders(prev => setSessionStatusInFolders(prev, sessionId, nextStatus))
     },
     [setFolders]
   )
@@ -1553,6 +1572,7 @@ export default function AITerminal() {
           requestTerminalResync(event.sessionId)
           let connectedSession: Session | undefined
           let profileSessionId: string | undefined
+          let nextSessionStatus: Session['status'] | undefined
           let shouldLoadRemote = false
 
           setConnections(prev =>
@@ -1569,6 +1589,7 @@ export default function AITerminal() {
               if (!updated) return conn
               connectedSession = updated.session
               profileSessionId = updated.session.id
+              nextSessionStatus = updated.session.status
               shouldLoadRemote =
                 (updated.session.type === 'ssh' ||
                   updated.session.type === 'local' ||
@@ -1579,9 +1600,9 @@ export default function AITerminal() {
             })
           )
 
-          if (profileSessionId) {
+          if (profileSessionId && nextSessionStatus) {
             setFolders(prev =>
-              setSessionStatusInFolders(prev, profileSessionId!, 'connected')
+              setSessionStatusInFolders(prev, profileSessionId!, nextSessionStatus!)
             )
             const connectRequestId = pendingMcpConnectRef.current.get(profileSessionId)
             if (connectRequestId) {
@@ -1614,11 +1635,26 @@ export default function AITerminal() {
             window.setTimeout(() => {
               void writeTerminal(
                 event.sessionId,
-                formatShellCdCommand(pendingLayoutCwd, connectedConn.session.type)
+                formatShellCdCommand(
+                  pendingLayoutCwd,
+                  connectedConn.session.type,
+                  connectedConn.remotePlatform
+                )
               ).catch(() => {})
               applyShellCwd(connectedConn.id, event.sessionId, pendingLayoutCwd)
             }, 400)
           } else if (connectedConn) {
+            if (connectedConn.session.type === 'ssh' && !connectedConn.remotePlatform) {
+              void detectRemotePlatform(resolveSessionForConnect(connectedConn.session))
+                .then(platform => {
+                  setConnections(prev =>
+                    prev.map(c =>
+                      c.id === connectedConn.id ? { ...c, remotePlatform: platform } : c
+                    )
+                  )
+                })
+                .catch(() => {})
+            }
             if (connectedConn.session.type === 'ssh') {
               void getRemoteCwd(
                 resolveSessionForConnect(connectedConn.session),
@@ -1638,6 +1674,7 @@ export default function AITerminal() {
         } else if (event.status === 'error') {
           const message = event.error ?? '连接失败'
           let profileSessionId: string | undefined
+          let nextSessionStatus: Session['status'] | undefined
 
           setConnections(prev =>
             prev.map(conn => {
@@ -1660,13 +1697,14 @@ export default function AITerminal() {
               )
               if (!updated) return conn
               profileSessionId = updated.session.id
+              nextSessionStatus = updated.session.status
               return updated
             })
           )
 
-          if (profileSessionId) {
+          if (profileSessionId && nextSessionStatus) {
             setFolders(prev =>
-              setSessionStatusInFolders(prev, profileSessionId!, 'disconnected')
+              setSessionStatusInFolders(prev, profileSessionId!, nextSessionStatus!)
             )
             const connectRequestId = pendingMcpConnectRef.current.get(profileSessionId)
             if (connectRequestId) {
@@ -1686,6 +1724,7 @@ export default function AITerminal() {
           offerPasswordRetryAfterAuthFailure(event.sessionId, message)
         } else if (event.status === 'disconnected') {
           let profileSessionId: string | undefined
+          let nextSessionStatus: Session['status'] | undefined
           let disconnectedConnId: string | undefined
 
           setConnections(prev =>
@@ -1709,14 +1748,15 @@ export default function AITerminal() {
               )
               if (!updated) return conn
               profileSessionId = updated.session.id
+              nextSessionStatus = updated.session.status
               disconnectedConnId = updated.id
               return updated
             })
           )
 
-          if (profileSessionId) {
+          if (profileSessionId && nextSessionStatus) {
             setFolders(prev =>
-              setSessionStatusInFolders(prev, profileSessionId!, 'disconnected')
+              setSessionStatusInFolders(prev, profileSessionId!, nextSessionStatus!)
             )
           }
           if (disconnectedConnId) {
@@ -1955,6 +1995,18 @@ export default function AITerminal() {
     const dockview = workbenchRef.current?.captureLayout()
     if (!dockview) return
 
+    let remotePlatform = conn.remotePlatform
+    if (conn.session.type === 'ssh' && !remotePlatform) {
+      remotePlatform = await detectRemotePlatform(
+        resolveSessionForConnect(conn.session)
+      ).catch(() => undefined)
+      if (remotePlatform) {
+        setConnections(prev =>
+          prev.map(c => (c.id === conn.id ? { ...c, remotePlatform } : c))
+        )
+      }
+    }
+
     const probed = await probeShellCwds(
       conn.shells.map(s => ({
         id: s.id,
@@ -1963,7 +2015,8 @@ export default function AITerminal() {
         shellCwd: s.shellCwd,
       })),
       conn.session.type,
-      writeTerminal
+      writeTerminal,
+      remotePlatform ?? conn.remotePlatform
     )
 
     // 探测结果写回，便于后续切换 Shell / 文件树跟随使用
@@ -2325,6 +2378,9 @@ export default function AITerminal() {
         s => s.terminalStatus === 'connected'
       )
       if (shellConnected) {
+        setFolders(prev =>
+          setSessionStatusInFolders(prev, folderSession.id, 'connected')
+        )
         if (activate && existingConn.session.type === 'ssh') {
           void loadRemoteFiles(existingConn.session, existingConn.remotePath ?? '~')
         }
@@ -2344,27 +2400,28 @@ export default function AITerminal() {
       setConnections(prev =>
         prev.map(conn => {
           if (conn.id !== existingConn.id) return conn
+          const shells = conn.shells.map(shell =>
+            shell.id === activeShell.id
+              ? {
+                  ...shell,
+                  terminalStatus: 'connecting' as const,
+                  history: [
+                    ...shell.history,
+                    {
+                      id: `reconnect-${Date.now()}`,
+                      type: 'system' as const,
+                      content: `正在重新连接 ${folderSession.name}...`,
+                      timestamp: new Date(),
+                    },
+                  ],
+                }
+              : shell
+          )
           return {
             ...conn,
-            session: { ...conn.session, status: 'connecting' },
+            shells,
+            session: { ...conn.session, status: connectionSessionStatus(shells) },
             terminalLive: true,
-            shells: conn.shells.map(shell =>
-              shell.id === activeShell.id
-                ? {
-                    ...shell,
-                    terminalStatus: 'connecting' as const,
-                    history: [
-                      ...shell.history,
-                      {
-                        id: `reconnect-${Date.now()}`,
-                        type: 'system' as const,
-                        content: `正在重新连接 ${folderSession.name}...`,
-                        timestamp: new Date(),
-                      },
-                    ],
-                  }
-                : shell
-            ),
           }
         })
       )
@@ -2710,7 +2767,11 @@ export default function AITerminal() {
         command !== '\x03' &&
         command !== 'clear'
       ) {
-        const home = defaultRemoteHome(conn.session.user)
+        const home = shellHomeDir(conn.session.type, {
+          user: conn.session.user,
+          remotePath: conn.remotePath,
+          remotePlatform: conn.remotePlatform,
+        })
         const current = shell.shellCwd ?? home
         const next = parseCdTargetFromCommand(command, current, home)
         if (next) applyShellCwd(activeConnectionId, shell.terminalSessionId, next)
@@ -4554,22 +4615,23 @@ export default function AITerminal() {
       setConnections(prev =>
         prev.map(c => {
           if (c.id !== connectionId) return c
+          const shells = c.shells.map(s => ({
+            ...s,
+            terminalStatus: 'connecting' as const,
+            history: [
+              ...s.history,
+              {
+                id: `reconnect-${Date.now()}`,
+                type: 'system' as const,
+                content: `正在重新连接 ${c.session.name}...`,
+                timestamp: new Date(),
+              },
+            ],
+          }))
           return {
             ...c,
-            session: { ...c.session, status: 'connecting' },
-            shells: c.shells.map(s => ({
-              ...s,
-              terminalStatus: 'connecting' as const,
-              history: [
-                ...s.history,
-                {
-                  id: `reconnect-${Date.now()}`,
-                  type: 'system' as const,
-                  content: `正在重新连接 ${c.session.name}...`,
-                  timestamp: new Date(),
-                },
-              ],
-            })),
+            session: { ...c.session, status: connectionSessionStatus(shells) },
+            shells,
           }
         })
       )
@@ -4640,7 +4702,7 @@ export default function AITerminal() {
         ) : (
           <div className="w-64 shrink-0 overflow-hidden border-r border-sidebar-border">
             <Sidebar
-              folders={folders}
+              folders={sidebarFolders}
               onSessionSelect={handleSessionSelect}
               onSessionConnect={handleSessionConnect}
               onNewSession={() => {

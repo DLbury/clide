@@ -45,6 +45,13 @@ pub async fn detect_platform_public(request: &ConnectRequest) -> RemotePlatform 
     detect_platform(request).await
 }
 
+pub async fn detect_platform_name(request: &ConnectRequest) -> String {
+    match detect_platform(request).await {
+        RemotePlatform::Windows => "windows".to_string(),
+        RemotePlatform::Unix => "unix".to_string(),
+    }
+}
+
 async fn resolve_path(request: &ConnectRequest, path: &str) -> Result<String, String> {
     if path.contains(':') || path.starts_with("\\\\") {
         return Ok(normalize_path_slashes(path));

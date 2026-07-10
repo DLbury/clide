@@ -39,15 +39,35 @@ if [ "$disk_read_bps" -lt 0 ]; then disk_read_bps=0; fi
 if [ "$disk_write_bps" -lt 0 ]; then disk_write_bps=0; fi
 if [ "$net_rx_bps" -lt 0 ]; then net_rx_bps=0; fi
 if [ "$net_tx_bps" -lt 0 ]; then net_tx_bps=0; fi
+read -r load1 load5 load15 _rest < /proc/loadavg 2>/dev/null || true
+uptime_sec=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
+swap_total_kb=$(awk '/SwapTotal:/ {print $2; exit}' /proc/meminfo)
+swap_free_kb=$(awk '/SwapFree:/ {print $2; exit}' /proc/meminfo)
+mem_buffers_kb=$(awk '/Buffers:/ {print $2; exit}' /proc/meminfo)
+mem_cached_kb=$(awk '/^Cached:/ {print $2; exit}' /proc/meminfo)
+cpu_cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+hostname=$(hostname 2>/dev/null || uname -n 2>/dev/null || echo unknown)
+proc_total=$(ps -e --no-headers 2>/dev/null | wc -l | tr -d ' ')
 echo "CPU_PCT=$cpu_pct"
 echo "MEM_TOTAL=$((mem_total_kb * 1024))"
 echo "MEM_USED=$((mem_used_kb * 1024))"
+echo "MEM_BUFFERS=$((mem_buffers_kb * 1024))"
+echo "MEM_CACHED=$((mem_cached_kb * 1024))"
+echo "SWAP_TOTAL=$((swap_total_kb * 1024))"
+echo "SWAP_USED=$(((swap_total_kb - swap_free_kb) * 1024))"
 echo "DISK_TOTAL=${disk_total:-0}"
 echo "DISK_USED=${disk_used:-0}"
 echo "DISK_READ_BPS=$disk_read_bps"
 echo "DISK_WRITE_BPS=$disk_write_bps"
 echo "NET_RX_BPS=$net_rx_bps"
 echo "NET_TX_BPS=$net_tx_bps"
+echo "LOAD_1=${load1:-0}"
+echo "LOAD_5=${load5:-0}"
+echo "LOAD_15=${load15:-0}"
+echo "UPTIME_SEC=${uptime_sec:-0}"
+echo "CPU_CORES=${cpu_cores:-1}"
+echo "HOSTNAME=${hostname:-unknown}"
+echo "PROC_TOTAL=${proc_total:-0}"
 if command -v nvidia-smi >/dev/null 2>&1; then
   gpu_line=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
   if [ -n "$gpu_line" ]; then
@@ -81,6 +101,17 @@ pub struct RemoteHostStats {
     pub disk_write_bps: Option<u64>,
     pub net_rx_bps: Option<u64>,
     pub net_tx_bps: Option<u64>,
+    pub load_avg_1: Option<f64>,
+    pub load_avg_5: Option<f64>,
+    pub load_avg_15: Option<f64>,
+    pub uptime_secs: Option<u64>,
+    pub swap_total_bytes: Option<u64>,
+    pub swap_used_bytes: Option<u64>,
+    pub mem_buffers_bytes: Option<u64>,
+    pub mem_cached_bytes: Option<u64>,
+    pub cpu_cores: Option<u32>,
+    pub hostname: Option<String>,
+    pub process_count: Option<u32>,
 }
 
 fn ensure_ssh(request: &ConnectRequest) -> Result<(), String> {
@@ -138,12 +169,23 @@ const STAT_KEYS: &[&str] = &[
     "CPU_PCT",
     "MEM_TOTAL",
     "MEM_USED",
+    "MEM_BUFFERS",
+    "MEM_CACHED",
+    "SWAP_TOTAL",
+    "SWAP_USED",
     "DISK_TOTAL",
     "DISK_USED",
     "DISK_READ_BPS",
     "DISK_WRITE_BPS",
     "NET_RX_BPS",
     "NET_TX_BPS",
+    "LOAD_1",
+    "LOAD_5",
+    "LOAD_15",
+    "UPTIME_SEC",
+    "CPU_CORES",
+    "HOSTNAME",
+    "PROC_TOTAL",
     "GPU_PCT",
     "GPU_MEM_USED",
     "GPU_MEM_TOTAL",
@@ -199,8 +241,26 @@ fn parse_stats_output(output: &str) -> Result<RemoteHostStats, String> {
     let mut disk_write_bps = None;
     let mut net_rx_bps = None;
     let mut net_tx_bps = None;
+    let mut load_avg_1 = None;
+    let mut load_avg_5 = None;
+    let mut load_avg_15 = None;
+    let mut uptime_secs = None;
+    let mut swap_total_bytes = None;
+    let mut swap_used_bytes = None;
+    let mut mem_buffers_bytes = None;
+    let mut mem_cached_bytes = None;
+    let mut cpu_cores = None;
+    let mut hostname = None;
+    let mut process_count = None;
 
     for (key, value) in extract_stat_pairs(output) {
+        if key == "HOSTNAME" {
+            let name = value.trim();
+            if !name.is_empty() && name != "unknown" {
+                hostname = Some(name.to_string());
+            }
+            continue;
+        }
         ingest_key(
             &key,
             &value,
@@ -216,6 +276,16 @@ fn parse_stats_output(output: &str) -> Result<RemoteHostStats, String> {
             &mut disk_write_bps,
             &mut net_rx_bps,
             &mut net_tx_bps,
+            &mut load_avg_1,
+            &mut load_avg_5,
+            &mut load_avg_15,
+            &mut uptime_secs,
+            &mut swap_total_bytes,
+            &mut swap_used_bytes,
+            &mut mem_buffers_bytes,
+            &mut mem_cached_bytes,
+            &mut cpu_cores,
+            &mut process_count,
         )?;
     }
 
@@ -232,6 +302,17 @@ fn parse_stats_output(output: &str) -> Result<RemoteHostStats, String> {
         disk_write_bps,
         net_rx_bps,
         net_tx_bps,
+        load_avg_1,
+        load_avg_5,
+        load_avg_15,
+        uptime_secs,
+        swap_total_bytes,
+        swap_used_bytes,
+        mem_buffers_bytes,
+        mem_cached_bytes,
+        cpu_cores,
+        hostname,
+        process_count,
     })
 }
 
@@ -251,6 +332,16 @@ fn ingest_key(
     disk_write_bps: &mut Option<u64>,
     net_rx_bps: &mut Option<u64>,
     net_tx_bps: &mut Option<u64>,
+    load_avg_1: &mut Option<f64>,
+    load_avg_5: &mut Option<f64>,
+    load_avg_15: &mut Option<f64>,
+    uptime_secs: &mut Option<u64>,
+    swap_total_bytes: &mut Option<u64>,
+    swap_used_bytes: &mut Option<u64>,
+    mem_buffers_bytes: &mut Option<u64>,
+    mem_cached_bytes: &mut Option<u64>,
+    cpu_cores: &mut Option<u32>,
+    process_count: &mut Option<u32>,
 ) -> Result<(), String> {
     match key {
         "CPU_PCT" => {
@@ -258,6 +349,10 @@ fn ingest_key(
         }
         "MEM_TOTAL" => *mem_total_bytes = Some(parse_u64(value, "内存总量")?),
         "MEM_USED" => *mem_used_bytes = Some(parse_u64(value, "内存已用")?),
+        "MEM_BUFFERS" => *mem_buffers_bytes = Some(parse_u64(value, "内存缓冲")?),
+        "MEM_CACHED" => *mem_cached_bytes = Some(parse_u64(value, "内存缓存")?),
+        "SWAP_TOTAL" => *swap_total_bytes = Some(parse_u64(value, "Swap 总量")?),
+        "SWAP_USED" => *swap_used_bytes = Some(parse_u64(value, "Swap 已用")?),
         "DISK_TOTAL" => *disk_total_bytes = Some(parse_u64(value, "磁盘总量")?),
         "DISK_USED" => *disk_used_bytes = Some(parse_u64(value, "磁盘已用")?),
         "GPU_MEM_TOTAL" => *gpu_mem_total_bytes = Some(parse_u64(value, "显存总量")?),
@@ -269,6 +364,12 @@ fn ingest_key(
         "DISK_WRITE_BPS" => *disk_write_bps = Some(parse_u64(value, "磁盘写速率")?),
         "NET_RX_BPS" => *net_rx_bps = Some(parse_u64(value, "网络接收速率")?),
         "NET_TX_BPS" => *net_tx_bps = Some(parse_u64(value, "网络发送速率")?),
+        "LOAD_1" => *load_avg_1 = Some(parse_f64(value, "1 分钟负载")?),
+        "LOAD_5" => *load_avg_5 = Some(parse_f64(value, "5 分钟负载")?),
+        "LOAD_15" => *load_avg_15 = Some(parse_f64(value, "15 分钟负载")?),
+        "UPTIME_SEC" => *uptime_secs = Some(parse_u64(value, "运行时间")?),
+        "CPU_CORES" => *cpu_cores = Some(parse_u64(value, "CPU 核心数")? as u32),
+        "PROC_TOTAL" => *process_count = Some(parse_u64(value, "进程数")? as u32),
         _ => {}
     }
     Ok(())

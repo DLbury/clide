@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { RefreshCw, Skull, Loader2, HardDrive, Network, Gpu, ChevronUp, ChevronDown } from 'lucide-react'
+import { RefreshCw, Skull, Loader2, HardDrive, Network, Gpu, ChevronUp, ChevronDown, Server, Clock, Cpu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatUsagePair, formatBytesPerSec, formatBytesCompact } from '@/lib/format-bytes'
+import { useResizableColumns } from '@/hooks/use-resizable-columns'
 import {
   getRemoteHostStats,
   listRemoteProcesses,
@@ -30,6 +31,56 @@ export interface ServerMonitorPanelProps {
   initialHistory?: HostStatsSample[]
   /** Panel is mounted and visible in the workbench */
   active?: boolean
+}
+
+function formatUptime(secs?: number): string {
+  if (secs == null) return '—'
+  const d = Math.floor(secs / 86400)
+  const h = Math.floor((secs % 86400) / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  if (d > 0) return `${d}天 ${h}时`
+  if (h > 0) return `${h}时 ${m}分`
+  return `${m}分`
+}
+
+function pct(used: number, total: number): number {
+  return total > 0 ? (used / total) * 100 : 0
+}
+
+function UsageBar({
+  label,
+  percent,
+  detail,
+  barClass,
+}: {
+  label: string
+  percent: number
+  detail: string
+  barClass: string
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs gap-2">
+        <span className="text-muted-foreground shrink-0">{label}</span>
+        <span className="font-mono truncate">{detail}</span>
+      </div>
+      <div className="h-2 rounded-full bg-muted/80 overflow-hidden">
+        <div
+          className={cn('h-full rounded-full transition-all duration-500', barClass)}
+          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 min-w-0">
+      <p className="text-[10px] text-muted-foreground truncate">{label}</p>
+      <p className="text-sm font-mono truncate">{value}</p>
+    </div>
+  )
 }
 
 function StatSparkline({
@@ -89,28 +140,28 @@ function toggleSortKey<T extends string>(
   return { key, dir: defaultDesc.includes(key) ? 'desc' : 'asc' }
 }
 
-function SortableTh({
+function ResizableSortableTh({
   label,
   active,
   dir,
   onClick,
-  className,
+  width,
+  onResizeStart,
 }: {
   label: string
   active: boolean
   dir: SortDir
   onClick: () => void
-  className?: string
+  width: number
+  onResizeStart: (e: React.MouseEvent) => void
 }) {
   return (
     <th
-      className={cn(
-        'p-2 cursor-pointer select-none text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors',
-        className
-      )}
+      className="relative p-2 cursor-pointer select-none text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+      style={{ width }}
       onClick={onClick}
     >
-      <span className="inline-flex items-center gap-0.5">
+      <span className="inline-flex items-center gap-0.5 pr-2">
         {label}
         {active &&
           (dir === 'asc' ? (
@@ -119,6 +170,13 @@ function SortableTh({
             <ChevronDown className="w-3 h-3" />
           ))}
       </span>
+      <span
+        role="separator"
+        aria-orientation="vertical"
+        className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40"
+        onMouseDown={onResizeStart}
+        onClick={e => e.stopPropagation()}
+      />
     </th>
   )
 }
@@ -157,6 +215,23 @@ export function ServerMonitorPanel({
     dir: 'asc',
   })
   const openedSessionRef = useRef<string | null>(null)
+
+  const procCols = useResizableColumns('clide-monitor-proc-cols', {
+    pid: 56,
+    cpu: 52,
+    mem: 72,
+    user: 88,
+    command: 240,
+    action: 40,
+  })
+  const portCols = useResizableColumns('clide-monitor-port-cols', {
+    port: 72,
+    protocol: 52,
+    pid: 56,
+    address: 120,
+    command: 220,
+    action: 40,
+  })
 
   const refreshStats = useCallback(async () => {
     if (!session || session.type !== 'ssh') return
@@ -364,6 +439,18 @@ export function ServerMonitorPanel({
 
   const diskIo = stats ? (stats.diskReadBps ?? 0) + (stats.diskWriteBps ?? 0) : 0
   const netIo = stats ? (stats.netRxBps ?? 0) + (stats.netTxBps ?? 0) : 0
+  const memAvailBytes =
+    stats && stats.memTotalBytes > stats.memUsedBytes
+      ? stats.memTotalBytes - stats.memUsedBytes
+      : 0
+  const diskFreeBytes =
+    stats && stats.diskTotalBytes > stats.diskUsedBytes
+      ? stats.diskTotalBytes - stats.diskUsedBytes
+      : 0
+  const loadDetail =
+    stats?.loadAvg1 != null
+      ? `${stats.loadAvg1.toFixed(2)} / ${stats.loadAvg5?.toFixed(2) ?? '—'} / ${stats.loadAvg15?.toFixed(2) ?? '—'}`
+      : '—'
   const hasGpuStats =
     stats &&
     (stats.gpuPercent != null ||
@@ -418,6 +505,74 @@ export function ServerMonitorPanel({
           )}
           {stats && (
             <>
+              <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/10">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Server className="w-4 h-4 text-muted-foreground" />
+                  <span className="truncate">{stats.hostname ?? session.host ?? session.name}</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <MetricTile
+                    label="运行时间"
+                    value={formatUptime(stats.uptimeSecs)}
+                  />
+                  <MetricTile
+                    label="负载 (1/5/15m)"
+                    value={loadDetail}
+                  />
+                  <MetricTile
+                    label="CPU 核心"
+                    value={stats.cpuCores != null ? String(stats.cpuCores) : '—'}
+                  />
+                  <MetricTile
+                    label="进程数"
+                    value={stats.processCount != null ? String(stats.processCount) : '—'}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border p-3 space-y-3">
+                <p className="text-xs font-medium text-muted-foreground">资源使用率</p>
+                <UsageBar
+                  label="CPU"
+                  percent={stats.cpuPercent}
+                  detail={`${stats.cpuPercent.toFixed(1)}%${stats.cpuCores ? ` · ${stats.cpuCores} 核` : ''}`}
+                  barClass="bg-primary/80"
+                />
+                <UsageBar
+                  label="内存"
+                  percent={pct(stats.memUsedBytes, stats.memTotalBytes)}
+                  detail={formatUsagePair(stats.memUsedBytes, stats.memTotalBytes)}
+                  barClass="bg-sky-500/80"
+                />
+                <UsageBar
+                  label="磁盘 (/)"
+                  percent={pct(stats.diskUsedBytes, stats.diskTotalBytes)}
+                  detail={formatUsagePair(stats.diskUsedBytes, stats.diskTotalBytes)}
+                  barClass="bg-amber-500/80"
+                />
+                {stats.swapTotalBytes != null && stats.swapTotalBytes > 0 && (
+                  <UsageBar
+                    label="Swap"
+                    percent={pct(stats.swapUsedBytes ?? 0, stats.swapTotalBytes)}
+                    detail={formatUsagePair(stats.swapUsedBytes ?? 0, stats.swapTotalBytes)}
+                    barClass="bg-orange-500/70"
+                  />
+                )}
+                {hasGpuStats && (
+                  <UsageBar
+                    label="GPU"
+                    percent={
+                      stats.gpuPercent ??
+                      (stats.gpuMemTotalBytes && stats.gpuMemUsedBytes
+                        ? pct(stats.gpuMemUsedBytes, stats.gpuMemTotalBytes)
+                        : 0)
+                    }
+                    detail={gpuLabel}
+                    barClass="bg-emerald-500/80"
+                  />
+                )}
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <StatSparkline
                   label="CPU"
@@ -434,18 +589,32 @@ export function ServerMonitorPanel({
                   colorClass="text-sky-500/80"
                 />
                 <StatSparkline
-                  label="磁盘 IO"
-                  value={formatBytesPerSec(diskIo)}
+                  label="磁盘读"
+                  value={formatBytesPerSec(stats.diskReadBps ?? 0)}
                   history={history}
-                  pick={s => (s.diskReadBps ?? 0) + (s.diskWriteBps ?? 0)}
+                  pick={s => s.diskReadBps ?? 0}
                   colorClass="text-amber-500/80"
                 />
                 <StatSparkline
-                  label="网络 IO"
-                  value={formatBytesPerSec(netIo)}
+                  label="磁盘写"
+                  value={formatBytesPerSec(stats.diskWriteBps ?? 0)}
                   history={history}
-                  pick={s => (s.netRxBps ?? 0) + (s.netTxBps ?? 0)}
+                  pick={s => s.diskWriteBps ?? 0}
+                  colorClass="text-amber-600/80"
+                />
+                <StatSparkline
+                  label="网络入"
+                  value={formatBytesPerSec(stats.netRxBps ?? 0)}
+                  history={history}
+                  pick={s => s.netRxBps ?? 0}
                   colorClass="text-violet-500/80"
+                />
+                <StatSparkline
+                  label="网络出"
+                  value={formatBytesPerSec(stats.netTxBps ?? 0)}
+                  history={history}
+                  pick={s => s.netTxBps ?? 0}
+                  colorClass="text-violet-600/80"
                 />
                 {hasGpuStats && (
                   <StatSparkline
@@ -460,7 +629,42 @@ export function ServerMonitorPanel({
                   />
                 )}
               </div>
-              <div className="flex items-center gap-4 text-sm text-muted-foreground flex-wrap">
+
+              <div className="rounded-lg border border-border p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">内存 / 磁盘详情</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs font-mono">
+                  <span className="text-muted-foreground">可用内存</span>
+                  <span className="col-span-1 sm:col-span-2">{formatBytesCompact(memAvailBytes)}</span>
+                  {stats.memBuffersBytes != null && (
+                    <>
+                      <span className="text-muted-foreground">Buffers</span>
+                      <span className="col-span-1 sm:col-span-2">{formatBytesCompact(stats.memBuffersBytes)}</span>
+                    </>
+                  )}
+                  {stats.memCachedBytes != null && (
+                    <>
+                      <span className="text-muted-foreground">Cached</span>
+                      <span className="col-span-1 sm:col-span-2">{formatBytesCompact(stats.memCachedBytes)}</span>
+                    </>
+                  )}
+                  <span className="text-muted-foreground">磁盘可用</span>
+                  <span className="col-span-1 sm:col-span-2">{formatBytesCompact(diskFreeBytes)}</span>
+                  <span className="text-muted-foreground">磁盘 IO 合计</span>
+                  <span className="col-span-1 sm:col-span-2">{formatBytesPerSec(diskIo)}</span>
+                  <span className="text-muted-foreground">网络 IO 合计</span>
+                  <span className="col-span-1 sm:col-span-2">{formatBytesPerSec(netIo)}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  更新间隔 30s
+                </span>
+                <span className="flex items-center gap-1">
+                  <Cpu className="w-3.5 h-3.5" />
+                  采样 {history.length} 次
+                </span>
                 <span className="flex items-center gap-1">
                   <HardDrive className="w-3.5 h-3.5" />
                   {formatUsagePair(stats.diskUsedBytes, stats.diskTotalBytes)}
@@ -523,64 +727,70 @@ export function ServerMonitorPanel({
             <p className="text-sm text-destructive shrink-0">{procError}</p>
           )}
 
-          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden rounded border border-border">
+          <div className="flex-1 min-h-0 overflow-auto rounded border border-border">
             {procTab === 'ports' ? (
-              <table className="w-full text-xs table-fixed">
-                <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+              <table className="w-max min-w-full text-xs table-fixed">
+                <thead className="sticky top-0 bg-muted/80 backdrop-blur z-10">
                   <tr className="text-left text-muted-foreground">
-                    <SortableTh
+                    <ResizableSortableTh
                       label="端口"
                       active={portSort.key === 'port'}
                       dir={portSort.dir}
+                      width={portCols.widths.port ?? 72}
+                      onResizeStart={e => portCols.startResize('port', e)}
                       onClick={() =>
                         setPortSort(prev =>
                           toggleSortKey(prev, 'port', ['port', 'pid'])
                         )
                       }
-                      className="w-[72px]"
                     />
-                    <SortableTh
+                    <ResizableSortableTh
                       label="协议"
                       active={portSort.key === 'protocol'}
                       dir={portSort.dir}
+                      width={portCols.widths.protocol ?? 52}
+                      onResizeStart={e => portCols.startResize('protocol', e)}
                       onClick={() =>
                         setPortSort(prev =>
                           toggleSortKey(prev, 'protocol', ['port', 'pid'])
                         )
                       }
-                      className="w-[52px]"
                     />
-                    <SortableTh
+                    <ResizableSortableTh
                       label="PID"
                       active={portSort.key === 'pid'}
                       dir={portSort.dir}
+                      width={portCols.widths.pid ?? 56}
+                      onResizeStart={e => portCols.startResize('pid', e)}
                       onClick={() =>
                         setPortSort(prev => toggleSortKey(prev, 'pid', ['port', 'pid']))
                       }
-                      className="w-[56px]"
                     />
-                    <SortableTh
+                    <ResizableSortableTh
                       label="地址"
                       active={portSort.key === 'address'}
                       dir={portSort.dir}
+                      width={portCols.widths.address ?? 120}
+                      onResizeStart={e => portCols.startResize('address', e)}
                       onClick={() =>
                         setPortSort(prev =>
                           toggleSortKey(prev, 'address', ['port', 'pid'])
                         )
                       }
-                      className="w-[100px]"
                     />
-                    <SortableTh
+                    <ResizableSortableTh
                       label="进程"
                       active={portSort.key === 'command'}
                       dir={portSort.dir}
+                      width={portCols.widths.command ?? 220}
+                      onResizeStart={e => portCols.startResize('command', e)}
                       onClick={() =>
                         setPortSort(prev =>
                           toggleSortKey(prev, 'command', ['port', 'pid'])
                         )
                       }
                     />
-                    <th className="p-2 w-[40px]" />
+                    <th className="p-2" style={{ width: portCols.widths.action ?? 40 }} />
                   </tr>
                 </thead>
                 <tbody>
@@ -593,9 +803,9 @@ export function ServerMonitorPanel({
                         key={`${p.protocol}-${p.address}-${p.port}-${p.pid}`}
                         className="border-t border-border/50 hover:bg-muted/30"
                       >
-                        <td className="p-2 font-mono">{p.port}</td>
-                        <td className="p-2 uppercase">{p.protocol}</td>
-                        <td className="p-2 font-mono">{p.pid || '—'}</td>
+                        <td className="p-2 font-mono truncate">{p.port}</td>
+                        <td className="p-2 uppercase truncate">{p.protocol}</td>
+                        <td className="p-2 font-mono truncate">{p.pid || '—'}</td>
                         <td className="p-2 font-mono truncate" title={p.address}>
                           {p.address}
                         </td>
@@ -636,61 +846,76 @@ export function ServerMonitorPanel({
                 </tbody>
               </table>
             ) : (
-              <table className="w-full text-xs table-fixed">
-                <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+              <table className="w-max min-w-full text-xs table-fixed">
+                <thead className="sticky top-0 bg-muted/80 backdrop-blur z-10">
                   <tr className="text-left text-muted-foreground">
-                    <SortableTh
+                    <ResizableSortableTh
                       label="PID"
                       active={procSort.key === 'pid'}
                       dir={procSort.dir}
+                      width={procCols.widths.pid ?? 56}
+                      onResizeStart={e => procCols.startResize('pid', e)}
                       onClick={() =>
                         setProcSort(prev => toggleSortKey(prev, 'pid', ['cpu', 'mem', 'pid']))
                       }
-                      className="w-[56px]"
                     />
-                    <SortableTh
+                    <ResizableSortableTh
                       label="CPU%"
                       active={procSort.key === 'cpu'}
                       dir={procSort.dir}
+                      width={procCols.widths.cpu ?? 52}
+                      onResizeStart={e => procCols.startResize('cpu', e)}
                       onClick={() =>
                         setProcSort(prev => toggleSortKey(prev, 'cpu', ['cpu', 'mem', 'pid']))
                       }
-                      className="w-[52px]"
                     />
-                    <SortableTh
+                    <ResizableSortableTh
                       label="内存"
                       active={procSort.key === 'mem'}
                       dir={procSort.dir}
+                      width={procCols.widths.mem ?? 72}
+                      onResizeStart={e => procCols.startResize('mem', e)}
                       onClick={() =>
                         setProcSort(prev => toggleSortKey(prev, 'mem', ['cpu', 'mem', 'pid']))
                       }
-                      className="w-[64px]"
                     />
-                    <SortableTh
+                    <ResizableSortableTh
+                      label="用户"
+                      active={false}
+                      dir="asc"
+                      width={procCols.widths.user ?? 88}
+                      onResizeStart={e => procCols.startResize('user', e)}
+                      onClick={() => {}}
+                    />
+                    <ResizableSortableTh
                       label="命令"
                       active={procSort.key === 'command'}
                       dir={procSort.dir}
+                      width={procCols.widths.command ?? 240}
+                      onResizeStart={e => procCols.startResize('command', e)}
                       onClick={() =>
                         setProcSort(prev =>
                           toggleSortKey(prev, 'command', ['cpu', 'mem', 'pid'])
                         )
                       }
                     />
-                    <th className="p-2 w-[40px]" />
+                    <th className="p-2" style={{ width: procCols.widths.action ?? 40 }} />
                   </tr>
                 </thead>
                 <tbody>
                   {filteredProcs.map(p => (
                     <tr key={p.pid} className="border-t border-border/50 hover:bg-muted/30">
-                      <td className="p-2 font-mono">{p.pid}</td>
-                      <td className="p-2 font-mono">{p.cpuPercent.toFixed(1)}</td>
-                      <td className="p-2 font-mono">
+                      <td className="p-2 font-mono truncate">{p.pid}</td>
+                      <td className="p-2 font-mono truncate">{p.cpuPercent.toFixed(1)}</td>
+                      <td className="p-2 font-mono truncate">
                         {p.memBytes != null
                           ? formatBytesCompact(p.memBytes)
                           : `${p.memPercent.toFixed(1)}%`}
                       </td>
-                      <td className="p-2 truncate min-w-0" title={`${p.user ? `${p.user}: ` : ''}${p.command}`}>
-                        {p.user ? `${p.user}: ` : ''}
+                      <td className="p-2 truncate" title={p.user}>
+                        {p.user ?? '—'}
+                      </td>
+                      <td className="p-2 truncate min-w-0" title={p.command}>
                         {p.command}
                       </td>
                       <td className="p-2">
@@ -713,7 +938,7 @@ export function ServerMonitorPanel({
                   ))}
                   {!procBusy && filteredProcs.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="p-4 text-center text-muted-foreground">
+                      <td colSpan={6} className="p-4 text-center text-muted-foreground">
                         无进程数据
                       </td>
                     </tr>

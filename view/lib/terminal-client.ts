@@ -323,6 +323,16 @@ export async function getRemoteCwd(
   })
 }
 
+export type { RemoteShellPlatform } from '@/lib/terminal-cwd'
+import type { RemoteShellPlatform } from '@/lib/terminal-cwd'
+
+export async function detectRemotePlatform(session: Session): Promise<RemoteShellPlatform> {
+  const label = await invoke<string>('terminal_detect_platform', {
+    request: sessionToInvokeRequest(session),
+  })
+  return label === 'windows' ? 'windows' : 'unix'
+}
+
 export async function listLocalDirectory(
   sessionType: 'local' | 'wsl',
   path: string
@@ -448,6 +458,17 @@ export interface RemoteHostStats {
   diskWriteBps?: number
   netRxBps?: number
   netTxBps?: number
+  loadAvg1?: number
+  loadAvg5?: number
+  loadAvg15?: number
+  uptimeSecs?: number
+  swapTotalBytes?: number
+  swapUsedBytes?: number
+  memBuffersBytes?: number
+  memCachedBytes?: number
+  cpuCores?: number
+  hostname?: string
+  processCount?: number
 }
 
 export async function exportTerminalBuffer(sessionId: string): Promise<string> {

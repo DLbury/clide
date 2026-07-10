@@ -34,7 +34,7 @@ pub use remote_fs::{
     read_file as read_remote_file, read_file_base64 as read_remote_file_base64,
     rename_path as rename_remote_path, search_files as search_remote_files,
     write_file as write_remote_file, write_file_base64 as write_remote_file_base64,
-    RemoteFileEntry,
+    detect_platform_name as detect_remote_platform_name, RemoteFileEntry,
 };
 pub use remote_stats::{get_host_stats as get_remote_host_stats, RemoteHostStats};
 pub use remote_process::{

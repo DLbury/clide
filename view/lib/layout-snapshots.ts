@@ -6,6 +6,7 @@ import {
   extractCwdFromProbeOutput,
   formatShellPwdProbeCommand,
   remotePathForListApi,
+  type RemoteShellPlatform,
 } from '@/lib/terminal-cwd'
 import { getTerminalOutputBuffer } from '@/lib/terminal-stream'
 import type { Session } from '@/lib/types'
@@ -130,7 +131,8 @@ export async function probeShellCwds(
     shellCwd?: string
   }>,
   sessionType: Session['type'],
-  write: (terminalSessionId: string, data: string) => Promise<void>
+  write: (terminalSessionId: string, data: string) => Promise<void>,
+  remotePlatform?: RemoteShellPlatform
 ): Promise<Map<string, string>> {
   const results = new Map<string, string>()
   const connected = shells.filter(s => s.terminalStatus === 'connected')
@@ -143,7 +145,7 @@ export async function probeShellCwds(
       try {
         await write(
           shell.terminalSessionId,
-          formatShellPwdProbeCommand(marker, sessionType)
+          formatShellPwdProbeCommand(marker, sessionType, remotePlatform)
         )
       } catch {
         if (shell.shellCwd) results.set(shell.id, shell.shellCwd.replace(/\\/g, '/'))
