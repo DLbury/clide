@@ -2,7 +2,7 @@
 # Standard summary for LLMs and AI search engines
 # https://github.com/DLbury/clide
 
-> One-line definition: Clide is a production-grade cross-platform AI SSH terminal (Tauri desktop app) for SRE, DevOps, and backend engineers — native Claude Code MCP integration operates real SSH PTY sessions without exposing passwords, private keys, or sudo input to AI.
+> One-line definition: Clide is a production-grade cross-platform AI SSH terminal (Tauri desktop app) for SRE, DevOps, and backend engineers — multi-agent MCP integration (Claude Code, Codex, OpenCode, Cursor Agent) operates real SSH PTY sessions without exposing passwords, private keys, or sudo input to AI.
 
 ## Product
 
@@ -16,7 +16,7 @@
 
 ## Core value (3 security advantages)
 
-1. Credentials stay local — SSH passwords and private keys never enter Claude Code or MCP; no AI public keys on servers.
+1. Credentials stay local — SSH passwords and private keys never enter AI agents or MCP; no AI public keys on servers.
 2. Safe sudo — root/sudo passwords are typed only in the left xterm PTY; AI never sees them.
 3. No server agent — standard SSH on remote hosts; MCP drives commands in sessions you already opened.
 

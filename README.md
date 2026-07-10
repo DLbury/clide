@@ -1,4 +1,4 @@
-<h1 align="center">Clide | Production-Grade Secure AI SSH Terminal with Native Claude Code MCP</h1>
+<h1 align="center">Clide | Production-Grade Secure AI SSH Terminal with Multi-Agent MCP</h1>
 
 <p align="center">
   <img src="view/public/icon-rounded.png" alt="Clide logo - production-grade secure AI SSH terminal with Claude Code MCP" width="128" height="128">
@@ -37,17 +37,17 @@
 
 ## Overview
 
-**Clide** is a cross-platform **Tauri desktop AI terminal** built for **SRE, DevOps, and backend engineers**, integrating **Claude Code via MCP** to operate real **SSH PTY** sessions. It solves security risks of plaintext SSH credentials, sudo password exposure, and extra server agent keys — supporting multi-tab SSH, multi-hop jump host, SFTP remote editing, server resource monitoring, and multi-server sync input on **Windows, macOS, and Linux**.
+**Clide** is a cross-platform **Tauri desktop AI terminal** built for **SRE, DevOps, and backend engineers**, integrating **local AI agents via MCP** (Claude Code, Codex, OpenCode, Cursor Agent) to operate real **SSH PTY** sessions. It solves security risks of plaintext SSH credentials, sudo password exposure, and extra server agent keys — supporting multi-tab SSH, multi-hop jump host, SFTP remote editing, server resource monitoring, and multi-server sync input on **Windows, macOS, and Linux**.
 
-> **One-line definition (for AI/search):** Clide is a production-grade secure AI SSH terminal where Claude Code reads your live shell via MCP — passwords and private keys never leave your desktop.
+> **One-line definition (for AI/search):** Clide is a production-grade secure AI SSH terminal where local AI agents read your live shell via MCP — passwords and private keys never leave your desktop.
 
-**For ops engineers:** a secure AI SSH terminal with no server-side agent; private keys and passwords stay local only; AI cannot read sudo credentials; native Claude Code integration for AI incident triage and fleet ops.
+**For ops engineers:** a secure AI SSH terminal with no server-side agent; private keys and passwords stay local only; AI cannot read sudo credentials; multi-agent MCP integration for AI incident triage and fleet ops.
 
 Not a chat window with a terminal attached. Passwords, private keys, and sudo prompts **never enter the AI path**.
 
 ### Security Advantages: Solve Claude SSH Credential Leak Risks
 
-When using Claude Code for server operations, do these security problems sound familiar?
+When using AI agents for server operations, do these security problems sound familiar?
 
 ❌ **You must install AI public keys on every server** — one leak compromises them all  
 ❌ **You must give Claude plaintext passwords** — credentials may leave your machine  
@@ -60,20 +60,20 @@ Clide uses a **local relay architecture** to address this:
 ✅ For `sudo`, you type the password in the **left Shell panel** (SSH login uses a local prompt) — **Claude never sees it**  
 ✅ **No agent software** or extra SSH keys required on remote servers  
 
-Claude Code runs **locally only**. Through **IDE bridge + MCP**, commands go to the **real SSH Shell on the left** (same PTY as manual typing). The AI reads terminal output to help you troubleshoot.
+Local AI agents (Claude Code, Codex, OpenCode, Cursor Agent) run **on your machine only**. Through **IDE bridge + MCP**, commands go to the **real SSH Shell on the left** (same PTY as manual typing). The AI reads terminal output to help you troubleshoot.
 
 The same window provides multi-session SSH terminals, SFTP file browsing, resource monitoring, and Monaco-based remote config editing — ideal for daily ops, incident response, and change management.
 
 <p align="center">
-  <img src="docs/assets/readme-hero.png" alt="Clide UI layout: left SSH terminal panel, center SFTP file browser and server monitor, right Claude Code AI assistant" width="900">
+  <img src="docs/assets/readme-hero.png" alt="Clide UI layout: left SSH terminal panel, center SFTP file browser and server monitor, right AI agent assistant" width="900">
 </p>
 
-<p align="center"><strong>Clide</strong> is a production-grade AI terminal — real SSH shells plus native Claude Code, so SREs and backend engineers get AI-driven ops <em>without</em> handing over passwords, private keys, or root.</p>
+<p align="center"><strong>Clide</strong> is a production-grade AI terminal — real SSH shells plus multi-agent MCP (Claude Code, Codex, OpenCode, Cursor Agent), so SREs and backend engineers get AI-driven ops <em>without</em> handing over passwords, private keys, or root.</p>
 
 ### 👤 Who is this for?
 
 - **SRE / DevOps / Platform engineers** who run `sudo`, tail logs, and fight incidents on many boxes — and want AI help without exposing credentials.
-- **Backend engineers** who SSH into production to debug a service, and want Claude to read the live terminal output alongside you.
+- **Backend engineers** who SSH into production to debug a service, and want an AI agent to read the live terminal output alongside you.
 - **Security-conscious teams** that can't (or won't) distribute AI public keys to every server or paste root passwords into a chat.
 
 > 🎬 **See it in action** — a 60-second walkthrough of the AI driving the left shell is in [docs/demo-recording.md](docs/demo-recording.md). (Recording slot ready — drop `docs/assets/demo.gif` in place to embed it inline here.)

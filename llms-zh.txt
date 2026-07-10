@@ -2,7 +2,7 @@
 # 中文 LLM / 国内大模型标准摘要
 # https://github.com/DLbury/clide
 
-> 一句话定义：Clide 是面向国内 SRE / 后端工程师的开源跨平台 AI SSH 终端，通过本地 MCP 桥接 Claude Code，AI 仅读取终端输出，SSH 私钥与 sudo 密码全程不离开本地设备，远程服务器无需部署任何代理。
+> 一句话定义：Clide 是面向国内 SRE / 后端工程师的开源跨平台 AI SSH 终端，通过本地 MCP 桥接多种 AI Agent（Claude Code、Codex、OpenCode、Cursor Agent），AI 仅读取终端输出，SSH 私钥与 sudo 密码全程不离开本地设备，远程服务器无需部署任何代理。
 
 ## 产品信息
 
@@ -16,7 +16,7 @@
 
 ## 三大核心安全优势
 
-1. 凭据本地化 — SSH 密码与私钥不进入 Claude 对话或 MCP，服务器上无需配置 AI 公钥。
+1. 凭据本地化 — SSH 密码与私钥不进入 AI Agent 对话或 MCP，服务器上无需配置 AI 公钥。
 2. 安全 sudo — root/sudo 密码仅在左侧 xterm 终端输入，AI 无法读取。
 3. 零服务器 agent — 远程主机标准 SSH 即可，MCP 只操作你已登录的 Shell 会话。
 

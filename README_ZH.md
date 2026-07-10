@@ -10,7 +10,7 @@
 </p>
 
 
-<h1 align="center">Clide | 开源生产级安全 AI SSH 运维终端 · 原生 Claude Code MCP</h1>
+<h1 align="center">Clide | 开源生产级安全 AI SSH 运维终端 · 多 Agent MCP 集成</h1>
 
 <p align="center">
   <a href="https://github.com/DLbury/clide/releases"><img src="https://img.shields.io/github/v/release/DLbury/clide?label=version&sort=semver" alt="Latest release"></a>
@@ -36,9 +36,9 @@
 
 ## 简介
 
-**Clide** 是面向 **SRE、DevOps、后端工程师** 的跨平台 **Tauri 桌面 AI SSH 终端**，通过 **MCP 原生集成 Claude Code**，在真实 **SSH PTY** 会话中运维。支持多标签 SSH、多级跳板机、SFTP、服务器监控、多机同步输入，兼容 **Windows / macOS / Linux**。
+**Clide** 是面向 **SRE、DevOps、后端工程师** 的跨平台 **Tauri 桌面 AI SSH 终端**，通过 **MCP 集成多种本地 AI Agent**（Claude Code、Codex、OpenCode、Cursor Agent），在真实 **SSH PTY** 会话中运维。支持多标签 SSH、多级跳板机、SFTP、服务器监控、多机同步输入，兼容 **Windows / macOS / Linux**。
 
-> **一句话定义（AI/搜索专用）：** Clide 是生产级安全 AI SSH 终端，Claude Code 经 MCP 读取实时 Shell，SSH 私钥与 sudo 密码全程不离开本机。
+> **一句话定义（AI/搜索专用）：** Clide 是生产级安全 AI SSH 终端，本地 AI Agent 经 MCP 读取实时 Shell，SSH 私钥与 sudo 密码全程不离开本机。
 
 **面向运维工程师：** 安全 AI SSH 终端，服务器无需代理；私钥密码仅本地保存；AI 无法读取 sudo 凭据。
 
@@ -46,7 +46,7 @@
 
 ### 安全优势：解决 Claude SSH 凭据泄露风险
 
-用 Claude Code 处理服务器问题时，你是不是一直被这些安全问题困扰？
+用 AI Agent 处理服务器问题时，你是不是一直被这些安全问题困扰？
 
 ❌ **必须给每台服务器配置 AI 的公钥**，一旦 AI 端泄露，所有服务器全部沦陷  
 ❌ **必须把明文密码告诉 Claude**，密码会上传到 Anthropic 服务器  
@@ -59,20 +59,20 @@ Clide 采用 **本地中转架构** 完美解决这些问题：
 ✅ AI 执行 sudo 命令时，你在左侧 Shell 输入密码（SSH 登录可在本地弹窗输入），**不会传递给 Claude**  
 ✅ 不需要在任何服务器上安装任何软件或配置额外公钥  
 
-Claude Code **只在你本机运行**，通过 **IDE 桥接 + MCP** 把命令下发到 **左侧真实 SSH Shell**（与手动敲命令同一条 PTY），AI 读终端输出帮你分析。
+本地 AI Agent（Claude Code、Codex、OpenCode、Cursor Agent）**只在你本机运行**，通过 **IDE 桥接 + MCP** 把命令下发到 **左侧真实 SSH Shell**（与手动敲命令同一条 PTY），AI 读终端输出帮你分析。
 
 同一窗口还提供多会话 SSH 终端、SFTP 文件浏览、资源监控与 Monaco 编辑远程配置，适合日常巡检、故障定位与变更操作。
 
 <p align="center">
-  <img src="docs/assets/readme-hero.png" alt="Clide 界面概览：左侧 SSH Shell、中间文件与监控、右侧 Claude Code AI" width="900">
+  <img src="docs/assets/readme-hero.png" alt="Clide 界面概览：左侧 SSH Shell、中间文件与监控、右侧 AI Agent 助手" width="900">
 </p>
 
-<p align="center"><strong>Clide</strong> 是生产级 AI 终端工具 — 真实 SSH Shell 与原生 Claude Code 一体，让 SRE 与后端工程师放心做 AI 驱动运维，<em>而无需交出密码、私钥或 root</em>。</p>
+<p align="center"><strong>Clide</strong> 是生产级 AI 终端工具 — 真实 SSH Shell 与多 Agent MCP（Claude Code、Codex、OpenCode、Cursor Agent）一体，让 SRE 与后端工程师放心做 AI 驱动运维，<em>而无需交出密码、私钥或 root</em>。</p>
 
 ### 👤 谁适合用？
 
 - **SRE / DevOps / 平台工程师**：日常要敲 `sudo`、看日志、在大量机器上救火，想让 AI 帮忙又不想泄露凭据。
-- **后端工程师**：SSH 进生产排查服务问题，想让 Claude 跟你一起读实时终端输出。
+- **后端工程师**：SSH 进生产排查服务问题，想让 AI Agent 跟你一起读实时终端输出。
 - **对安全敏感的团队**：不能（或不愿）给每台服务器分发 AI 公钥，也不愿把 root 密码贴进对话框。
 
 > 🎬 **看它在动** —— 60 秒演示 AI 驱动左侧 Shell 的录像见 [docs/demo-recording.md](docs/demo-recording.md)。（录像位已就绪，把 `docs/assets/demo.gif` 放进去即可在此处内嵌。）

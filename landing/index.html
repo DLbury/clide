@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Clide — Production-Grade AI Terminal | SSH, SFTP, Claude Code MCP</title>
-<meta name="description" content="Clide is a free, open-source production-grade AI terminal for Windows, macOS, and Linux. Multi-tab SSH, SFTP, jump hosts, layout snapshots, fleet sync, and native Claude Code — credentials stay in your shell, not in the chat.">
+<title>Clide — Production-Grade AI Terminal | SSH, SFTP, Multi-Agent MCP</title>
+<meta name="description" content="Clide is a free, open-source production-grade AI terminal for Windows, macOS, and Linux. Multi-tab SSH, SFTP, jump hosts, layout snapshots, fleet sync, and multi-agent MCP (Claude Code, Codex, OpenCode, Cursor Agent) — credentials stay in your shell, not in the chat.">
 <meta name="keywords" content="SSH terminal, SSH client, terminal emulator, SFTP client, remote terminal, DevOps terminal, SRE tools, server management, ops workbench, cross-platform terminal, Windows SSH client, Linux terminal, macOS terminal, AI terminal, AI ops, Claude Code, MCP server, secure sudo, remote server troubleshooting, incident response, jump host, bastion SSH, xterm, multi-tab terminal, Tauri, open source terminal">
 <meta name="author" content="Clide">
 <meta name="robots" content="index, follow, max-image-preview:large">
@@ -18,13 +18,13 @@
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="zh_CN">
 <meta property="og:title" content="Clide — Production-Grade AI Terminal">
-<meta property="og:description" content="Production-grade AI terminal: multi-tab SSH, SFTP, jump hosts, fleet sync, and native Claude Code. Credentials stay in your shell.">
+<meta property="og:description" content="Production-grade AI terminal: multi-tab SSH, SFTP, fleet sync, and multi-agent MCP. Credentials stay in your shell.">
 <meta property="og:url" content="https://dlbury.github.io/clide/">
 <meta property="og:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <meta property="og:image:alt" content="Clide desktop app: SSH terminal on the left, remote files and monitoring in the center, Claude Code AI assistant on the right">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Clide — Production-Grade AI Terminal">
-<meta name="twitter:description" content="Production AI terminal: SSH, SFTP, fleet sync, and Claude Code. Credentials stay in your shell.">
+<meta name="twitter:description" content="Production AI terminal: SSH, SFTP, fleet sync, and multi-agent MCP. Credentials stay in your shell.">
 <meta name="twitter:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <link rel="icon" type="image/png" href="assets/icon-rounded.png">
 <link rel="apple-touch-icon" href="assets/icon-rounded.png">
@@ -38,7 +38,7 @@
       "@id": "https://dlbury.github.io/clide/#website",
       "url": "https://dlbury.github.io/clide/",
       "name": "Clide",
-      "description": "Production-grade AI terminal for SRE and DevOps — SSH, SFTP, and Claude Code MCP",
+      "description": "Production-grade AI terminal for SRE and DevOps — SSH, SFTP, and multi-agent MCP",
       "inLanguage": ["en", "zh-CN"],
       "publisher": {"@id": "https://dlbury.github.io/clide/#organization"}
     },
@@ -58,7 +58,7 @@
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "SSH Client, Terminal Emulator, SFTP Client",
       "operatingSystem": "Windows 10+, macOS 11+, Linux",
-      "description": "Desktop SSH terminal with multi-tab shells, SFTP file manager, server resource monitoring, and local Claude Code AI integration via MCP. Credentials never leave your machine.",
+      "description": "Desktop SSH terminal with multi-tab shells, SFTP file manager, server resource monitoring, and local AI agent integration (Claude Code, Codex, OpenCode, Cursor Agent) via MCP. Credentials never leave your machine.",
       "url": "https://dlbury.github.io/clide/",
       "downloadUrl": "https://github.com/DLbury/clide/releases",
       "softwareVersion": "0.1",
@@ -69,7 +69,7 @@
         "Multi-tab SSH terminal with split panes",
         "SFTP remote file browser and editor",
         "CPU, memory, disk monitoring",
-        "Claude Code MCP integration",
+        "Multi-agent MCP integration (Claude Code, Codex, OpenCode, Cursor Agent)",
         "Secure sudo, password typed in terminal only",
         "Jump host and bastion support",
         "Cross-platform Windows macOS Linux"
@@ -85,7 +85,7 @@
           "name": "What is Clide?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Clide is a production-grade AI terminal — a full SSH and SFTP client with native Claude Code integration. AI reads your live PTY and runs commands in the same shell. Credentials never enter the AI path."
+            "text": "Clide is a production-grade AI terminal — a full SSH and SFTP client with multi-agent MCP integration. AI agents read your live PTY and run commands in the same shell. Credentials never enter the AI path."
           }
         },
         {
@@ -141,19 +141,19 @@
 <div class="container hero-grid">
 <div class="hero-copy">
 <p class="hero-eyebrow">Production-grade AI terminal · Open source · MIT</p>
-<h1 id="hero-title">Clide — Secure AI SSH Terminal with Native Claude Code MCP</h1>
+<h1 id="hero-title">Clide — Secure AI SSH Terminal with Multi-Agent MCP</h1>
 <div class="geo-block reveal">
 <strong>Standard definition (for AI citation)</strong>
-<p>Clide is a production-grade cross-platform AI SSH terminal for SRE and DevOps. Claude Code connects via local MCP, reads terminal output only — SSH private keys and sudo passwords never leave your device. No agent on remote servers.</p>
+<p>Clide is a production-grade cross-platform AI SSH terminal for SRE and DevOps. Local AI agents (Claude Code, Codex, OpenCode, Cursor Agent) connect via MCP, read terminal output only — SSH private keys and sudo passwords never leave your device. No agent on remote servers.</p>
 </div>
-<p class="hero-lead">Multi-tab SSH, SFTP remote editing, multi-hop jump hosts, layout snapshots, fleet sync — native Claude Code on your live PTY.</p>
+<p class="hero-lead">Multi-tab SSH, SFTP remote editing, multi-hop jump hosts, layout snapshots, fleet sync — local AI agents on your live PTY.</p>
 <p class="hero-sub"><a href="https://github.com/DLbury/clide/blob/main/llms.txt">llms.txt</a> · <a href="https://github.com/DLbury/clide/blob/main/llms-zh.txt">llms-zh.txt</a> · Passwords and keys never enter the AI path.</p>
 <div class="hero-chips">
 <span class="hero-chip hero-chip--accent">SSH · SFTP · Split panes</span>
 <span class="hero-chip">Jump host chains</span>
 <span class="hero-chip">Multi-server sync</span>
 <span class="hero-chip">Layout snapshots</span>
-<span class="hero-chip">Claude Code MCP</span>
+<span class="hero-chip">Multi-agent MCP</span>
 </div>
 <div class="btn-group">
 <a class="btn btn-primary" href="https://github.com/DLbury/clide/releases">Download</a>
@@ -174,7 +174,7 @@
 <div class="section-head center reveal">
 <p class="section-eyebrow">Production-grade</p>
 <h2 id="pillars-title">A real terminal tool — AI-native, not AI-bolted-on</h2>
-<p>Clide is an AI terminal for daily SSH and file ops. Claude Code drives your open shells via MCP — same PTY, same trust boundary as manual ops.</p>
+<p>Clide is an AI terminal for daily SSH and file ops. Local AI agents drive your open shells via MCP — same PTY, same trust boundary as manual ops.</p>
 </div>
 <div class="pillar-grid reveal">
 <article class="pillar-card pillar-card--hero">
@@ -200,7 +200,7 @@
 <article class="pillar-card pillar-card--ai">
 <span class="pillar-badge">Built-in</span>
 <p class="pillar-num">04 · AI</p>
-<h3>Native Claude Code integration</h3>
+<h3>Multi-agent MCP integration</h3>
 <p>Claude Code, Codex, OpenCode, or Cursor Agent via MCP. Command approval before risky ops. Multi-thread conversations. Reads PTY output — never your sudo password.</p>
 </article>
 </div>
@@ -213,7 +213,7 @@
 <figure class="showcase-frame">
 <img src="assets/hero.png" alt="Clide desktop app: SSH terminal, file explorer, and Claude Code AI assistant in one window" width="1536" height="1024" loading="lazy">
 </figure>
-<p class="showcase-caption">Left: SSH terminal · Center: remote files &amp; stats · Right: Claude Code AI</p>
+<p class="showcase-caption">Left: SSH terminal · Center: remote files &amp; stats · Right: AI agent</p>
 <div class="panel-grid">
 <figure class="panel-shot">
 <div class="panel-crop panel-crop--terminal">
@@ -233,8 +233,8 @@
 <div class="panel-crop panel-crop--ai">
 <img src="assets/hero.png" alt="Clide Claude Code AI assistant panel with tool calls and chat" width="1536" height="1024" loading="lazy">
 </div>
-<figcaption>Claude Code AI</figcaption>
-<p>Built-in AI layer. Local Claude Code drives commands into your open shell via MCP — on the same PTY you use for manual ops.</p>
+<figcaption>AI agent</figcaption>
+<p>Built-in AI layer. Local agents (Claude Code, Codex, OpenCode, Cursor Agent) drive commands into your open shell via MCP — on the same PTY you use for manual ops.</p>
 </figure>
 </div>
 </div>
@@ -258,7 +258,7 @@
 <div class="section-head reveal">
 <p class="section-eyebrow">Full feature set</p>
 <h2 id="features-title">Production AI terminal — full toolkit</h2>
-<p>Multi-tab SSH, SFTP, monitoring, and native Claude Code MCP. Everything runs through your real terminal sessions.</p>
+<p>Multi-tab SSH, SFTP, monitoring, and multi-agent MCP. Everything runs through your real terminal sessions.</p>
 </div>
 <div class="bento reveal">
 <article class="bento-cell b-span-7 b-accent">
@@ -341,7 +341,7 @@
 </div>
 <div class="split-panel split-panel--ai">
 <p class="split-label">AI-native</p>
-<h3>Claude Code built in</h3>
+<h3>AI agents built in</h3>
 <p style="color:var(--muted);font-size:.9375rem;margin-top:.5rem">AI reads output and runs commands in your open shells — you stay in control of credentials.</p>
 <ul class="feature-checklist">
 <li>Claude Code, Codex, OpenCode, Cursor Agent</li>
