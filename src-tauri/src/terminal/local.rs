@@ -14,10 +14,13 @@ use tauri::{AppHandle, Emitter};
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TerminalStatusEvent {
+pub struct TerminalStatusEvent {
     session_id: String,
     status: String,
     error: Option<String>,
+    /// Windows 本地 PTY 实际启动的 shell：`powershell` | `cmd`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    windows_shell: Option<String>,
 }
 
 /// 解析 System32 下的可执行文件绝对路径，避免 GUI 子系统下 PATH 不含 System32 的极端情况
@@ -83,6 +86,22 @@ pub fn spawn_local_pty(
         .map_err(|e| format!("无法创建 PTY: {e}"))?;
 
     let master: Arc<Mutex<Box<dyn MasterPty + Send>>> = Arc::new(Mutex::new(pair.master));
+
+    let windows_shell: Option<String> = match request.session_type.as_str() {
+        "wsl" => None,
+        _ if cfg!(windows) => {
+            let shell_path = resolve_windows_shell()?;
+            let program_str = shell_path.to_string_lossy().to_lowercase();
+            let is_powershell =
+                program_str.contains("powershell") || program_str.ends_with("pwsh.exe");
+            Some(if is_powershell {
+                "powershell".to_string()
+            } else {
+                "cmd".to_string()
+            })
+        }
+        _ => None,
+    };
 
     let cmd = match request.session_type.as_str() {
         "wsl" => {
@@ -189,8 +208,9 @@ pub fn spawn_local_pty(
         }
     });
 
+    let windows_shell_for_reader = windows_shell.clone();
     std::thread::spawn(move || {
-        run_pty_reader(app, session_id, reader, abort_reader);
+        run_pty_reader(app, session_id, reader, abort_reader, windows_shell_for_reader);
     });
 
     // 触发初始尺寸，让 PowerShell/cmd 在 PTY 就绪后输出首屏提示符（勿发 \r，会多一行空行）
@@ -208,6 +228,7 @@ fn run_pty_reader(
     session_id: String,
     mut reader: Box<dyn Read + Send>,
     abort: Arc<AtomicBool>,
+    windows_shell: Option<String>,
 ) {
     let emit_status = |status: &str, error: Option<String>| {
         let _ = app.emit(
@@ -216,6 +237,11 @@ fn run_pty_reader(
                 session_id: session_id.clone(),
                 status: status.to_string(),
                 error,
+                windows_shell: if status == "connected" {
+                    windows_shell.clone()
+                } else {
+                    None
+                },
             },
         );
     };

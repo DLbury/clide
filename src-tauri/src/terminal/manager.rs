@@ -17,6 +17,8 @@ pub struct TerminalStatusEvent {
     session_id: String,
     status: String,
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    windows_shell: Option<String>,
 }
 
 /// 将文本写入会话缓冲并推送到前端 xterm（用于 Claude 工具执行等场景的可视反馈）。
@@ -66,6 +68,7 @@ impl TerminalManager {
                 session_id: session_id.clone(),
                 status: "connecting".to_string(),
                 error: None,
+                windows_shell: None,
             },
         );
 
@@ -148,6 +151,7 @@ impl TerminalManager {
                     session_id: session_id.to_string(),
                     status: "disconnected".to_string(),
                     error: None,
+                    windows_shell: None,
                 },
             );
         }

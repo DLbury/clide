@@ -18,6 +18,92 @@ export function joinRemotePath(base: string, segment: string): string {
 
 export type RemoteShellPlatform = 'windows' | 'unix'
 
+/** Windows 交互式 shell 种类 */
+export type WindowsShellFlavor = 'powershell' | 'cmd'
+
+const SHELL_DETECT_PS = '__CLIDE_SHELL_ps__'
+const SHELL_DETECT_CMD = '__CLIDE_SHELL_cmd__'
+
+const windowsShellBySession = new Map<string, WindowsShellFlavor>()
+
+export function setWindowsShellFlavor(
+  terminalSessionId: string,
+  flavor: WindowsShellFlavor | undefined
+): void {
+  if (flavor) {
+    windowsShellBySession.set(terminalSessionId, flavor)
+  } else {
+    windowsShellBySession.delete(terminalSessionId)
+  }
+}
+
+export function getWindowsShellFlavor(
+  terminalSessionId: string
+): WindowsShellFlavor | undefined {
+  return windowsShellBySession.get(terminalSessionId)
+}
+
+/** 从终端缓冲里的提示符推断 Windows shell 类型 */
+export function detectWindowsShellFlavorFromOutput(
+  chunk: string
+): WindowsShellFlavor | null {
+  const plain = stripAnsi(chunk).replace(/\r\n/g, '\n')
+  const tail = plain.slice(-8192)
+
+  // PowerShell: PS C:\>、(base) PS E:\path>
+  if (/(?:^|\n)\s*(?:[\w():.-]+\s+)*PS [A-Za-z]:[\\/][^\n>]*>\s*$/m.test(tail)) {
+    return 'powershell'
+  }
+
+  // cmd: C:\Users\foo> 或 E:\path>（行内不含 PS 前缀）
+  const cmdLines = tail.match(/(?:^|\n)\s*[A-Za-z]:[\\/][^\n>]*>\s*$/gm)
+  if (cmdLines?.length) {
+    const last = cmdLines[cmdLines.length - 1] ?? ''
+    if (!/\bPS\b/.test(last)) {
+      return 'cmd'
+    }
+  }
+
+  return null
+}
+
+export function formatWindowsShellDetectCommand(marker: string): string {
+  const safe = marker.replace(/'/g, "''")
+  return (
+    `Write-Output '${safe}'; ` +
+    `if ($null -ne $PSVersionTable) { Write-Output '${SHELL_DETECT_PS}' }; ` +
+    `Write-Output '${safe}'`
+  )
+}
+
+export function extractWindowsShellDetectFromProbeOutput(
+  chunk: string,
+  marker: string
+): WindowsShellFlavor | null {
+  const body = markerPairBody(
+    stripAnsi(chunk).replace(/\r\n/g, '\n').replace(/\r/g, '\n'),
+    marker
+  )
+  if (body == null) return null
+  if (body.includes(SHELL_DETECT_PS)) return 'powershell'
+  if (body.includes(SHELL_DETECT_CMD)) return 'cmd'
+  return null
+}
+
+export function pwdProbeCommandsForWindowsShell(
+  marker: string,
+  flavor: WindowsShellFlavor
+): string[] {
+  const safe = marker.replace(/'/g, "''")
+  if (flavor === 'powershell') {
+    return [
+      `Write-Output '${safe}'; (Get-Location).ProviderPath; Write-Output '${safe}'`,
+    ]
+  }
+  const cmdSafe = marker.replace(/[&|<>^"%]/g, '')
+  return [`echo ${cmdSafe} & cd & echo ${cmdSafe}`]
+}
+
 export function usesWindowsShellCommands(
   sessionType?: string,
   remotePlatform?: RemoteShellPlatform
@@ -77,17 +163,30 @@ export function extractCwdFromTerminalChunk(chunk: string): string | null {
   return null
 }
 
+function markerPairBody(plain: string, marker: string): string | null {
+  const indices: number[] = []
+  let pos = 0
+  while (pos <= plain.length) {
+    const idx = plain.indexOf(marker, pos)
+    if (idx < 0) break
+    indices.push(idx)
+    pos = idx + marker.length
+  }
+  // PowerShell 会回显整条命令，marker 可能出现 4 次；取最后一对之间的正文才是 pwd 输出
+  if (indices.length < 2) return null
+  const start = indices[indices.length - 2]!
+  const end = indices[indices.length - 1]!
+  return plain.slice(start + marker.length, end)
+}
+
 /** 从带标记的 pwd 探测输出中提取绝对路径 */
 export function extractCwdFromProbeOutput(
   chunk: string,
   marker: string
 ): string | null {
   const plain = stripAnsi(chunk).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  const start = plain.lastIndexOf(marker)
-  if (start < 0) return null
-  const afterStart = plain.slice(start + marker.length)
-  const end = afterStart.indexOf(marker)
-  const body = end >= 0 ? afterStart.slice(0, end) : afterStart
+  const body = markerPairBody(plain, marker)
+  if (body == null) return null
   const lines = body
     .split('\n')
     .map(l => l.trim())
@@ -117,24 +216,20 @@ export function extractCwdFromProbeOutput(
 export function formatShellPwdProbeCommand(
   marker: string,
   sessionType?: string,
-  remotePlatform?: RemoteShellPlatform
+  remotePlatform?: RemoteShellPlatform,
+  flavor?: WindowsShellFlavor
 ): string {
-  const safe = marker.replace(/'/g, "''")
   if (usesWindowsShellCommands(sessionType, remotePlatform)) {
-    return (
-      `Write-Output '${safe}'; ` +
-      `(Get-Location).ProviderPath; ` +
-      `Write-Output '${safe}'`
-    )
+    const resolved = flavor ?? 'powershell'
+    return pwdProbeCommandsForWindowsShell(marker, resolved)[0]!
   }
   const unixSafe = marker.replace(/'/g, `'\\''`)
   return `printf '%s\\n' '${unixSafe}'; pwd; printf '%s\\n' '${unixSafe}'`
 }
 
-/** Windows cmd.exe：cd 无参数时会打印当前目录 */
+/** @deprecated 请用 pwdProbeCommandsForWindowsShell */
 export function formatCmdPwdProbeCommand(marker: string): string {
-  const safe = marker.replace(/[&|<>^%]/g, '')
-  return `echo ${safe} & cd & echo ${safe}`
+  return pwdProbeCommandsForWindowsShell(marker, 'cmd')[0]!
 }
 
 function normalizeRemoteCwd(path: string): string {
@@ -252,13 +347,21 @@ export function consumeTerminalInputLine(
 export function formatShellCdCommand(
   cwd: string,
   sessionType?: string,
-  remotePlatform?: RemoteShellPlatform
+  remotePlatform?: RemoteShellPlatform,
+  terminalSessionId?: string
 ): string {
   const normalized = cwd.replace(/\\/g, '/')
   if (
     usesWindowsShellCommands(sessionType, remotePlatform) ||
     isWindowsShellPath(normalized)
   ) {
+    const flavor =
+      (terminalSessionId ? getWindowsShellFlavor(terminalSessionId) : undefined) ??
+      'powershell'
+    if (flavor === 'cmd') {
+      const winPath = normalized.replace(/\//g, '\\').replace(/"/g, '""')
+      return `cd /d "${winPath}"`
+    }
     const escaped = normalized.replace(/'/g, "''")
     return `Set-Location '${escaped}'`
   }

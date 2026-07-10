@@ -86,15 +86,14 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.79
+            ## Clide v0.1.81
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **修复**：左侧服务器连接状态与真实终端不同步（多 Shell 聚合状态）
-            - **修复**：Windows SSH 主机保存布局时无法记录 Shell 路径
-            - **增强**：服务器监控面板（负载/运行时间/Swap/进度条、磁盘与网络分项曲线）
-            - **增强**：进程/端口表格列宽可拖拽调整并记忆
+            - **修复**：Windows 保存布局时在 PowerShell 中误执行 cmd 语法（`&` 报错）导致 cwd 探测失败
+            - **增强**：自动识别 Windows shell 类型（PowerShell / cmd）——本机 PTY 启动时后端上报、提示符推断、必要时主动探测
+            - **增强**：按 shell 类型选用正确的 pwd / cd 命令（`Get-Location` vs `cd /d`）
 
             ### 平台说明
             - **Windows**: `.exe` 安装包 / `*-portable.zip` 免安装版（支持应用内更新）

@@ -95,6 +95,10 @@ import {
   remotePathForListApi,
   consumeTerminalInputLine,
   formatShellCdCommand,
+  setWindowsShellFlavor,
+  getWindowsShellFlavor,
+  detectWindowsShellFlavorFromOutput,
+  usesWindowsShellCommands,
 } from '@/lib/terminal-cwd'
 import {
   deleteRemoteFile,
@@ -1202,7 +1206,8 @@ export default function AITerminal() {
           formatShellCdCommand(
             cdPath,
             conn.session.type,
-            conn.remotePlatform
+            conn.remotePlatform,
+            shell.terminalSessionId
           )
         )
       ).catch(() => {})
@@ -1340,6 +1345,21 @@ export default function AITerminal() {
   useEffect(() => {
     if (!isTauriRuntime()) return
     return subscribeAllTerminalOutput(event => {
+      if (!getWindowsShellFlavor(event.sessionId)) {
+        const conn = connectionsRef.current.find(c =>
+          c.shells.some(s => s.terminalSessionId === event.sessionId)
+        )
+        if (
+          conn &&
+          usesWindowsShellCommands(conn.session.type, conn.remotePlatform)
+        ) {
+          const flavor = detectWindowsShellFlavorFromOutput(
+            getTerminalOutputBuffer(event.sessionId)
+          )
+          if (flavor) setWindowsShellFlavor(event.sessionId, flavor)
+        }
+      }
+
       const cwd = extractCwdFromTerminalChunk(event.data)
       if (!cwd) return
       const conn = connectionsRef.current.find(c =>
@@ -1577,6 +1597,9 @@ export default function AITerminal() {
 
       unlistenStatus = await listenTerminalStatus(event => {
         if (event.status === 'connected') {
+          if (event.windowsShell) {
+            setWindowsShellFlavor(event.sessionId, event.windowsShell)
+          }
           requestTerminalResync(event.sessionId)
           let connectedSession: Session | undefined
           let profileSessionId: string | undefined
@@ -1647,7 +1670,8 @@ export default function AITerminal() {
                   formatShellCdCommand(
                     pendingLayoutCwd,
                     connectedConn.session.type,
-                    connectedConn.remotePlatform
+                    connectedConn.remotePlatform,
+                    event.sessionId
                   )
                 )
               ).catch(() => {})
@@ -1733,6 +1757,7 @@ export default function AITerminal() {
           void disconnectTerminal(event.sessionId).catch(() => {})
           offerPasswordRetryAfterAuthFailure(event.sessionId, message)
         } else if (event.status === 'disconnected') {
+          setWindowsShellFlavor(event.sessionId, undefined)
           let profileSessionId: string | undefined
           let nextSessionStatus: Session['status'] | undefined
           let disconnectedConnId: string | undefined

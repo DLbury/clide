@@ -4,11 +4,17 @@ import { resolveRemoteDisplayPath } from '@/lib/remote-file-tree'
 import {
   extractCwdFromTerminalChunk,
   extractCwdFromProbeOutput,
-  formatCmdPwdProbeCommand,
+  extractWindowsShellDetectFromProbeOutput,
   formatShellPwdProbeCommand,
+  formatWindowsShellDetectCommand,
+  getWindowsShellFlavor,
+  pwdProbeCommandsForWindowsShell,
+  setWindowsShellFlavor,
+  detectWindowsShellFlavorFromOutput,
   remotePathForListApi,
   usesWindowsShellCommands,
   type RemoteShellPlatform,
+  type WindowsShellFlavor,
 } from '@/lib/terminal-cwd'
 import { normalizeShellCommandForPty } from '@/lib/terminal-client'
 import { getTerminalOutputBuffer } from '@/lib/terminal-stream'
@@ -122,6 +128,52 @@ export function resolveShellCwdForSnapshot(
   return undefined
 }
 
+async function resolveWindowsShellFlavorForProbe(
+  shell: {
+    id: string
+    terminalSessionId: string
+  },
+  write: (terminalSessionId: string, data: string) => Promise<void>
+): Promise<WindowsShellFlavor> {
+  const cached = getWindowsShellFlavor(shell.terminalSessionId)
+  if (cached) return cached
+
+  const buf = getTerminalOutputBuffer(shell.terminalSessionId)
+  const fromPrompt = detectWindowsShellFlavorFromOutput(buf)
+  if (fromPrompt) {
+    setWindowsShellFlavor(shell.terminalSessionId, fromPrompt)
+    return fromPrompt
+  }
+
+  const marker = `__CLIDE_SHELL_${shell.id.replace(/[^a-zA-Z0-9_-]/g, '')}_${Date.now()}__`
+  const beforeLen = getTerminalOutputBuffer(shell.terminalSessionId).length
+  try {
+    await write(
+      shell.terminalSessionId,
+      normalizeShellCommandForPty(formatWindowsShellDetectCommand(marker))
+    )
+  } catch {
+    return 'powershell'
+  }
+
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    const delta = getTerminalOutputBuffer(shell.terminalSessionId).slice(
+      Math.max(0, beforeLen - 64)
+    )
+    const detected = extractWindowsShellDetectFromProbeOutput(delta, marker)
+    if (detected) {
+      setWindowsShellFlavor(shell.terminalSessionId, detected)
+      return detected
+    }
+    await new Promise(r => setTimeout(r, 80))
+  }
+
+  // PowerShell 探测无 PSVersionTable 响应 → 视为 cmd
+  setWindowsShellFlavor(shell.terminalSessionId, 'cmd')
+  return 'cmd'
+}
+
 /**
  * 主动向每个已连接的 Shell 探测 cwd，返回 shellId → cwd。
  * 通过写入带标记的 pwd，并从该 PTY 输出缓冲解析，保证各 Shell 路径独立。
@@ -183,10 +235,10 @@ export async function probeShellCwds(
     connected.map(async shell => {
       const marker = `__CLIDE_CWD_${shell.id.replace(/[^a-zA-Z0-9_-]/g, '')}_${Date.now()}__`
 
-      const commands: string[] = []
+      let commands: string[] = []
       if (windowsShell) {
-        commands.push(formatShellPwdProbeCommand(marker, sessionType, remotePlatform))
-        commands.push(formatCmdPwdProbeCommand(marker))
+        const flavor = await resolveWindowsShellFlavorForProbe(shell, write)
+        commands = pwdProbeCommandsForWindowsShell(marker, flavor)
       } else {
         commands.push(formatShellPwdProbeCommand(marker, sessionType, remotePlatform))
       }

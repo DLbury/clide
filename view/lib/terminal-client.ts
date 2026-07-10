@@ -36,6 +36,8 @@ export interface TerminalStatusEvent {
   sessionId: string
   status: 'connecting' | 'connected' | 'disconnected' | 'error'
   error?: string
+  /** Windows 本地 PTY 实际启动的 shell（后端解析） */
+  windowsShell?: 'powershell' | 'cmd'
 }
 
 export interface RemoteFileEntry {
