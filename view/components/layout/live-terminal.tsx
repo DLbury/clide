@@ -24,7 +24,7 @@ import {
 } from '@/lib/command-history-store'
 import { appendCommandAudit } from '@/lib/command-audit-store'
 import { registerTerminalInputHandler } from '@/lib/terminal-input-registry'
-import { getSyncPeerSessionIds } from '@/lib/terminal-sync-group'
+import { getSyncPeerSessionIds, shouldBroadcastTerminalInput } from '@/lib/terminal-sync-group'
 import {
   isAnyXtermFocused,
   registerTerminalFocusHandler,
@@ -102,6 +102,7 @@ export function LiveTerminal({
 
   const writeWithSync = useCallback((data: string) => {
     void writeTerminal(sessionIdRef.current, data).catch(() => {})
+    if (!shouldBroadcastTerminalInput(data)) return
     for (const peerId of getSyncPeerSessionIds(sessionIdRef.current)) {
       void writeTerminal(peerId, data).catch(() => {})
     }

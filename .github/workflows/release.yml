@@ -78,15 +78,38 @@ jobs:
           SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/prepare-tauri-signing-ci.mjs
 
+      - name: Validate macOS signing secrets
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.81
+            ## Clide v0.1.82
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
@@ -99,10 +122,14 @@ jobs:
             - **Windows**: `.exe` 安装包 / `*-portable.zip` 免安装版（支持应用内更新）
             - **macOS**: `.dmg`（含 Apple Silicon 与 Intel 两个构建）
             - **Linux**: `.deb` / `.AppImage`
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           projectPath: src-tauri
           args: ${{ matrix.args }}
+
+      - name: Verify macOS signed artifacts
+        if: matrix.platform == 'macos-latest'
+        run: bash scripts/verify-macos-bundle.sh "src-tauri/target/${{ matrix.rust_target }}/release/bundle"
 
       - name: Package Windows portable zip
         if: matrix.platform == 'windows-latest'
@@ -117,3 +144,12 @@ jobs:
           $zip = Get-ChildItem -Path "src-tauri/target/release/bundle" -Filter "Clide_*_x64-portable.zip" | Select-Object -First 1
           if (-not $zip) { throw "Portable zip not found under src-tauri/target/release/bundle" }
           gh release upload "${{ github.ref_name }}" $zip.FullName --clobber
+
+  publish-release:
+    needs: publish
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --prerelease=false

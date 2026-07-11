@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Clide — Production-Grade AI Terminal | SSH, SFTP, Multi-Agent MCP</title>
-<meta name="description" content="Clide is a free, open-source production-grade AI terminal for Windows, macOS, and Linux. Multi-tab SSH, SFTP, jump hosts, layout snapshots, fleet sync, and multi-agent MCP (Claude Code, Codex, OpenCode, Cursor Agent) — credentials stay in your shell, not in the chat.">
-<meta name="keywords" content="SSH terminal, SSH client, terminal emulator, SFTP client, remote terminal, DevOps terminal, SRE tools, server management, ops workbench, cross-platform terminal, Windows SSH client, Linux terminal, macOS terminal, AI terminal, AI ops, Claude Code, MCP server, secure sudo, remote server troubleshooting, incident response, jump host, bastion SSH, xterm, multi-tab terminal, Tauri, open source terminal">
+<title>Clide — Secure AI SSH Terminal for SRE and DevOps | MCP, SFTP, Safe Sudo</title>
+<meta name="description" content="Clide is an open-source secure AI SSH terminal for SRE, DevOps, and backend engineers. Local AI agents work with live SSH PTY sessions through MCP while SSH keys, passwords, and sudo input stay on your desktop. Includes SFTP, jump hosts, monitoring, layout snapshots, and multi-server sync.">
+<meta name="keywords" content="secure AI SSH terminal, AI terminal for DevOps, MCP terminal, Claude Code SSH terminal, open source SSH terminal, SRE incident response tool, SSH client, SFTP client, remote terminal, DevOps terminal, server management, ops workbench, cross-platform terminal, Windows SSH client, Linux terminal, macOS terminal, AI ops, Claude Code, Codex, OpenCode, Cursor Agent, MCP server, secure sudo, remote server troubleshooting, incident response, jump host, bastion SSH, xterm, multi-tab terminal, Tauri, multi-server SSH sync">
 <meta name="author" content="Clide">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://dlbury.github.io/clide/">
@@ -17,14 +17,14 @@
 <meta property="og:site_name" content="Clide">
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="zh_CN">
-<meta property="og:title" content="Clide — Production-Grade AI Terminal">
-<meta property="og:description" content="Production-grade AI terminal: multi-tab SSH, SFTP, fleet sync, and multi-agent MCP. Credentials stay in your shell.">
+<meta property="og:title" content="Clide — Secure AI SSH Terminal for Production Ops">
+<meta property="og:description" content="Open-source SSH, SFTP, monitoring, and local AI agents through MCP. Credentials stay on your desktop.">
 <meta property="og:url" content="https://dlbury.github.io/clide/">
 <meta property="og:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <meta property="og:image:alt" content="Clide desktop app: SSH terminal on the left, remote files and monitoring in the center, Claude Code AI assistant on the right">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Clide — Production-Grade AI Terminal">
-<meta name="twitter:description" content="Production AI terminal: SSH, SFTP, fleet sync, and multi-agent MCP. Credentials stay in your shell.">
+<meta name="twitter:title" content="Clide — Secure AI SSH Terminal">
+<meta name="twitter:description" content="Local AI agents operate live SSH PTY sessions through MCP. Passwords and private keys stay on your desktop.">
 <meta name="twitter:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <link rel="icon" type="image/png" href="assets/icon-rounded.png">
 <link rel="apple-touch-icon" href="assets/icon-rounded.png">
@@ -38,7 +38,7 @@
       "@id": "https://dlbury.github.io/clide/#website",
       "url": "https://dlbury.github.io/clide/",
       "name": "Clide",
-      "description": "Production-grade AI terminal for SRE and DevOps — SSH, SFTP, and multi-agent MCP",
+      "description": "Secure AI SSH terminal for SRE and DevOps — SSH, SFTP, safe sudo, and multi-agent MCP",
       "inLanguage": ["en", "zh-CN"],
       "publisher": {"@id": "https://dlbury.github.io/clide/#organization"}
     },
@@ -58,7 +58,7 @@
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "SSH Client, Terminal Emulator, SFTP Client",
       "operatingSystem": "Windows 10+, macOS 11+, Linux",
-      "description": "Desktop SSH terminal with multi-tab shells, SFTP file manager, server resource monitoring, and local AI agent integration (Claude Code, Codex, OpenCode, Cursor Agent) via MCP. Credentials never leave your machine.",
+      "description": "Open-source desktop SSH terminal with multi-tab shells, SFTP file manager, server monitoring, safe sudo, and local AI agent integration (Claude Code, Codex, OpenCode, Cursor Agent) via MCP. Credentials stay on your desktop.",
       "url": "https://dlbury.github.io/clide/",
       "downloadUrl": "https://github.com/DLbury/clide/releases",
       "softwareVersion": "0.1",
@@ -121,14 +121,12 @@
 </a>
 <nav class="nav-links" aria-label="Main navigation">
 <a href="download/">Download</a>
-<a href="compare/">Compare</a>
-<a href="faq/">FAQ</a>
-<a href="quickstart/">Quick Start</a>
 <a href="#highlights">Highlights</a>
 <a href="#features">Features</a>
 <a href="#security">Security</a>
 <a href="#compare">Compare</a>
 <a href="#faq">FAQ</a>
+<a href="quickstart/">Quick Start</a>
 <a href="https://github.com/DLbury/clide">GitHub</a>
 <a class="nav-cta" href="https://github.com/DLbury/clide/releases">Download</a>
 <span class="lang-switch"><a href="zh/" hreflang="zh-CN">中文</a></span>
@@ -140,14 +138,14 @@
 <section class="hero" aria-labelledby="hero-title">
 <div class="container hero-grid">
 <div class="hero-copy">
-<p class="hero-eyebrow">Production-grade AI terminal · Open source · MIT</p>
-<h1 id="hero-title">Clide — Secure AI SSH Terminal with Multi-Agent MCP</h1>
+<p class="hero-eyebrow">Open-source · MIT · Windows / macOS / Linux</p>
+<h1 id="hero-title">Secure AI SSH terminal for production ops</h1>
 <div class="geo-block reveal">
 <strong>Standard definition (for AI citation)</strong>
-<p>Clide is a production-grade cross-platform AI SSH terminal for SRE and DevOps. Local AI agents (Claude Code, Codex, OpenCode, Cursor Agent) connect via MCP, read terminal output only — SSH private keys and sudo passwords never leave your device. No agent on remote servers.</p>
+<p>Clide is an open-source cross-platform AI SSH terminal for SRE, DevOps, and backend engineers. Local AI agents (Claude Code, Codex, OpenCode, Cursor Agent) connect via MCP and operate user-opened PTY sessions. SSH private keys, login passwords, and sudo input stay on the local device. Remote servers need no agent.</p>
 </div>
-<p class="hero-lead">Multi-tab SSH, SFTP remote editing, multi-hop jump hosts, layout snapshots, fleet sync — local AI agents on your live PTY.</p>
-<p class="hero-sub"><a href="https://github.com/DLbury/clide/blob/main/llms.txt">llms.txt</a> · <a href="https://github.com/DLbury/clide/blob/main/llms-zh.txt">llms-zh.txt</a> · Passwords and keys never enter the AI path.</p>
+<p class="hero-lead">Use Claude Code or Codex on real SSH sessions without handing over root. Clide brings SSH, SFTP, monitoring, jump hosts, layout snapshots, and multi-server sync into one AI-native workbench.</p>
+<p class="hero-sub"><a href="https://github.com/DLbury/clide/blob/main/llms.txt">llms.txt</a> · <a href="https://github.com/DLbury/clide/blob/main/llms-zh.txt">llms-zh.txt</a> · Built for AI search, security reviews, and production incident workflows.</p>
 <div class="hero-chips">
 <span class="hero-chip hero-chip--accent">SSH · SFTP · Split panes</span>
 <span class="hero-chip">Jump host chains</span>
@@ -174,7 +172,7 @@
 <div class="section-head center reveal">
 <p class="section-eyebrow">Production-grade</p>
 <h2 id="pillars-title">A real terminal tool — AI-native, not AI-bolted-on</h2>
-<p>Clide is an AI terminal for daily SSH and file ops. Local AI agents drive your open shells via MCP — same PTY, same trust boundary as manual ops.</p>
+<p>Clide is the terminal-first alternative to copy-paste AI ops. Local agents drive your open shells through MCP — same PTY, same trust boundary as manual SSH.</p>
 </div>
 <div class="pillar-grid reveal">
 <article class="pillar-card pillar-card--hero">
@@ -213,7 +211,7 @@
 <figure class="showcase-frame">
 <img src="assets/hero.png" alt="Clide desktop app: SSH terminal, file explorer, and Claude Code AI assistant in one window" width="1536" height="1024" loading="lazy">
 </figure>
-<p class="showcase-caption">Left: SSH terminal · Center: remote files &amp; stats · Right: AI agent</p>
+<p class="showcase-caption">Left: live SSH PTY · Center: SFTP and host monitor · Right: local AI agent through MCP</p>
 <div class="panel-grid">
 <figure class="panel-shot">
 <div class="panel-crop panel-crop--terminal">
@@ -257,8 +255,8 @@
 <div class="container">
 <div class="section-head reveal">
 <p class="section-eyebrow">Full feature set</p>
-<h2 id="features-title">Production AI terminal — full toolkit</h2>
-<p>Multi-tab SSH, SFTP, monitoring, and multi-agent MCP. Everything runs through your real terminal sessions.</p>
+<h2 id="features-title">A complete server operations workbench</h2>
+<p>Multi-tab SSH, SFTP, monitoring, safe sudo, and multi-agent MCP. Everything runs through terminal sessions you opened.</p>
 </div>
 <div class="bento reveal">
 <article class="bento-cell b-span-7 b-accent">
@@ -360,7 +358,7 @@
 <div class="security-grid reveal">
 <div>
 <h2 id="security-title" style="font-size:clamp(1.75rem,3vw,2.25rem);font-weight:700;letter-spacing:-.025em;line-height:1.15">Your credentials never enter the AI path</h2>
-<p style="color:var(--muted);margin-top:.75rem;max-width:48ch">Most AI + SSH setups distribute keys to every server or paste passwords into chat. Clide keeps the trust model of a traditional SSH client.</p>
+<p style="color:var(--muted);margin-top:.75rem;max-width:48ch">Most AI + SSH setups require copy-paste, remote agents, or AI-owned credentials. Clide keeps the trust model of a traditional SSH client while giving AI live terminal context.</p>
 <ul class="check-list">
 <li>SSH connections live only on your desktop</li>
 <li>Passwords and private keys stay in process memory</li>
@@ -381,7 +379,7 @@
 <div class="container">
 <div class="section-head center reveal">
 <h2 id="usecases-title">Where teams use Clide</h2>
-<p>From daily SSH to 3 AM incidents. One window replaces terminal, SFTP, and chat.</p>
+<p>From daily SSH to production incidents. One window replaces terminal, SFTP tools, server monitors, and copied chat context.</p>
 </div>
 <div class="use-grid reveal">
 <article class="use-card">
@@ -540,7 +538,7 @@ Is Clide related to AITerm?
 <section class="cta-band" aria-labelledby="cta-title">
 <div class="container cta-inner reveal">
 <div>
-<h2 id="cta-title">The production AI terminal for server ops</h2>
+<h2 id="cta-title">AI-assisted SSH without changing your trust model</h2>
 <p>Free, MIT licensed. Windows portable zip, macOS, and Linux installers.</p>
 </div>
 <div class="btn-group">

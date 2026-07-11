@@ -53,7 +53,7 @@
   src:url(https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.0.8/files/ibm-plex-mono-latin-400-normal.woff2) format('woff2');
 }
 
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;overflow-x:hidden}
 body{
   font-family:var(--font);
   background:var(--bg);
@@ -61,6 +61,7 @@ body{
   line-height:1.6;
   -webkit-font-smoothing:antialiased;
   overflow-x:hidden;
+  max-width:100vw;
 }
 a{color:inherit;text-decoration:none}
 img{max-width:100%;height:auto;display:block}
@@ -147,6 +148,7 @@ img{max-width:100%;height:auto;display:block}
   gap:clamp(2rem,5vw,4rem);
   align-items:center;
 }
+.hero-grid>*{min-width:0}
 .hero-copy{max-width:34rem}
 .hero-eyebrow{
   display:inline-flex;align-items:center;gap:8px;
@@ -162,6 +164,7 @@ img{max-width:100%;height:auto;display:block}
   font-size:clamp(2.25rem,4.8vw,3.5rem);
   font-weight:700;line-height:1.08;letter-spacing:-.03em;
   margin-bottom:1.25rem;
+  overflow-wrap:break-word;
 }
 .hero-lead{
   font-size:clamp(1rem,1.8vw,1.125rem);
@@ -597,6 +600,8 @@ tr:last-child td{border-bottom:none}
   border:1px solid var(--border);color:var(--muted);
 }
 .page-nav-links a:hover{color:var(--accent);border-color:rgba(52,211,153,.35)}
+
+@media(max-width:1024px){
   .hero-grid{grid-template-columns:1fr}
   .hero-copy{max-width:none;text-align:left}
   .pillar-card,.pillar-card--hero,.pillar-card--ai{grid-column:span 12}
@@ -610,7 +615,30 @@ tr:last-child td{border-bottom:none}
 }
 
 @media(max-width:768px){
-  .nav-links a:not(.nav-cta):not(.lang-switch){display:none}
+  .container{
+    width:calc(100vw - 32px)!important;
+    max-width:calc(100vw - 32px)!important;
+    margin-left:16px!important;
+    margin-right:16px!important;
+  }
+  .nav{gap:12px}
+  .nav-links{min-width:0}
+  .nav-links a:not(.nav-cta){display:none}
+  .lang-switch{display:none}
+  .nav-cta{margin-left:0;padding:7px 12px!important}
+  .hero{padding-top:2.5rem;min-height:auto}
+  .hero-grid,.hero-copy,.geo-block,.hero-lead,.hero-sub,.hero-chips{width:100%;max-width:100%;min-width:0}
+  .hero-chips{max-width:34ch}
+  .hero-eyebrow{flex-wrap:wrap;font-size:.6875rem}
+  .hero h1{font-size:2rem;letter-spacing:0;max-width:11ch}
+  .geo-block{padding:1rem}
+  .geo-block p,.hero-lead,.hero-sub{
+    max-width:34ch;
+    overflow-wrap:anywhere;
+    word-break:break-word;
+    white-space:normal;
+  }
+  .hero-chip{white-space:normal}
   .pillar-card{grid-column:span 12}
   .use-grid{grid-template-columns:1fr}
   .flow{grid-template-columns:1fr}

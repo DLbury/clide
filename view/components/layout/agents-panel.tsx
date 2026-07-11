@@ -1,8 +1,19 @@
 'use client'
 
-import { Plus, MessageSquare, Loader2, Square, X } from 'lucide-react'
+import { useState } from 'react'
+import { Plus, MessageSquare, Loader2, Square, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { AgentThread } from '@/lib/agent-thread-store'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface AgentsPanelProps {
   threads: AgentThread[]
@@ -10,6 +21,7 @@ interface AgentsPanelProps {
   onSelectThread: (threadId: string) => void
   onNewThread?: () => void
   onStopThread?: (threadId: string) => void
+  onDeleteThread?: (threadId: string) => void | Promise<void>
   onCollapse?: () => void
   showNewButton?: boolean
 }
@@ -33,11 +45,22 @@ export function AgentsPanel({
   onSelectThread,
   onNewThread,
   onStopThread,
+  onDeleteThread,
   onCollapse,
   showNewButton = true,
 }: AgentsPanelProps) {
+  const [threadToDelete, setThreadToDelete] = useState<AgentThread | null>(null)
+
+  const confirmDelete = () => {
+    const thread = threadToDelete
+    if (!thread) return
+    setThreadToDelete(null)
+    void onDeleteThread?.(thread.id)
+  }
+
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <>
+      <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-border shrink-0">
         <span className="text-sm font-medium">对话记录</span>
         <div className="flex items-center gap-0.5">
@@ -99,10 +122,40 @@ export function AgentsPanel({
                   <Square className="w-3 h-3" />
                 </button>
               )}
+              {onDeleteThread && (
+                <button
+                  type="button"
+                  className="icon-btn p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10"
+                  title="删除对话"
+                  onClick={event => {
+                    event.stopPropagation()
+                    setThreadToDelete(thread)
+                  }}
+                >
+                  <Trash2 className="w-3 h-3 text-destructive" />
+                </button>
+              )}
             </div>
           )
         })}
       </div>
-    </div>
+      </div>
+      <AlertDialog open={threadToDelete != null} onOpenChange={open => !open && setThreadToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除对话记录？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将永久删除“{threadToDelete?.title || '新对话'}”及其中的所有消息，无法恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={confirmDelete}>
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

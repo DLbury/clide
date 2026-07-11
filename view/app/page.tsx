@@ -160,13 +160,11 @@ import {
   createEditorModel,
   type EditorModel,
 } from '@/lib/editor-service'
-import { sanitizeTerminalOutput } from '@/lib/terminal-sanitize'
 import {
   buildIdeToolDirective,
   buildMultiTerminalContextPrefix,
   extractShellCommands,
   isRemoteConnectionRefusal,
-  type ConnectedServerBrief,
 } from '@/lib/extract-shell-command'
 import { aiSendQueueKey, runAiSendQueued } from '@/lib/ai-send-queue'
 import { useAgentThreads } from '@/hooks/use-agent-threads'
@@ -224,7 +222,22 @@ import {
 import { setRuntimePassword, clearRuntimePassword } from '@/lib/runtime-password'
 import { setStoredPassword, getStoredPassword, removeStoredPassword } from '@/lib/password-vault-local'
 import { SessionPasswordDialog } from '@/components/terminal/session-password-dialog'
-import type { Session, SessionFolder, TerminalLine, FileItem, ChatMessage, SessionFormPayload } from '@/lib/types'
+import {
+  appendTerminalOutput,
+  buildConnectedServerBriefs,
+  buildRuntimeSyncKey,
+  connectionTerminalConnected,
+  formatSessionHost,
+  setSessionStatusInFolders,
+  terminalSnippetForConnection,
+  trimAgentMessages,
+  updateConnectionShellByTerminalId,
+  type BrowserTab,
+  type ServerConnection,
+  type Shell,
+  type SyncGroupMember,
+} from '@/lib/connection-model'
+import type { Session, TerminalLine, FileItem, ChatMessage, SessionFormPayload } from '@/lib/types'
 
 interface PendingPasswordConnect {
   session: Session
@@ -251,198 +264,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
-interface Shell {
-  id: string
-  name: string
-  history: TerminalLine[]
-  /** 后端独立 PTY 会话 ID */
-  terminalSessionId: string
-  terminalStatus?: 'connecting' | 'connected' | 'disconnected' | 'error'
-  /** Shell 当前工作目录（跟随终端时更新） */
-  shellCwd?: string
-}
-
-interface BrowserTab {
-  id: string
-  title: string
-  url: string
-  webviewLabel: string
-  tunnelId?: string
-}
-
-interface SyncGroupMember {
-  sourceConnectionId: string
-  session: Session
-}
-
-interface ServerConnection {
-  id: string
-  session: Session
-  shells: Shell[]
-  activeShellId: string
-  openFiles: EditorModel[]
-  activeFileId: string | null
-  selectedFilePath: string | null
-  aiMessages: ChatMessage[]
-  aiThinking: boolean
-  /** 本连接独立的 Claude Code 会话 ID（--resume） */
-  claudeSessionId?: string
-  /** 由 Tauri 后端驱动的真实终端 */
-  terminalLive?: boolean
-  /** SSH 远程目录列表 */
-  remoteFiles?: FileItem[]
-  remotePath?: string
-  /** SSH 远程 Shell 平台（Linux / Windows OpenSSH） */
-  remotePlatform?: RemoteShellPlatform
-  remoteFileError?: string | null
-  browserTabs?: BrowserTab[]
-  activeBrowserTabId?: string | null
-  monitorOpen?: boolean
-  /** 多机同步输入虚拟标签 */
-  isSyncGroup?: boolean
-  syncMembers?: SyncGroupMember[]
-}
-
-const MAX_HISTORY_LINES = 200
-const MAX_LINE_CONTENT_CHARS = 8000
-const MAX_AI_MESSAGES = 120
-
-function trimAgentMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.length > MAX_AI_MESSAGES
-    ? messages.slice(messages.length - MAX_AI_MESSAGES)
-    : messages
-}
-
-function formatSessionHost(session: Session): string {
-  if (session.type === 'ssh' || session.type === 'telnet') {
-    const user = session.user ?? 'root'
-    const port = session.port ? `:${session.port}` : ''
-    return `${user}@${session.host}${port} (${session.type})`
-  }
-  if (session.type === 'local' || session.type === 'wsl') {
-    return `本机 ${session.host} (${session.type})`
-  }
-  return session.host
-}
-
-function connectionTerminalConnected(conn: ServerConnection): boolean {
-  return conn.shells.some(s => s.terminalStatus === 'connected')
-}
-
-function buildConnectedServerBriefs(
-  connections: ServerConnection[],
-  activeConnectionId: string | null
-): ConnectedServerBrief[] {
-  return connections
-    .filter(c => !c.isSyncGroup)
-    .map(conn => ({
-    profileId: conn.session.id,
-    name: conn.session.name,
-    host: formatSessionHost(conn.session),
-    terminalConnected: connectionTerminalConnected(conn),
-    isFocused: conn.id === activeConnectionId,
-  }))
-}
-
-function terminalSnippetForConnection(conn: ServerConnection): string | undefined {
-  const shell = conn.shells.find(s => s.id === conn.activeShellId) ?? conn.shells[0]
-  if (!shell) return undefined
-  if (conn.terminalLive) {
-    const buf = getTerminalOutputBuffer(shell.terminalSessionId)
-    return buf.length > 0 ? buf.slice(-8000) : undefined
-  }
-  const text = shell.history
-    .slice(-20)
-    .map(line => line.content)
-    .join('\n')
-  return text || undefined
-}
-
-/** 仅含影响 MCP/runtime 同步的字段，避免 AI 流式更新触发后端快照 */
-function buildRuntimeSyncKey(
-  folders: { id: string; isExpanded: boolean; sessions: { id: string; status: string }[] }[],
-  connections: ServerConnection[],
-  activeConnectionId: string | null
-): string {
-  const folderPart = folders
-    .map(
-      f =>
-        `${f.id}:${f.isExpanded ? 1 : 0}:${f.sessions.map(s => `${s.id}:${s.status}`).join(',')}`
-    )
-    .join('|')
-  const connPart = connections
-    .map(c =>
-      [
-        c.id,
-        c.activeShellId,
-        c.session.id,
-        c.session.status,
-        c.shells.map(s => `${s.id}:${s.terminalSessionId}:${s.terminalStatus ?? ''}`).join(';'),
-      ].join(':')
-    )
-    .join('|')
-  return `${folderPart}#${connPart}#${activeConnectionId ?? ''}`
-}
-
-function appendTerminalOutput(history: TerminalLine[], data: string): TerminalLine[] {
-  const cleaned = sanitizeTerminalOutput(data)
-  if (!cleaned) return history
-  const last = history[history.length - 1]
-  if (last && (last.type === 'output' || last.type === 'error')) {
-    const merged = last.content + cleaned
-    // 单行内容过长时截断，避免巨型日志撑爆内存
-    const content =
-      merged.length > MAX_LINE_CONTENT_CHARS
-        ? merged.slice(merged.length - MAX_LINE_CONTENT_CHARS)
-        : merged
-    const next = [...history.slice(0, -1), { ...last, content }]
-    return next.length > MAX_HISTORY_LINES ? next.slice(next.length - MAX_HISTORY_LINES) : next
-  }
-  const appended = [
-    ...history,
-    {
-      id: `out-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      type: 'output' as const,
-      content: cleaned,
-      timestamp: new Date(),
-    },
-  ]
-  return appended.length > MAX_HISTORY_LINES
-    ? appended.slice(appended.length - MAX_HISTORY_LINES)
-    : appended
-}
-
-function setSessionStatusInFolders(
-  folders: SessionFolder[],
-  sessionId: string,
-  status: Session['status']
-): SessionFolder[] {
-  return folders.map(folder => ({
-    ...folder,
-    sessions: folder.sessions.map(s =>
-      s.id === sessionId ? { ...s, status } : s
-    ),
-  }))
-}
-
-function updateConnectionShellByTerminalId(
-  conn: ServerConnection,
-  terminalSessionId: string,
-  updateShell: (shell: Shell) => Shell
-): ServerConnection | null {
-  if (!conn.shells.some(s => s.terminalSessionId === terminalSessionId)) {
-    return null
-  }
-  const shells = conn.shells.map(s =>
-    s.terminalSessionId === terminalSessionId ? updateShell(s) : s
-  )
-  return {
-    ...conn,
-    shells,
-    session: { ...conn.session, status: connectionSessionStatus(shells) },
-  }
-}
-
 export default function AITerminal() {
   const { settings: aiSettings, updateSettings: updateAiSettings, clearClaudeSessionId } =
     useAiSettings()
@@ -458,6 +279,7 @@ export default function AITerminal() {
     createNewThread,
     selectThread,
     clearThread,
+    deleteThread,
     updateThreadTitleFromMessages,
   } = useAgentThreads()
   const { folders, setFolders, loaded: foldersLoaded } = useSessionFolders()
@@ -4140,6 +3962,14 @@ export default function AITerminal() {
     clearThread(threadId)
   }, [clearThread, stopThreadAgent])
 
+  const handleDeleteThread = useCallback(
+    async (threadId: string) => {
+      await stopThreadAgent(threadId)
+      deleteThread(threadId)
+    },
+    [deleteThread, stopThreadAgent]
+  )
+
   const handleClaudePathChange = useCallback(
     (path: string) => {
       updateAiSettings(withActiveCliPath(aiSettings, path))
@@ -4926,6 +4756,7 @@ export default function AITerminal() {
                 activeThreadId={activeThreadId}
                 onSelectThread={selectThread}
                 onStopThread={threadId => void stopThreadAgent(threadId)}
+                onDeleteThread={handleDeleteThread}
               />
               </div>
 

@@ -81,6 +81,22 @@ export function useAgentThreads() {
     [patchThread]
   )
 
+  const deleteThread = useCallback((threadId: string) => {
+    let next = threadsRef.current.filter(thread => thread.id !== threadId)
+    if (next.length === 0) {
+      next = [createAgentThread()]
+    }
+
+    threadsRef.current = next
+    setThreads(next)
+    saveAgentThreads(next)
+
+    if (!next.some(thread => thread.id === activeThreadIdRef.current)) {
+      activeThreadIdRef.current = next[0].id
+      setActiveThreadId(next[0].id)
+    }
+  }, [])
+
   const updateThreadTitleFromMessages = useCallback(
     (threadId: string, messages: ChatMessage[]) => {
       patchThread(threadId, t => ({
@@ -104,6 +120,7 @@ export function useAgentThreads() {
     createNewThread,
     selectThread,
     clearThread,
+    deleteThread,
     updateThreadTitleFromMessages,
   }
 }

@@ -11,6 +11,7 @@ interface ThreadsDrawerProps {
   activeThreadId: string | null
   onSelectThread: (threadId: string) => void
   onStopThread?: (threadId: string) => void
+  onDeleteThread?: (threadId: string) => void | Promise<void>
 }
 
 export function ThreadsDrawer({
@@ -20,6 +21,7 @@ export function ThreadsDrawer({
   activeThreadId,
   onSelectThread,
   onStopThread,
+  onDeleteThread,
 }: ThreadsDrawerProps) {
   if (!open) return null
 
@@ -46,6 +48,7 @@ export function ThreadsDrawer({
             onOpenChange(false)
           }}
           onStopThread={onStopThread}
+          onDeleteThread={onDeleteThread}
           onCollapse={() => onOpenChange(false)}
           showNewButton={false}
         />

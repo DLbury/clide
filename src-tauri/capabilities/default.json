@@ -38,11 +38,7 @@
 
     "core:window:allow-set-focus",
 
-    "core:webview:default",
-
     "core:webview:allow-get-all-webviews",
-
-    "core:webview:allow-create-webview",
 
     "core:webview:allow-webview-close",
 
@@ -50,11 +46,9 @@
 
     "core:webview:allow-set-webview-size",
 
-    "core:webview:allow-set-webview-auto-resize",
     "core:webview:allow-webview-hide",
     "core:webview:allow-webview-show"
 
   ]
 
 }
-

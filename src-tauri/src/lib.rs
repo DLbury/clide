@@ -2,6 +2,7 @@ pub mod ai;
 pub mod app_logging;
 pub mod app_paths;
 pub mod browser_policy;
+pub mod browser_webview;
 pub mod claude;
 pub mod connect_tool;
 pub mod mcp_stdio_proxy;
@@ -627,105 +628,6 @@ fn socks_list(state: State<'_, AppState>) -> Result<Vec<SocksInfo>, String> {
     Ok(state.socks.list())
 }
 
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BrowserNewWindowPayload {
-    parent_label: String,
-    url: String,
-}
-
-/// 在主窗口内创建一个嵌入式子 WebView 作为浏览器标签。
-///
-/// 关键点：当设置 `proxy_url`（SOCKS5）时，必须为该 WebView 指定**独立的数据目录**，
-/// 否则它会与主窗口共用同一个 WebView2 环境（代理是环境级参数），导致 WebView2
-/// 拒绝以不同参数复用同一数据目录 → 黑屏空白。独立目录 = 独立环境，代理方可生效。
-#[tauri::command]
-async fn browser_webview_open(
-    app: AppHandle,
-    window_label: String,
-    label: String,
-    url: String,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    proxy_url: Option<String>,
-    data_dir_key: Option<String>,
-) -> Result<(), String> {
-    use tauri::webview::{NewWindowResponse, WebviewBuilder};
-    use tauri::{LogicalPosition, LogicalSize, Url, WebviewUrl};
-
-    let window = app
-        .get_window(&window_label)
-        .ok_or_else(|| format!("窗口不存在: {window_label}"))?;
-
-    browser_policy::validate_browser_url(&url)?;
-
-    let target = Url::parse(&url).map_err(|e| format!("URL 无效: {e}"))?;
-
-    let dir_key = data_dir_key.as_deref().unwrap_or(&label);
-    let data_dir = app
-        .path()
-        .app_cache_dir()
-        .ok()
-        .map(|base| base.join("browser-webviews").join(sanitize_dir(dir_key)));
-
-    if let Some(ref dir) = data_dir {
-        let _ = std::fs::create_dir_all(dir);
-    }
-
-    let parent_label = label.clone();
-    let app_for_popup = app.clone();
-
-    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(target)).on_new_window(
-        move |popup_url, _features| {
-            if browser_policy::validate_browser_url(popup_url.as_str()).is_err() {
-                return NewWindowResponse::Deny;
-            }
-            let payload = BrowserNewWindowPayload {
-                parent_label: parent_label.clone(),
-                url: popup_url.to_string(),
-            };
-            if let Err(err) = app_for_popup.emit("browser-new-window", payload) {
-                tracing::warn!("browser-new-window emit failed: {err}");
-            }
-            NewWindowResponse::Deny
-        },
-    );
-
-    if let Some(dir) = data_dir {
-        builder = builder.data_directory(dir);
-    }
-
-    if let Some(proxy) = proxy_url.filter(|p| !p.is_empty()) {
-        let proxy_parsed = Url::parse(&proxy).map_err(|e| format!("代理 URL 无效: {e}"))?;
-        builder = builder.proxy_url(proxy_parsed);
-    }
-
-    window
-        .add_child(
-            builder,
-            LogicalPosition::new(x, y),
-            LogicalSize::new(width, height),
-        )
-        .map_err(|e| format!("创建 WebView 失败: {e}"))?;
-
-    Ok(())
-}
-
-fn sanitize_dir(label: &str) -> String {
-    label
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 #[tauri::command]
 fn terminal_export_buffer(session_id: String) -> Result<String, String> {
     Ok(crate::terminal::export_buffer(&session_id))
@@ -1079,7 +981,7 @@ pub fn run() {
             socks_stop,
             socks_stop_for_profile,
             socks_list,
-            browser_webview_open,
+            browser_webview::browser_webview_open,
             terminal_buffer_len,
             terminal_export_buffer,
             terminal_buffer_read_since,

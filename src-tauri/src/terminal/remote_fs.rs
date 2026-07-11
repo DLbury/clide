@@ -33,6 +33,44 @@ pub(crate) enum RemotePlatform {
     Windows,
 }
 
+fn validate_delete_target(platform: RemotePlatform, path: &str) -> Result<(), String> {
+    let trimmed = path.trim();
+    let normalized = trimmed.replace('\\', "/");
+    if trimmed.is_empty()
+        || trimmed.contains('\0')
+        || normalized
+            .split('/')
+            .any(|segment| segment == "." || segment == "..")
+    {
+        return Err("无法删除当前目录或上级目录".to_string());
+    }
+
+    match platform {
+        RemotePlatform::Unix if trimmed == "/" => Err("无法删除根目录".to_string()),
+        RemotePlatform::Windows if is_windows_root_path(trimmed) => {
+            Err("无法删除驱动器或网络共享根目录".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn is_windows_root_path(path: &str) -> bool {
+    let normalized = path.trim().replace('\\', "/");
+    let without_trailing = normalized.trim_end_matches('/');
+    if without_trailing.len() == 2
+        && without_trailing.as_bytes()[0].is_ascii_alphabetic()
+        && without_trailing.as_bytes()[1] == b':'
+    {
+        return true;
+    }
+
+    let parts: Vec<_> = without_trailing
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    normalized.starts_with("//") && parts.len() == 2
+}
+
 fn normalize_path_slashes(path: &str) -> String {
     path.replace('\\', "/")
 }
@@ -788,14 +826,12 @@ pub async fn delete_path(
     let platform = detect_platform(&request).await;
     let resolved = resolve_path(&request, &path).await?;
     let trimmed = resolved.trim();
-    if trimmed.is_empty() || trimmed == "/" {
-        return Err("无法删除根目录".to_string());
-    }
+    validate_delete_target(platform, trimmed)?;
 
     if platform == RemotePlatform::Windows {
         let safe = escape_powershell_single(&trimmed.replace('/', "\\"));
         let cmd = format!(
-            "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ if (-not (Test-Path -LiteralPath '{safe}')) {{ Write-Error NOTFOUND; exit 1 }}; Remove-Item -LiteralPath '{safe}' -Recurse -Force }}\""
+            "powershell -NoProfile -NoLogo -NonInteractive -Command \"& {{ $target = [System.IO.Path]::GetFullPath('{safe}'); if (-not (Test-Path -LiteralPath $target)) {{ Write-Error NOTFOUND; exit 1 }}; $target = $target.TrimEnd('\\'); $root = [System.IO.Path]::GetPathRoot($target); if ($root -and $target -eq $root.TrimEnd('\\')) {{ Write-Error FORBIDDEN; exit 2 }}; $protected = @($env:SystemRoot, $env:ProgramFiles, $env:ProgramData, ${{env:ProgramFiles(x86)}}) | Where-Object {{ $_ }}; if ($protected | Where-Object {{ $systemPath = [System.IO.Path]::GetFullPath($_).TrimEnd('\\'); $target -ieq $systemPath -or $target.StartsWith($systemPath + '\\', [System.StringComparison]::OrdinalIgnoreCase) }}) {{ Write-Error FORBIDDEN; exit 2 }}; Remove-Item -LiteralPath $target -Recurse -Force }}\""
         );
         return exec_capture(&request, &cmd, false)
             .await
@@ -803,6 +839,8 @@ pub async fn delete_path(
             .map_err(|e| {
             if e.to_lowercase().contains("notfound") {
                 "路径不存在".to_string()
+            } else if e.contains("FORBIDDEN") {
+                "无法删除系统关键路径".to_string()
             } else {
                 e
             }
@@ -813,7 +851,9 @@ pub async fn delete_path(
     let cmd = format!(
         "target='{safe}'; \
          if [ ! -e \"$target\" ]; then echo __NOT_FOUND__; exit 1; fi; \
-         case \"$target\" in /|/bin|/etc|/usr|/var|/lib|/lib64|/sbin|/boot|/dev|/proc|/sys) echo __FORBIDDEN__; exit 2;; esac; \
+         parent=$(dirname -- \"$target\") || exit 1; name=$(basename -- \"$target\") || exit 1; \
+         parent=$(cd -P -- \"$parent\" && pwd) || exit 1; target=\"$parent/$name\"; \
+         case \"$target\" in /|/bin|/bin/*|/etc|/etc/*|/usr|/usr/*|/var|/var/*|/lib|/lib/*|/lib64|/lib64/*|/sbin|/sbin/*|/boot|/boot/*|/dev|/dev/*|/proc|/proc/*|/sys|/sys/*) echo __FORBIDDEN__; exit 2;; esac; \
          rm -rf -- \"$target\""
     );
 
@@ -949,5 +989,31 @@ fn mode_to_permissions(mode: &str, is_dir: bool) -> String {
         "drwxr-xr-x".to_string()
     } else {
         "-rw-r--r--".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unix_root_and_relative_navigation() {
+        assert!(validate_delete_target(RemotePlatform::Unix, "/").is_err());
+        assert!(validate_delete_target(RemotePlatform::Unix, ".").is_err());
+        assert!(validate_delete_target(RemotePlatform::Unix, "..").is_err());
+        assert!(validate_delete_target(RemotePlatform::Unix, "/tmp/..").is_err());
+    }
+
+    #[test]
+    fn rejects_windows_volume_and_share_roots() {
+        assert!(validate_delete_target(RemotePlatform::Windows, "C:\\").is_err());
+        assert!(validate_delete_target(RemotePlatform::Windows, "C:/").is_err());
+        assert!(validate_delete_target(RemotePlatform::Windows, "\\\\server\\share").is_err());
+    }
+
+    #[test]
+    fn allows_non_root_delete_targets() {
+        assert!(validate_delete_target(RemotePlatform::Unix, "/tmp/archive").is_ok());
+        assert!(validate_delete_target(RemotePlatform::Windows, "C:\\Users\\name\\archive").is_ok());
     }
 }

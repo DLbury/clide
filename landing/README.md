@@ -9,6 +9,8 @@ landing/
 ├── index.html          # English homepage
 ├── zh/index.html       # Chinese homepage (zh-CN)
 ├── css/style.css       # Shared styles
+├── assets/hero.png     # Redacted product screenshot
+├── assets/architecture.png
 ├── sitemap.xml         # Search engine sitemap
 ├── robots.txt          # Crawler rules
 └── .nojekyll           # Disable Jekyll processing
@@ -49,6 +51,20 @@ python -m http.server 8080
 ```
 
 Or use any static file server pointed at the `landing/` folder.
+
+## Regenerate Product Screenshot
+
+The homepage screenshot is generated from a real app screenshot after redacting hosts, usernames, and IP addresses:
+
+```bash
+node scripts/sanitize-main-screenshot.mjs /path/to/source-screenshot.png
+```
+
+This writes:
+
+- `docs/assets/main-screen-redacted.png`
+- `landing/assets/hero.png`
+- `docs/assets/readme-hero.png`
 
 ## Custom Domain (optional)
 

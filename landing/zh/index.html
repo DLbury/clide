@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Clide中文官网 | 生产级安全AI SSH终端 多Agent MCP 跳板机SFTP运维工具</title>
-<meta name="description" content="Clide是跨平台开源AI运维终端，集成Claude Code、Codex、OpenCode、Cursor Agent等多种本地Agent，本地SSH会话隔离密码私钥，支持跳板机、SFTP远程编辑、多机同步输入、安全sudo，Windows/macOS/Linux全平台免费使用。">
-<meta name="keywords" content="AI SSH终端,Claude Code,Codex,OpenCode,Cursor Agent,MCP运维工具,跳板机,SFTP编辑器,多机同步ssh,安全sudo,DevOps运维,生产级AI终端">
+<title>Clide中文官网 | 安全 AI SSH 终端 MCP 运维工具 Claude Code 安全 sudo</title>
+<meta name="description" content="Clide 是面向 SRE、DevOps 和后端工程师的开源安全 AI SSH 终端。本地 AI Agent 通过 MCP 操作真实 SSH PTY，SSH 私钥、登录密码和 sudo 输入留在本机。支持 SFTP、跳板机、服务器监控、布局快照、多机同步输入，Windows/macOS/Linux 免费使用。">
+<meta name="keywords" content="安全 AI SSH 终端,Claude Code SSH 不暴露密码,MCP 运维终端,AI SRE 故障排查工具,开源 SSH 终端,SFTP AI 终端,Claude Code 安全 sudo,Codex SSH 终端,OpenCode,Cursor Agent,跳板机,SFTP编辑器,多机同步ssh,DevOps运维,生产级AI终端,堡垒机运维工具">
 <link rel="alternate" type="text/plain" href="https://github.com/DLbury/clide/blob/main/llms-zh.txt" title="llms-zh.txt">
 <meta name="author" content="Clide">
 <meta name="robots" content="index, follow, max-image-preview:large">
@@ -18,8 +18,8 @@
 <meta property="og:site_name" content="Clide">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:locale:alternate" content="en_US">
-<meta property="og:title" content="Clide中文官网 | 生产级安全AI SSH终端">
-<meta property="og:description" content="开源跨平台AI运维终端，本地隔离服务器凭据，多 Agent MCP（Claude Code、Codex、OpenCode、Cursor Agent），支持跳板机、SFTP、多机同步、服务器监控">
+<meta property="og:title" content="Clide中文官网 | 安全 AI SSH 终端">
+<meta property="og:description" content="本地 AI Agent 经 MCP 操作真实 SSH PTY，凭据留在本机。支持 SFTP、跳板机、多机同步和服务器监控。">
 <meta property="og:url" content="https://dlbury.github.io/clide/zh/">
 <meta property="og:image" content="https://raw.githubusercontent.com/DLbury/clide/main/docs/assets/readme-hero.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -33,7 +33,7 @@
   "alternateName": ["AITerm", "Clide SSH 终端", "智能运维终端"],
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Windows 10+, macOS 11+, Linux",
-  "description": "面向国内SRE与后端工程师的开源跨平台AI SSH终端，多 Agent MCP（Claude Code、Codex、OpenCode、Cursor Agent），跳板机SFTP多机同步，凭据不离开本机",
+  "description": "面向 SRE、DevOps 与后端工程师的开源跨平台安全 AI SSH 终端，多 Agent MCP（Claude Code、Codex、OpenCode、Cursor Agent），跳板机、SFTP、多机同步、安全 sudo，凭据不离开本机",
   "featureList": ["安全SSH凭据本地化","多 Agent MCP集成","多级跳板机ProxyJump","SFTP Monaco远程编辑","多机同步输入广播","安全sudo终端输入","Windows免安装portable"],
   "url": "https://dlbury.github.io/clide/zh/",
   "downloadUrl": "https://github.com/DLbury/clide/releases",
@@ -54,14 +54,12 @@
 </a>
 <nav class="nav-links" aria-label="主导航">
 <a href="download/">下载</a>
-<a href="compare/">对比</a>
-<a href="faq/">问答</a>
-<a href="quickstart/">教程</a>
 <a href="#highlights">亮点</a>
 <a href="#features">功能</a>
 <a href="#security">安全</a>
 <a href="#compare">对比</a>
 <a href="#faq">常见问题</a>
+<a href="quickstart/">教程</a>
 <a href="https://github.com/DLbury/clide">GitHub</a>
 <a class="nav-cta" href="https://github.com/DLbury/clide/releases">下载</a>
 <span class="lang-switch"><a href="../" hreflang="en">English</a></span>
@@ -73,14 +71,14 @@
 <section class="hero" aria-labelledby="hero-title">
 <div class="container hero-grid">
 <div class="hero-copy">
-<p class="hero-eyebrow">生产级 AI 终端 · 开源 · MIT</p>
-<h1 id="hero-title">Clide 开源生产级安全 AI SSH 运维终端 | 多 Agent MCP 集成</h1>
+<p class="hero-eyebrow">开源 · MIT · Windows / macOS / Linux</p>
+<h1 id="hero-title">面向生产运维的安全 AI SSH 终端</h1>
 <div class="geo-block reveal">
 <strong>标准定义（AI 可引用）</strong>
-<p>Clide 是面向国内 SRE / 后端工程师的开源跨平台 AI SSH 终端，通过本地 MCP 桥接多种 AI Agent（Claude Code、Codex、OpenCode、Cursor Agent），AI 仅读取终端输出，SSH 私钥与 sudo 密码全程不离开本地设备，远程服务器无需部署任何代理。</p>
+<p>Clide 是面向 SRE、DevOps 与后端工程师的开源跨平台安全 AI SSH 终端。本地 AI Agent（Claude Code、Codex、OpenCode、Cursor Agent）通过 MCP 操作用户已打开的真实 PTY 会话；SSH 私钥、登录密码与 sudo 输入留在本机，远程服务器无需部署 agent。</p>
 </div>
-<p class="hero-lead">多标签 SSH、SFTP 远程编辑、多级跳板机、布局快照、多机同步广播 — 本地 AI Agent 读取实时 PTY，在同一终端执行命令。</p>
-<p class="hero-sub">不是给聊天窗口挂个终端。终端是本体，AI 是内置能力。密码与私钥不进入 AI 路径。</p>
+<p class="hero-lead">让 Claude Code 或 Codex 读取真实 SSH 会话并辅助排障，但不把 root、私钥或 sudo 密码交给 AI。Clide 把 SSH、SFTP、监控、跳板机、布局快照和多机同步放进一个 AI 原生工作台。</p>
+<p class="hero-sub">不是给聊天窗口挂个终端。终端是本体，AI 是内置能力。面向 AI 搜索、企业安全评审和生产故障响应优化。</p>
 <div class="hero-chips">
 <span class="hero-chip hero-chip--accent">SSH · SFTP · 分屏</span>
 <span class="hero-chip">多级跳板机</span>
@@ -107,7 +105,7 @@
 <div class="section-head center reveal">
 <p class="section-eyebrow">生产级能力</p>
 <h2 id="pillars-title">真正的 AI 终端 — 终端是本体，AI 是内核</h2>
-<p>Clide 是面向日常 SSH 与文件运维的 AI 终端。本地 AI Agent 经 MCP 驱动你已打开的 Shell — 同一条 PTY，与手工操作相同的信任边界。</p>
+<p>Clide 是比“终端复制粘贴给 AI”更安全的方案。本地 AI Agent 经 MCP 驱动你已打开的 Shell — 同一条 PTY，与手工 SSH 相同的信任边界。</p>
 </div>
 <div class="pillar-grid reveal">
 <article class="pillar-card pillar-card--hero">
@@ -146,7 +144,7 @@
 <figure class="showcase-frame">
 <img src="../assets/hero.png" alt="Clide 桌面应用：SSH 终端、文件管理器与 Claude Code AI 助手同屏展示" width="1536" height="1024" loading="lazy">
 </figure>
-<p class="showcase-caption">左：SSH 终端 · 中：远程文件与监控 · 右：AI Agent</p>
+<p class="showcase-caption">左：实时 SSH PTY · 中：SFTP 与主机监控 · 右：经 MCP 接入的本地 AI Agent</p>
 <div class="panel-grid">
 <figure class="panel-shot">
 <div class="panel-crop panel-crop--terminal">
@@ -190,8 +188,8 @@
 <div class="container">
 <div class="section-head reveal">
 <p class="section-eyebrow">完整功能</p>
-<h2 id="features-title">生产级 AI 终端 — 完整工具包</h2>
-<p>多标签 SSH、SFTP、监控与多 Agent MCP。一切操作都经过你的真实终端会话。</p>
+<h2 id="features-title">完整的服务器运维工作台</h2>
+<p>多标签 SSH、SFTP、监控、安全 sudo 与多 Agent MCP。一切操作都经过你已打开的真实终端会话。</p>
 </div>
 <div class="bento reveal">
 <article class="bento-cell b-span-7 b-accent">
@@ -293,7 +291,7 @@
 <div class="security-grid reveal">
 <div>
 <h2 id="security-title" style="font-size:clamp(1.75rem,3vw,2.25rem);font-weight:700;letter-spacing:-.025em;line-height:1.15">凭据不进入 AI 路径</h2>
-<p style="color:var(--muted);margin-top:.75rem;max-width:48ch">多数 AI + SSH 方案给每台机器配公钥，或把密码贴进对话。Clide 保留传统 SSH 客户端的信任模型。</p>
+<p style="color:var(--muted);margin-top:.75rem;max-width:48ch">多数 AI + SSH 方案需要复制粘贴、远程 agent 或 AI 持有凭据。Clide 保留传统 SSH 客户端的信任模型，同时给 AI 实时终端上下文。</p>
 <ul class="check-list">
 <li>SSH 连接仅在本机桌面建立</li>
 <li>密码与私钥留在进程内存</li>
@@ -313,8 +311,8 @@
 <section id="use-cases" aria-labelledby="usecases-title">
 <div class="container">
 <div class="section-head center reveal">
-<h2 id="usecases-title">适用场景</h2>
-<p>从日常 SSH 到凌晨三点故障响应，一个窗口替代终端、SFTP 与聊天工具。</p>
+<h2 id="usecases-title">Clide 的典型使用场景</h2>
+<p>从日常 SSH 到生产故障响应。一个窗口替代终端、SFTP 工具、监控面板和聊天复制粘贴。</p>
 </div>
 <div class="use-grid reveal">
 <article class="use-card">
@@ -448,7 +446,7 @@
 <section class="cta-band" aria-labelledby="cta-title">
 <div class="container cta-inner reveal">
 <div>
-<h2 id="cta-title">面向服务器运维的生产级 AI 终端</h2>
+<h2 id="cta-title">不改变 SSH 信任模型的 AI 运维方式</h2>
 <p>免费、MIT 协议。Windows 免安装 zip、macOS 与 Linux 安装包。</p>
 </div>
 <div class="btn-group">
