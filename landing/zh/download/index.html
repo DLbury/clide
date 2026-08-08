@@ -47,6 +47,11 @@
 <li><code>Clide_*_aarch64.dmg</code> — Apple Silicon</li>
 <li><code>Clide_*_x86_64.dmg</code> — Intel</li>
 </ul>
+<h3>提示“已损坏”</h3>
+<p>当前 macOS 安装包尚未完成 Apple 签名与公证，Gatekeeper 会将其隔离。请先将 Clide 拖入“应用程序”，右键应用并选择“打开”。若仍被隔离属性拦截，请在确认来源可信后执行：</p>
+<pre>sudo xattr -dr com.apple.quarantine /Applications/Clide.app
+open /Applications/Clide.app</pre>
+<p>应用位于其它目录时请替换路径。完成 Developer ID 签名和 Apple 公证后的正式安装包不再需要此步骤。</p>
 <h2>Linux</h2>
 <ul>
 <li><code>Clide_*_amd64.deb</code> — Debian/Ubuntu</li>

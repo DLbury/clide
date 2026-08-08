@@ -243,6 +243,19 @@ Clide 保留了**传统 SSH 客户端的安全模型**，同时拥有**直连 Cl
 | **macOS** | `.dmg` | Apple Silicon（`aarch64`）与 Intel（`x86_64`）分别构建；v0.1.20 及更早版本存在与 Linux 相同的 MCP 启动问题，请用 v0.1.21+ |
 | **Linux** | `.deb` / `.AppImage` | 需 WebKitGTK 等依赖（见下方 [Linux 故障排除](#linux-故障排除)） |
 
+### macOS 提示“已损坏”
+
+当前 macOS 安装包尚未完成 Apple 签名与公证，Gatekeeper 会将其隔离。请先将 Clide 拖入“应用程序”，再右键应用并选择“打开”。
+
+若仍被隔离属性拦截，在确认安装包来源可信后，打开终端执行：
+
+```bash
+sudo xattr -dr com.apple.quarantine /Applications/Clide.app
+open /Applications/Clide.app
+```
+
+若应用放在其它位置，请替换上面的路径。完成 Developer ID 签名和 Apple 公证后的正式安装包不再需要此步骤。
+
 ### Linux 故障排除
 
 > **v0.1.20 及更早的 `.deb`**：若安装后无窗口，多为 MCP 资源路径错误导致启动即退出；请使用 **v0.1.21+** 的 `.deb` 重新安装。

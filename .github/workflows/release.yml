@@ -109,14 +109,14 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: clide ${{ github.ref_name }}
           releaseBody: |
-            ## Clide v0.1.82
+            ## Clide v0.1.83
 
             下载对应平台的安装包即可使用。首次使用请确保本机已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 并完成登录。
 
             ### 本版更新
-            - **修复**：Windows 保存布局时在 PowerShell 中误执行 cmd 语法（`&` 报错）导致 cwd 探测失败
-            - **增强**：自动识别 Windows shell 类型（PowerShell / cmd）——本机 PTY 启动时后端上报、提示符推断、必要时主动探测
-            - **增强**：按 shell 类型选用正确的 pwd / cd 命令（`Get-Location` vs `cd /d`）
+            - **修复**：Ubuntu/Linux 终端无法粘贴（WebKitGTK 读不到外部剪贴板）；改用 Tauri 原生剪贴板插件
+            - **增强**：终端支持 Ctrl+Shift+V / Shift+Insert 粘贴，右键粘贴走原生剪贴板
+            - **文档**：补充 macOS「已损坏」/ Gatekeeper 打开说明
 
             ### 平台说明
             - **Windows**: `.exe` 安装包 / `*-portable.zip` 免安装版（支持应用内更新）

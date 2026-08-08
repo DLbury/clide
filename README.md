@@ -248,6 +248,19 @@ Get the latest build from **[Releases](https://github.com/DLbury/clide/releases)
 | **macOS** | `.dmg` | Separate builds for Apple Silicon (`aarch64`) and Intel (`x86_64`); use **v0.1.21+** (earlier builds had MCP startup issues) |
 | **Linux** | `.deb` / `.AppImage` | WebKitGTK and related deps (see [Linux troubleshooting](#linux-troubleshooting)) |
 
+### macOS reports the app is damaged
+
+The current macOS package has not yet completed Apple signing and notarization, so Gatekeeper quarantines it. Move Clide to Applications, then Control-click it and choose Open.
+
+If macOS still blocks a package whose source you trust, run:
+
+```bash
+sudo xattr -dr com.apple.quarantine /Applications/Clide.app
+open /Applications/Clide.app
+```
+
+Replace the path if the app is elsewhere. A formally released package with Developer ID signing and Apple notarization will not require this step.
+
 ### Linux troubleshooting
 
 > **`.deb` v0.1.20 and earlier**: If the app exits immediately with no window, upgrade to **v0.1.21+** (MCP resource path fix).

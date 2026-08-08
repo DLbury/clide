@@ -889,6 +889,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let _log = app_logging::init(&app.handle());
             // 不在 setup 阶段调用 fix_gui_environment：会同步启动 reg.exe，

@@ -1,6 +1,6 @@
 {
   "name": "aiterm",
-  "version": "0.1.82",
+  "version": "0.1.83",
   "private": true,
   "scripts": {
     "dev": "npm run dev --prefix view",
@@ -18,6 +18,7 @@
     "sharp": "^0.34.5"
   },
   "dependencies": {
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1"
   }

@@ -46,6 +46,11 @@
 <li><code>Clide_*_aarch64.dmg</code> — Apple Silicon</li>
 <li><code>Clide_*_x86_64.dmg</code> — Intel</li>
 </ul>
+<h3>App reported as damaged</h3>
+<p>The current macOS package has not yet completed Apple signing and notarization, so Gatekeeper quarantines it. Move Clide to Applications, then Control-click it and choose Open. If macOS still blocks the package:</p>
+<pre>sudo xattr -dr com.apple.quarantine /Applications/Clide.app
+open /Applications/Clide.app</pre>
+<p>Replace the path if the app is elsewhere. A formally released package with Developer ID signing and Apple notarization will not require this step.</p>
 <h2>Linux</h2>
 <ul>
 <li><code>Clide_*_amd64.deb</code> — Debian/Ubuntu</li>

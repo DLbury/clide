@@ -37,6 +37,10 @@ import {
 } from '@/lib/terminal-stream'
 import { useAppTheme } from '@/hooks/use-app-theme'
 import {
+  readTerminalClipboard,
+  writeTerminalClipboard,
+} from '@/lib/terminal-clipboard'
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -189,7 +193,7 @@ export function LiveTerminal({
     if (!term) return
     const text = term.getSelection()
     if (text) {
-      navigator.clipboard.writeText(text).catch(() => {})
+      void writeTerminalClipboard(text)
     }
   }, [])
 
@@ -199,8 +203,7 @@ export function LiveTerminal({
 
   const pasteFromClipboard = useCallback(() => {
     if (!connectedRef.current || !inputEnabledRef.current) return
-    void navigator.clipboard
-      .readText()
+    void readTerminalClipboard()
       .then(text => {
         if (!text) return
         writeWithSync(text)
@@ -279,17 +282,56 @@ export function LiveTerminal({
     fitAddon.fit()
 
     term.attachCustomKeyEventHandler(event => {
-      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'c') {
+      if (event.type !== 'keydown') return true
+
+      // Ctrl/Cmd+C with selection → copy (not interrupt)
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'c'
+      ) {
         const text = term.getSelection()
         if (text) {
           event.preventDefault()
-          navigator.clipboard.writeText(text).catch(() => {})
+          void writeTerminalClipboard(text)
           return false
         }
         if (!event.shiftKey) return true
       }
+
       if (!connectedRef.current || !inputEnabledRef.current) return true
-      if (event.type !== 'keydown') return true
+
+      // Linux 终端常用 Ctrl+Shift+V / Shift+Insert；Windows/mac 用 Ctrl/Cmd+V
+      // Linux 上不拦截 Ctrl+V，避免挡住 vim 等程序的 Visual Block
+      const isLinux =
+        typeof navigator !== 'undefined' &&
+        /Linux/i.test(navigator.userAgent) &&
+        !/Android/i.test(navigator.userAgent)
+      const isPasteShortcut =
+        ((event.ctrlKey || event.metaKey) &&
+          event.shiftKey &&
+          event.key.toLowerCase() === 'v') ||
+        (event.shiftKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          event.key === 'Insert') ||
+        (!isLinux &&
+          (event.ctrlKey || event.metaKey) &&
+          !event.shiftKey &&
+          !event.altKey &&
+          event.key.toLowerCase() === 'v')
+
+      if (isPasteShortcut) {
+        event.preventDefault()
+        void readTerminalClipboard()
+          .then(text => {
+            if (!text) return
+            writeWithSync(text)
+          })
+          .catch(() => {})
+        return false
+      }
+
       if (!event.ctrlKey || !event.shiftKey) return true
 
       const history = getCommandHistory(sessionIdRef.current)
@@ -333,6 +375,26 @@ export function LiveTerminal({
 
       return true
     })
+
+    const onNativePaste = (e: ClipboardEvent) => {
+      if (!connectedRef.current || !inputEnabledRef.current) return
+      const text = e.clipboardData?.getData('text/plain')
+      if (text) {
+        e.preventDefault()
+        e.stopPropagation()
+        writeWithSync(text)
+        return
+      }
+      // WebKitGTK 对外部剪贴板常给空 clipboardData，改走原生插件
+      e.preventDefault()
+      e.stopPropagation()
+      void readTerminalClipboard()
+        .then(t => {
+          if (t) writeWithSync(t)
+        })
+        .catch(() => {})
+    }
+    container.addEventListener('paste', onNativePaste, true)
 
     dataDisposableRef.current = term.onData(data => {
       if (!connectedRef.current) return
@@ -404,6 +466,7 @@ export function LiveTerminal({
       resizeDisposableRef.current?.dispose()
       resizeDisposableRef.current = null
       screenEl?.removeEventListener('mousedown', onScreenMouseDown, true)
+      container.removeEventListener('paste', onNativePaste, true)
       term.dispose()
       termRef.current = null
       fitRef.current = null
